@@ -1,0 +1,20 @@
+#!/bin/sh
+lamboot
+mkdir mtex
+cp ../MFiles/mprint*.m mtex/.
+cp mkhsetpath.m mtex/.
+cd mtex
+perl ../dcptrans.pl ../../libs/lib*/*.cpp
+cp ../main.tex .
+cp float.tex hfloat.tex
+cp times.tex htimes.tex
+latex main
+latex main
+dvips -o main.ps main.dvi
+pdflatex main
+latex2html --split 5 -dir ../html -mkdir -noinfo -local_icons main.tex
+cp *.png ../html/.
+cd ..
+perl bldindex.pl
+mv mtex/*.mdc mdc/.
+perl bldmakefiles.pl
