@@ -1,0 +1,61 @@
+***********************************************************************
+*   Linux/GNU/Un$x/Mac OS X+X11 install
+***********************************************************************
+
+Installation is pretty basic.  Assuming you have a reasonable system
+setup, the following should work..
+
+First unpack the source tar file
+
+   tar xvfz FreeMat-1.0.tar.gz
+
+Next, we make a build directory under the FreeMat-1.0 source directory.
+
+   cd FreeMat-1.0
+   mkdir build
+   cd build
+
+Now, we run configure.  Remember to use configure -help for more options.
+
+   ../configure
+
+Then a make and a make install.
+
+   make
+   make install
+
+Note that if you do not change the --prefix directory when running 
+configure, that installation takes place in /usr/local. There are 
+two post-build steps you must still (manually) perform.
+      Add a FREEMAT_PATH environment variable to your startup 
+      files that includes /usr/local/share/FreeMat/MFiles
+
+For example, with tcsh/csh, the following line would be added to the .cshrc
+
+setenv FREEMAT_PATH /usr/local/share/FreeMat/MFiles:/home/user/myMFiles
+
+or in bashrc for bash:
+
+declare -x "FREEMAT_PATH=/usr/local/share/FreeMat/MFiles:/home/user/myMFiles"
+
+It is not necessary to add the "." directory to the search path, as it
+is automatically searched by FreeMat. 
+
+Note also that FreeMat uses BLAS as part of its matrix
+manipulation routines.  During the configure process, FreeMat will
+attempt to find an optimized BLAS.  If it fails, you can either
+specify a location using the --with-blas option to
+configure, or use the provided blas using the --with-miniblas
+option.  This should be used as a last resort.
+It is an unoptimized version that will generally result in less than
+ideal performance of FreeMat.  I recommend the ATLAS project 
+(math-atlas.sourceforge.net) to generate an automatically tuned
+set of BLAS routines for your specific machine.
+
+After installation, an HTML version of the manual is available by pointing
+a web browser to /usr/local/share/FreeMat/html/index.html.
+
+Note: On Mac OS X, you will need to install g77 and libjpeg, libpng and 
+libtif.  I suggest using fink (fink.sourceforge.net).  Perhaps at some 
+point in the future a fink package will be available for the 
+Mac (volunteers?).
