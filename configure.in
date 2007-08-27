@@ -33,6 +33,8 @@ case "$host_os" in
      is_mac="yes";;
 esac     
 
+cross_compiling="yes"
+
 if (test "$cross_compiling" = "no") && (test "$is_mac" = "no"); then
    AC_MSG_NOTICE([Configuring for non-cross unix build])
    PKG_CHECK_MODULES(QT, QtCore QtGui QtOpenGL QtNetwork QtXml >= 4.2.0, HAVE_QT4="yes", HAVE_QT4="no")
@@ -83,7 +85,7 @@ if (test "$cross_compiling" = "yes"); then
    fi
    QT_CFLAGS="-I$QT4DIR/include -I$QT4DIR/include/QtCore -I$QT4DIR/include/QtGui -I$QT4DIR/include/QtNetwork -I$QT4DIR/include/QtXml -I$QT4DIR/include/QtOpenGL"
    LIBS="-L$QT4DIR/lib -lQtGui4 -lQtCore4 -lQtNetwork4 -lQtXml4 -lQtOpenGL4 -lopengl32 -lglu32 -lgdi32 -luser32 -lqtmain -lwsock32 -lwinmm $LIBS "
-   LDFLAGS="$LDFLAGS -mthreads -Wl,-enable-stdcall-fixup -Wl,-enable-auto-import -Wl,-enable-runtime-pseudo-reloc -Wl,-s -Wl,-subsystem,windows"
+   LDFLAGS="$LDFLAGS -mthreads -Wl,-enable-stdcall-fixup -Wl,-enable-auto-import -Wl,-enable-runtime-pseudo-reloc -Wl,-subsystem,windows"
    platform="--xwin"
    AC_SUBST(QT4DIR)
    is_win32="true"
