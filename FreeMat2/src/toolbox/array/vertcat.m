@@ -9,10 +9,6 @@
 %@]
 %which is equivalent to the statement @|d = [a;b;c]|.
 %!
-
-% Copyright (c) 2002-2007 Samit Basu
-% Licensed under the GPL
-
 function y = vertcat(varargin)
   if (nargin == 0)
     y = [];

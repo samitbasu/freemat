@@ -1,59 +1,63 @@
 #ifndef __List_hpp__
 #define __List_hpp__
 
-#include <vector>
-#include <QList>
 #include "Exception.hpp"
 
 template <class T>
 class FMList {
-  QList<T> *d;
+  T *d;
+  int n;
 public:
-  FMList() : d(NULL) {
+  FMList() : d(NULL), n(0) {
   }
   ~FMList() {
-    if (d) delete d;
+    if (d) delete[] d;
   }
   FMList(const FMList<T>& other) {
     if (!other.d) {
       d = NULL;
+      n = 0;
       return;
     } else {
-      d = new QList<T>(*(other.d));
+      n = other.n;
+      d = new T[n];
+      for (int i=0;i<n;i++)
+	d[i] = other.d[i];
     }
   }
   FMList<T>& operator=(const FMList<T>& other) {
     if (d) delete d;
     if (other.d) {
-      d = new QList<T>(*(other.d));
+      n = other.n;
+      d = new T[n];
+      for (int i=0;i<n;i++)
+	d[i] = other.d[i];
     } else {
       d = NULL;
+      n = 0;
     }
     return *this;
   }
   inline int size() const {
     if (d) 
-      return d->size(); 
+      return n; 
     else 
       return 0;
   }
   inline T& operator[](int i) {
     if (d) 
-      return (*d)[i]; 
+      return d[i]; 
     else 
       throw Exception("Illegal list access");
   }
   inline const T& operator[](int i) const {
     if (d) 
-      return (*d)[i]; 
+      return d[i]; 
     else
       throw Exception("Illegal list access (const)");
   }
   inline bool empty() const {
-    if (d)
-      return d->empty();
-    else
-      return true;
+    return (n>0);
   }
   inline void push_back(const T & value) {
     if (d)
@@ -140,26 +144,6 @@ public:
       return true;
     else
       return false;
-  }
-};
-
-template <class T>
-class PList : public std::vector<T> {
-public:
-  inline void pop_front() {
-    erase(this->begin());
-  }
-  inline PList<T>& operator<< (const T& value) {
-    push_back(value);
-    return *this;
-  }
-  inline void push_front(const T& value) {
-    insert(this->begin(),value);
-  }
-  inline PList<T>& operator+= (const PList<T>& other) {
-    for (int i=0;i<other.size();i++)
-      push_back(other[i]);
-    return *this;
   }
 };
 

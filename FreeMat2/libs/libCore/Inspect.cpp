@@ -34,7 +34,7 @@
 
 static std::string helppath;
   
-void Tokenize(const std::string& str, StringVector& tokens,
+void Tokenize(const std::string& str, QVector<std::string>& tokens,
 	      const std::string& delimiters = " \n") {
   // Skip delimiters at beginning.
   std::string::size_type lastPos = str.find_first_not_of(delimiters, 0);
@@ -62,17 +62,17 @@ void Tokenize(const std::string& str, StringVector& tokens,
 ArrayVector JITControlFunction(int nargout, const ArrayVector& arg, Interpreter* eval) {
   if (arg.size() < 1) {
     if (eval->JITControl())
-      return SingleArrayVector(Array::stringConstructor("on"));
+      return singleArrayVector(Array::stringConstructor("on"));
     else
-      return SingleArrayVector(Array::stringConstructor("off"));
+      return singleArrayVector(Array::stringConstructor("off"));
   } else {
     if (!arg[0].isString())
       throw Exception("jitcontrol function takes only a single, string argument");
     string txt = arg[0].getContentsAsStringUpper();
     if (txt == "ON")
-      eval->setJITControl(true);
+      eval->JITControl(true);
     else if (txt == "OFF")
-      eval->setJITControl(false);
+      eval->JITControl(false);
     else
       throw Exception("jitcontrol function argument needs to be 'on/off'");
   }
@@ -120,17 +120,17 @@ ArrayVector JITControlFunction(int nargout, const ArrayVector& arg, Interpreter*
 ArrayVector DbAutoFunction(int nargout, const ArrayVector& arg, Interpreter* eval) {
   if (arg.size() < 1) {
     if (eval->AutoStop()) 
-      return SingleArrayVector(Array::stringConstructor("on"));
+      return singleArrayVector(Array::stringConstructor("on"));
     else 
-      return SingleArrayVector(Array::stringConstructor("off"));
+      return singleArrayVector(Array::stringConstructor("off"));
   } else {
     if (!arg[0].isString())
       throw Exception("dbauto function takes only a single, string argument");
     string txt = arg[0].getContentsAsStringUpper();
     if (txt == "ON")
-      eval->setAutoStop(true);
+      eval->AutoStop(true);
     else if (txt == "OFF")
-      eval->setAutoStop(false);
+      eval->AutoStop(false);
     else
       throw Exception("dbauto function argument needs to be 'on/off'");
   }
@@ -174,8 +174,8 @@ ArrayVector EndFunction(int nargout, const ArrayVector& arg) {
   int enddim(ArrayToInt32(arg[1]));
   int totalndxs(ArrayToInt32(arg[2]));
   if (totalndxs == 1)
-    return SingleArrayVector(Array::int32Constructor(t.getElementCount()));
-  return SingleArrayVector(Array::int32Constructor(t.get(enddim-1)));
+    return singleArrayVector(Array::int32Constructor(t.getElementCount()));
+  return singleArrayVector(Array::int32Constructor(t.get(enddim-1)));
 }
 
 //!
@@ -407,7 +407,7 @@ ArrayVector HelpFunction(int nargout, const ArrayVector& arg, Interpreter* eval)
     fp = fopen(mdcname.c_str(),"r");
     if (fp) {
       //Found it... relay to the output
-      StringVector helplines;
+      QVector<std::string> helplines;
       std::string workingline;
       char buffer[4096];
       while (!feof(fp)) {
@@ -419,7 +419,7 @@ ArrayVector HelpFunction(int nargout, const ArrayVector& arg, Interpreter* eval)
       // Get the output width (in characters)
       int outputWidth = eval->getTerminalWidth() - 20;
       for (int p=0;p<(int)helplines.size();p++) {
-	StringVector tokens;
+	QVector<std::string> tokens;
 	// Tokenize the help line
 	Tokenize(helplines[p],tokens);
 	// Output words..
@@ -502,13 +502,13 @@ void ClearVariable(Interpreter* eval, string name) {
 
 void ClearAllFunction(Interpreter* eval) {
   ClearLibs(eval);
-  StringVector names = eval->getContext()->listAllVariables();
+  stringVector names = eval->getContext()->listAllVariables();
   for (int i=0;i<(int)names.size();i++)
     ClearVariable(eval,names[i]);
 }
 
 void ClearPersistent(Interpreter* eval) {
-  StringVector names = eval->getContext()->listGlobalVariables();
+  stringVector names = eval->getContext()->listGlobalVariables();
   for (int i=0;i<(int)names.size();i++) {
     if ((names[i].size() >= 1) && (names[i][0] == '_'))
       eval->getContext()->deleteGlobalVariable(names[i]);
@@ -517,7 +517,7 @@ void ClearPersistent(Interpreter* eval) {
 }
 
 void ClearGlobal(Interpreter* eval) {
-  StringVector names = eval->getContext()->listGlobalVariables();
+  stringVector names = eval->getContext()->listGlobalVariables();
   for (int i=0;i<(int)names.size();i++) {
     if ((names[i].size() >= 1) && (names[i][0] != '_')) {
       eval->getContext()->deleteGlobalVariable(names[i]);
@@ -527,7 +527,7 @@ void ClearGlobal(Interpreter* eval) {
 }
 
 ArrayVector ClearFunction(int nargout, const ArrayVector& arg, Interpreter* eval) {
-  StringVector names;
+  stringVector names;
   if (arg.size() == 0) 
     names.push_back("all");
   else
@@ -593,7 +593,7 @@ ArrayVector ClearFunction(int nargout, const ArrayVector& arg, Interpreter* eval
 //!
 ArrayVector WhoFunction(int nargout, const ArrayVector& arg, Interpreter* eval) {
   int i;
-  StringVector names;
+  stringVector names;
   char buffer[1000];
   if (arg.size() == 0) {
     names = eval->getContext()->listAllVariables();
@@ -722,13 +722,13 @@ ArrayVector FieldNamesFunction(int nargout, const ArrayVector& arg) {
   if (a.dataClass() != FM_STRUCT_ARRAY) {
     Array ret(Array::emptyConstructor());
     ret.promoteType(FM_CELL_ARRAY);
-    return SingleArrayVector(ret);
+    return singleArrayVector(ret);
   }
-  StringVector names(a.fieldNames());
+  rvstring names(a.fieldNames());
   ArrayMatrix m;
   for (int i=0;i<names.size();i++)
-    m.push_back(SingleArrayVector(Array::stringConstructor(names.at(i))));
-  return SingleArrayVector(Array::cellConstructor(m));
+    m.push_back(singleArrayVector(Array::stringConstructor(names.at(i))));
+  return singleArrayVector(Array::cellConstructor(m));
 }
 
 //!
@@ -921,9 +921,9 @@ ArrayVector IsSetFunction(int nargout, const ArrayVector& arg, Interpreter* eval
   ArrayReference d = eval->getContext()->lookupVariable(fname);
   isDefed = (d.valid());
   if (isDefed && !d->isEmpty())
-    return SingleArrayVector(Array::logicalConstructor(1));
+    return singleArrayVector(Array::logicalConstructor(1));
   else
-    return SingleArrayVector(Array::logicalConstructor(0));
+    return singleArrayVector(Array::logicalConstructor(0));
 }
     
   
@@ -1031,7 +1031,7 @@ ArrayVector ExistFunction(int nargout, const ArrayVector& arg, Interpreter* eval
   else if (stype=="var")
     retval = ExistVariableFunction(fname,eval);
   else throw Exception("Unrecognized search type for function 'exist'");
-  return SingleArrayVector(Array::int32Constructor(retval));
+  return singleArrayVector(Array::int32Constructor(retval));
 }
 
 //!
@@ -1058,7 +1058,7 @@ ArrayVector NNZFunction(int nargout, const ArrayVector& arg) {
   if (arg.size() != 1)
     throw Exception("nnz function takes one argument - the array");
   Array tmp(arg[0]);
-  return SingleArrayVector(Array::int32Constructor(tmp.nnz()));
+  return singleArrayVector(Array::int32Constructor(tmp.nnz()));
 }
 
 //!
@@ -1085,7 +1085,7 @@ ArrayVector IsSparseFunction(int nargout, const ArrayVector& arg) {
   if (arg.size() != 1)
     throw Exception("issparse function takes one argument - the array to test");
   Array tmp(arg[0]);
-  return SingleArrayVector(Array::logicalConstructor(tmp.sparse()));
+  return singleArrayVector(Array::logicalConstructor(tmp.sparse()));
 }
 
 //!
@@ -1365,7 +1365,7 @@ ArrayVector WhichFunction(int nargout, const ArrayVector& arg, Interpreter* eval
     }
   }
   if (nargout > 0)
-    return SingleArrayVector(ret);
+    return singleArrayVector(ret);
   else
     return ArrayVector();
 }
@@ -1398,7 +1398,7 @@ ArrayVector SingleFindModeFull(Array x) {
     retDim.set(0,nonZero);
     retDim.set(1,1);
   }
-  return SingleArrayVector(Array(FM_UINT32,retDim,op));
+  return singleArrayVector(Array(FM_UINT32,retDim,op));
 }
   
 ArrayVector RCFindModeFull(Array x) {
@@ -1805,7 +1805,7 @@ static std::string fname_only(std::string name) {
 }
 
 ArrayVector MFilenameFunction(int nargout, const ArrayVector& arg, Interpreter* eval) {
-  return SingleArrayVector(Array::stringConstructor(fname_only(eval->getMFileName())));
+  return singleArrayVector(Array::stringConstructor(fname_only(eval->getMFileName())));
 }
 
 //!
@@ -1827,11 +1827,11 @@ ArrayVector MFilenameFunction(int nargout, const ArrayVector& arg, Interpreter* 
 //!
 ArrayVector ComputerFunction(int nargout, const ArrayVector& arg) {
 #ifdef WIN32
-  return SingleArrayVector(Array::stringConstructor("PCWIN"));
+  return singleArrayVector(Array::stringConstructor("PCWIN"));
 #elif defined(__APPLE__)
-  return SingleArrayVector(Array::stringConstructor("MAC"));
+  return singleArrayVector(Array::stringConstructor("MAC"));
 #else
-  return SingleArrayVector(Array::stringConstructor("UNIX"));
+  return singleArrayVector(Array::stringConstructor("UNIX"));
 #endif
 }
 

@@ -105,7 +105,6 @@ ArrayVector FgetlineFunction(int, const ArrayVector& arg);
 ArrayVector MinFunction(int, const ArrayVector& arg);
 ArrayVector MaxFunction(int, const ArrayVector& arg);
 ArrayVector SumFunction(int, const ArrayVector& arg);
-ArrayVector DemoFunction(int, const ArrayVector& arg);
 ArrayVector CumsumFunction(int, const ArrayVector& arg);
 ArrayVector CumprodFunction(int, const ArrayVector& arg);
 ArrayVector MeanFunction(int, const ArrayVector& arg);
@@ -237,12 +236,12 @@ ArrayVector FalseFunction(int nargout, const ArrayVector& arg);
 ArrayVector RegExpRepDriverFunction(int nargout, const ArrayVector& arg);
 ArrayVector RegExpFunction(int nargout, const ArrayVector& arg);
 ArrayVector RegExpIFunction(int nargout, const ArrayVector& arg);
-void Tokenize(const std::string& str, StringVector& tokens,
+void Tokenize(const std::string& str, stringVector& tokens,
 	      const std::string& delimiters = " \n");
 bool inBundleMode();
-ArrayVector MatLoadFunction(int nargout, string filename, StringVector varnames, 
+ArrayVector MatLoadFunction(int nargout, string filename, rvstring varnames, 
 			    bool regexp, Interpreter *eval);
-ArrayVector MatSaveFunction(string filename, StringVector varnames,
+ArrayVector MatSaveFunction(string filename, rvstring varnames,
 			    Interpreter *eval);
 ArrayVector ImReadFunction(int nargout, const ArrayVector& arg, Interpreter* eval);
 ArrayVector CtypeDefineFunction(int nargout, const ArrayVector& arg);

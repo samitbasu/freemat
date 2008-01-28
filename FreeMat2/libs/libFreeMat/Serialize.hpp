@@ -53,7 +53,7 @@ public:
   void putFloat(float t);
   void putDouble(double t);
   void putBool(bool t);
-  void putStringVector(StringVector t);
+  void putStringVector(stringVector t);
   // Receive a stream of base objects
   void getBytes(char* ptr, int count);
   void getShorts(short* ptr, int count);
@@ -69,14 +69,14 @@ public:
   float  getFloat();
   double getDouble();
   bool   getBool();
-  StringVector getStringVector();
+  stringVector getStringVector();
   // Put an array
   void putDataClass(Class cls, bool sparseflag, 
-		    bool isuserclass, StringVector className);
+		    bool isuserclass, rvstring className);
   void putArray(const Array& dat);
   void putDimensions(const Dimensions& dim);
   // Get an array
-  Class getDataClass(bool& sparseflag, StringVector& className);
+  Class getDataClass(bool& sparseflag, rvstring& className);
   void getArray(Array& dat);
   Dimensions getDimensions();
 };

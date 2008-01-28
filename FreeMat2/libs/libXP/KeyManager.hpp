@@ -79,7 +79,7 @@ public:
   void WriteHistory();
  private:
   Context *context;
-  StringVector GetCompletions(string line, int word_end, 
+  stringVector GetCompletions(string line, int word_end, 
 			      string &matchString);
   void CursorLeft();
   void CursorRight();
@@ -96,7 +96,7 @@ public:
   void SearchPrefix(string aline, int alen);
   void Yank();
   void ClearCurrentLine();
-  void ListCompletions(StringVector completions);
+  void ListCompletions(stringVector completions);
   void CompleteWord();
  protected:
   void EraseCharacters(int pos, int count);

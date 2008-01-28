@@ -21,7 +21,6 @@
 %!
 
 % Contributed by Bruno DeMan
-% Licensed under the GPL
 
 function rawwrite(fname,x,byteorder)
   try 

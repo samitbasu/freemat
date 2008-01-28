@@ -17,10 +17,7 @@
 %flipdim(x,3)
 %@>
 %!
-
-% Copyright (c) 2002-2007 Samit Basu
-% Licensed under the GPL
-
+% Copyright (c) 2005 Samit Basu
 function x = flipdim(y,n)
   if (isempty(y)), x = y; return; end
   szey = size(y);

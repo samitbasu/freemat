@@ -28,7 +28,6 @@
 #include <QDialog>
 #include <QCheckBox>
 #include <QGroupBox>
-#include "highlighter.hpp"
 #include "findform.ui.h"
 #include "replaceform.ui.h"
 #include "Interpreter.hpp"
@@ -185,9 +184,6 @@ class FMEditor : public QMainWindow {
   QAction *dbSetClearBPAct, *dbStopAct;
   QAction *redoAct, *undoAct, *colorConfigAct, *indentConfigAct;
   QAction *executeSelectedAct, *executeCurrentAct;
-  QAction *separatorAct; 
-  enum { MaxRecentFiles = 5 }; 
-  QAction *recentFileActs[MaxRecentFiles]; 
   QTabWidget *tab;
   FMTextEdit *prevEdit;
   QFont m_font;
@@ -216,8 +212,6 @@ private:
   void readSettings();
   void writeSettings();
   void updateFont();
-  void updateRecentFileActions();
-  bool isFileOpened(const QString &fileName); 
 signals:
   void EvaluateText(QString);
 protected:
@@ -253,7 +247,6 @@ private slots:
   void configindent();
   void execSelected();
   void execCurrent();
-  void openRecentFile(); 
 public:
   void closeEvent(QCloseEvent *event);
 };

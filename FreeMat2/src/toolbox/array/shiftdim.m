@@ -44,10 +44,6 @@
 %squeeze(z)
 %@>
 %!
-
-% Copyright (c) 2007 Samit Basu
-% Licensed under the GPL
-
 function [y,n] = shiftdim(x,p)
   % Compute the size of x
     xsize = size(x);

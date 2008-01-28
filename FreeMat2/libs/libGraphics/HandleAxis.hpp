@@ -54,7 +54,7 @@ class HandleAxis : public HandleObject {
   void UpdateAxisFont();
   void HandlePlotBoxFlags();
   void GetMaxTickMetric(RenderEngine& gc,
-			StringVector labs,
+			stringVector labs,
 			double &maxx, double &maxy);
   void DrawLabel(RenderEngine& gc,
 		 double dx, double dy, 
@@ -114,7 +114,7 @@ public:
 		      double unitx, double unity, double unitz,
 		      QVector<double>  maptics,
 		      QVector<double>  minortics,
-		      StringVector labels,
+		      stringVector labels,
 		      std::string labelname,
 		      int ticlen, double ticdir);
   void DrawAxisLabels(RenderEngine& gc);

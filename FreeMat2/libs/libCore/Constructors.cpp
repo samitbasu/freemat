@@ -602,16 +602,16 @@ ArrayVector StructFunction(int nargout, const ArrayVector& arg) {
   if (arg.size() == 1) {
     Array t(arg[0]);
     if (!t.isUserClass() && t.dataClass() == FM_STRUCT_ARRAY)
-      return SingleArrayVector(t);
+      return singleArrayVector(t);
     if (!t.isUserClass())
       throw Exception("can only convert objects (user-defined types) into structs");
-    t.setClassName(StringVector());
-    return SingleArrayVector(t);
+    t.setClassName(rvstring());
+    return singleArrayVector(t);
   }
   if (arg.size() % 2)
     throw Exception("struct function requires pairs of field names and values");
   int pairCount = arg.size() / 2;
-  StringVector names;
+  rvstring names;
   ArrayVector values;
   for (int i=0;i<pairCount;i++) values.push_back(Array());
   for (int i=0;i<pairCount*2;i+=2) {

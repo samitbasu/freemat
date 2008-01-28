@@ -24,13 +24,13 @@
 #include "Types.hpp"
 
 class UserClass {
-  StringVector fieldNames;
-  StringVector parentClasses;
+  rvstring fieldNames;
+  rvstring parentClasses;
 public:
   UserClass();
-  UserClass(StringVector fields, StringVector parents);
+  UserClass(rvstring fields, rvstring parents);
   bool matchClass(UserClass test);
-  StringVector getParentClasses();
+  rvstring getParentClasses();
   ~UserClass();
 };
 

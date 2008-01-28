@@ -44,8 +44,7 @@
 %@>
 %!
 
-% Copyright (c) 2002-2007 Samit Basu
-% Licensed under the GPL
+% Copyright (c) 2002-2006 Samit Basu
 
 function y = all(A,dim)
   if (nargin == 0)

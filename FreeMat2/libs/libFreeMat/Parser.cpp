@@ -631,7 +631,6 @@ Tree* Parser::anonymousFunction() {
   root->addChild(expression());
   pos2 = m_lex.contextNum();
   root->setText("(" + m_lex.snippet(pos1,pos2));
-  root->validate();
   return root;
 }
 

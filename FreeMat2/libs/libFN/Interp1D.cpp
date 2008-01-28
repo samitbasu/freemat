@@ -33,7 +33,7 @@ int interv(const T *xt, int lxt, T x, int *left, int *mflag)
   static int ihi, istep, middle;
   
   /*  from  * a practical guide to splines *  by C. de Boor */
-  /* Computes  left = max( i :  xt(i) .lt. xt(lxt) .and.  xt(i) .le. x )  . */
+  /* omputes  left = max( i :  xt(i) .lt. xt(lxt) .and.  xt(i) .le. x )  . */
 
   /* ******  i n p u t  ****** */
   /*  xt.....a real sequence, of length  lxt , assumed to be nondecreasing */
@@ -416,7 +416,7 @@ ArrayVector Interplin1Function(int nargout, const ArrayVector& arg) {
     break;
   }
   }
-  return SingleArrayVector(Array(y1.dataClass(),
+  return singleArrayVector(Array(y1.dataClass(),
 				 xi.dimensions(),
 				 dp));
       

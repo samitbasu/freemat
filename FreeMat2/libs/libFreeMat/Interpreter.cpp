@@ -17,6 +17,10 @@
  *
  */
 
+#ifdef HAVE_LLVM
+#include "JITVM.hpp"
+#endif
+
 #include "Interpreter.hpp"
 #include <math.h>
 #include <stdio.h>
@@ -39,8 +43,6 @@
 #include <QtCore>
 #include <fstream>
 #include <stdarg.h>
-#include "JIT.hpp"
-#include "JITFunc.hpp"
 
 
 #ifdef WIN32
@@ -1813,63 +1815,30 @@ void ForLoopHelperComplex(Tree *codeBlock, Class indexClass,
 //@}
 //!
 //Works
-
-static bool compileJITBlock(Interpreter *interp, Tree *t) {
-  delete t->JITFunction();
-  JITFunc *cg = new JITFunc(interp);
-  bool success = false;
-  try {
-    cg->compile(t);
-    success = true;
-    t->setJITState(Tree::SUCCEEDED);
-    t->setJITFunction(cg);
-  } catch (Exception &e) {
-    std::cout << e.getMessageCopy() << "\r\n";
-    delete cg;
-    success = false;
-    t->setJITState(Tree::FAILED);
-  }
-  return success;
-}
-
-static bool prepJITBlock(Tree *t) {
-  bool success;
-  try {
-    t->JITFunction()->prep();
-    success = true;
-  } catch (Exception &e) {
-    std::cout << e.getMessageCopy() << "\r\n";
-    success = false;
-  }
-  return success;
-}
-
 void Interpreter::forStatement(Tree *t) {
-  // Try to compile this block to an instruction stream  
-  if (jitcontrol) {
-    if (t->JITState() == Tree::UNTRIED) {
-      bool success = compileJITBlock(this,t);
-      if (success)
-	success = prepJITBlock(t);
-      if (success) {
-	t->JITFunction()->run();
-	return;
-      } 
-    } else if (t->JITState() == Tree::SUCCEEDED) {
-      bool success = prepJITBlock(t);
-      if (!success) {
-	success = compileJITBlock(this,t);
-	if (success)
-	  success = prepJITBlock(t);
-      }
-      if (success) {
-	t->JITFunction()->run();
-	return;
-      }
-    }
-  }
   Array indexSet;
   string indexVarName;
+
+  // Try to compile this for statement to an instruction stream
+  if (jitcontrol) {
+#ifdef HAVE_LLVM
+    JITVM jit;
+    bool success = false;
+    try {
+      jit.compile(t,this);
+      success = true;
+    } catch (Exception &e) {
+      t->print();
+      std::cout << e.getMessageCopy() << "\r\n";
+      success = false;
+    }
+    if (success) {
+      jit.run(this);
+      return;
+    }
+#endif
+  }
+
   /* Get the name of the indexing variable */
   if (t->first()->is('=')) {
     indexVarName = t->first()->first()->text();
@@ -2325,7 +2294,7 @@ void Interpreter::displayArray(Array b) {
   FuncPtr val;
   if (b.isUserClass() && ClassResolveFunction(this,b,"display",val)) {
     if (val->updateCode(this)) refreshBreakpoints();
-    ArrayVector args(SingleArrayVector(b));
+    ArrayVector args(singleArrayVector(b));
     ArrayVector retvec(val->evaluateFunction(this,args,1));
   } else
     PrintArrayClassic(b,printLimit,this);
@@ -2448,7 +2417,7 @@ void Interpreter::assign(ArrayReference r, Tree *s, Array &data) {
     else
       r->setNDimSubset(m,data,this);
   } else if (s->is(TOK_BRACES)) {
-    ArrayVector datav(SingleArrayVector(data));
+    ArrayVector datav(singleArrayVector(data));
     ArrayVector m;
     endTotal = s->numChildren();
     for (int p = 0; p < s->numChildren(); p++) {
@@ -2461,7 +2430,7 @@ void Interpreter::assign(ArrayReference r, Tree *s, Array &data) {
     else
       r->setNDimContentsAsList(m,datav,this);
   } else if (s->is('.')) {
-    ArrayVector datav(SingleArrayVector(data));
+    ArrayVector datav(singleArrayVector(data));
     r->setFieldAsList(s->first()->text(),datav);
   } else if (s->is(TOK_DYN)) {
     string field;
@@ -2471,7 +2440,7 @@ void Interpreter::assign(ArrayReference r, Tree *s, Array &data) {
     } catch (Exception &e) {
       throw Exception("dynamic field reference to structure requires a string argument");
     }
-    ArrayVector datav(SingleArrayVector(data));
+    ArrayVector datav(singleArrayVector(data));
     r->setFieldAsList(field,datav);
   }
   RestoreEndInfo;
@@ -3189,7 +3158,7 @@ Array Interpreter::AllColonReference(Array v, int index, int count) {
 //test
 void Interpreter::specialFunctionCall(Tree *t, bool printIt) {
   ArrayVector m;
-  StringVector args;
+  stringVector args;
   for (int index=0;index < t->numChildren();index++) 
     args.push_back(t->child(index)->text());
   if (args.empty()) return;
@@ -3340,7 +3309,7 @@ void Interpreter::multiFunctionCall(Tree *t, bool printIt) {
     warningMessage("one or more outputs not assigned in call.");
 }
 
-int getArgumentIndex(StringVector list, std::string t) {
+int getArgumentIndex(stringVector list, std::string t) {
   bool foundArg = false;
   std::string q;
   int i = 0;
@@ -3906,7 +3875,7 @@ int getArgumentIndex(StringVector list, std::string t) {
 //@>
 //!
 void Interpreter::collectKeywords(Tree *q, ArrayVector &keyvals,
-				  TreeList &keyexpr, StringVector &keywords) {
+				  TreeList &keyexpr, stringVector &keywords) {
   // Search for the keyword uses - 
   // To handle keywords, we make one pass through the arguments,
   // recording a list of keywords used and using ::expression to
@@ -3925,8 +3894,8 @@ void Interpreter::collectKeywords(Tree *q, ArrayVector &keyvals,
   }
 }
 
-int* Interpreter::sortKeywords(ArrayVector &m, StringVector &keywords,
-			       StringVector arguments, ArrayVector keyvals) {
+int* Interpreter::sortKeywords(ArrayVector &m, stringVector &keywords,
+			       stringVector arguments, ArrayVector keyvals) {
   // If keywords were used, we have to permute the
   // entries of the arrayvector to the correct order.
   int *keywordNdx = new int[keywords.size()];
@@ -4001,8 +3970,8 @@ int* Interpreter::sortKeywords(ArrayVector &m, StringVector &keywords,
 // m is vector of argument values
 // keywords is the list of values passed as keywords
 // keyexpr is the   
-void Interpreter::handlePassByReference(Tree *q, StringVector arguments,
-					ArrayVector m,StringVector keywords, 
+void Interpreter::handlePassByReference(Tree *q, stringVector arguments,
+					ArrayVector m,stringVector keywords, 
 					TreeList keyexpr, int* argTypeMap) {
   Tree *p;
   // M functions can modify their arguments
@@ -4037,7 +4006,7 @@ void Interpreter::functionExpression(Tree *t,
 				     bool outputOptional,
 				     ArrayVector &output) {
   ArrayVector m, n;
-  StringVector keywords;
+  stringVector keywords;
   ArrayVector keyvals;
   TreeList keyexpr;
   FuncPtr funcDef;
@@ -4159,7 +4128,7 @@ void Interpreter::toggleBP(QString fname, int lineNumber) {
 }
 
 MFunctionDef* Interpreter::lookupFullPath(string fname) {
-  StringVector allFuncs(context->listAllFunctions());
+  stringVector allFuncs(context->listAllFunctions());
   FuncPtr val;
   for (int i=0;i<allFuncs.size();i++) {
     bool isFun = context->lookupFunction(allFuncs[i],val);
@@ -4185,7 +4154,7 @@ void Interpreter::addBreakpoint(string name, int line) {
   else
     fullFileName = name;
   // Get a list of all functions
-  StringVector allFuncs(context->listAllFunctions());
+  stringVector allFuncs(context->listAllFunctions());
   // We make one pass through the functions, and update 
   // those functions that belong to the given filename
   for (int i=0;i<allFuncs.size();i++) {
@@ -4990,21 +4959,10 @@ Interpreter::Interpreter(Context* aContext) {
   m_capture = "";
   m_profile = false;
   m_quietlevel = 0;
-  m_jit = NULL;
-}
-
-JIT* Interpreter::JITPointer() {
-  if (m_jit)
-    return m_jit;
-  else {
-    m_jit = new JIT;
-    return m_jit;
-  }
 }
 
 Interpreter::~Interpreter() {
   delete context;
-  if (m_jit) delete m_jit;
 }
 
 

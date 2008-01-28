@@ -1,7 +1,3 @@
-
-% Copyright (c) 2002-2007 Samit Basu
-% Licensed under the GPL
-
 function beginmodule(&p,sourcepath,modname,moddesc,secname, ...
                      section_descriptors)
     p.moddesc = moddesc;

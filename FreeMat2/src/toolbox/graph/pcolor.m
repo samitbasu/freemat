@@ -14,10 +14,6 @@
 %   pcolor(X,Y,C)
 %@]
 %!
-
-% Copyright (c) 2002-2007 Samit Basu
-% Licensed under the GPL
-
 function ohandle = pcolor(varargin)
    % Check for an axes handle
    if (nargin>=2)

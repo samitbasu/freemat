@@ -34,7 +34,6 @@
 %!
 
 % Copyright (c) 2002-2006 Samit Basu
-% Licensed under the GPL
 
 function spy(A,colspec)
 if (nargin==1)

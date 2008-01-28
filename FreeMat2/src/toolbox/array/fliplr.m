@@ -24,8 +24,6 @@
 %@$"y=fliplr([1;2;3])","[1;2;3]","exact"
 %@$"y=fliplr([])","[]","exact"
 %!
-
-% Copyright (c) 2002-2007 Samit Basu
-% Licensed under the GPL
+% Copyright (c) 2002, 2003 Samit Basu
 function x = fliplr(y)
   x = flipdim(y,2);

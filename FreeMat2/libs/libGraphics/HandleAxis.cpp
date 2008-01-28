@@ -346,7 +346,7 @@ void FormatAxisManual(double t1, double t2, int tickcount,
 		      bool isLogarithmic,
 		      double& tStart, double &tStop,
 		      QVector<double> &tickLocations,
-		      StringVector &tlabels) {
+		      stringVector &tlabels) {
   int tCount;
   tickLocations.clear();
   tlabels.clear();
@@ -379,7 +379,7 @@ void FormatAxisAuto(double tMin, double tMax, int tickcount,
 		    bool isLogarithmic,
 		    double& tStart, double &tStop,
 		    QVector<double> &tickLocations,
-		    StringVector &tlabels) {
+		    stringVector &tlabels) {
   int tCount;
   tickLocations.clear();
   tlabels.clear();
@@ -410,7 +410,7 @@ void FormatAxisAuto(double tMin, double tMax, int tickcount,
 }
 
 void HandleAxis::GetMaxTickMetric(RenderEngine &gc,
-				  StringVector labs,
+				  stringVector labs,
 				  double &maxx, double &maxy) {
   maxx = 0;
   maxy = 0;
@@ -1648,11 +1648,11 @@ void HandleAxis::RecalculateTicks() {
   // We have to calculate the tick sets for each axis...
   QVector<double> limits(GetAxisLimits());
   QVector<double> xticks;
-  StringVector xlabels;
+  stringVector xlabels;
   QVector<double> yticks;
-  StringVector ylabels;
+  stringVector ylabels;
   QVector<double> zticks;
-  StringVector zlabels;
+  stringVector zlabels;
   int xcnt, ycnt, zcnt;
   xcnt = GetTickCount(gc,limits[0],x1pos[1],x1pos[2],
 		      limits[1],x1pos[1],x1pos[2]);
@@ -1766,7 +1766,7 @@ void HandleAxis::RePackFigure() {
       xlabelHeight = fp->GetTextHeightInPixels();
     }
     HPStringSet *hp = (HPStringSet*) LookupProperty("xticklabel");
-    StringVector xlabels(hp->Data());
+    stringVector xlabels(hp->Data());
     for (int i=0;i<xlabels.size();i++) {
       QRect sze(fm.boundingRect(xlabels[i].c_str()));
       maxTickWidth = qMax(maxTickWidth,sze.width());
@@ -1780,7 +1780,7 @@ void HandleAxis::RePackFigure() {
       ylabelHeight = fp->GetTextHeightInPixels();
     }
     HPStringSet *hp = (HPStringSet*) LookupProperty("yticklabel");
-    StringVector ylabels(hp->Data());
+    stringVector ylabels(hp->Data());
     for (int i=0;i<ylabels.size();i++) {
       QRect sze(fm.boundingRect(ylabels[i].c_str()));
       maxTickWidth = qMax(maxTickWidth,sze.width());
@@ -1794,7 +1794,7 @@ void HandleAxis::RePackFigure() {
       zlabelHeight = fp->GetTextHeightInPixels();
     }
     HPStringSet *hp = (HPStringSet*) LookupProperty("zticklabel");
-    StringVector zlabels(hp->Data());
+    stringVector zlabels(hp->Data());
     for (int i=0;i<zlabels.size();i++) {
       QRect sze(fm.boundingRect(zlabels[i].c_str()));
       maxTickWidth = qMax(maxTickWidth,sze.width());
@@ -1987,7 +1987,7 @@ void HandleAxis::HandlePlotBoxFlags() {
 }
   
 void HandleAxis::UpdateState() {
-  StringVector tset;
+  stringVector tset;
   if (HasChanged("xlim")) ToManual("xlimmode");
   if (HasChanged("ylim")) ToManual("ylimmode");
   if (HasChanged("zlim")) ToManual("zlimmode");
@@ -2168,11 +2168,11 @@ void HandleAxis::DrawTickMarks(RenderEngine &gc) {
   }
   HPStringSet *qp;
   qp = (HPStringSet*) LookupProperty("xticklabel");
-  StringVector xlabeltxt(qp->Data());
+  stringVector xlabeltxt(qp->Data());
   qp = (HPStringSet*) LookupProperty("yticklabel");
-  StringVector ylabeltxt(qp->Data());
+  stringVector ylabeltxt(qp->Data());
   qp = (HPStringSet*) LookupProperty("zticklabel");
-  StringVector zlabeltxt(qp->Data());
+  stringVector zlabeltxt(qp->Data());
   // Draw the ticks
   QVector<double> limits(GetAxisLimits());
   // Next step - calculate the tick directions...
@@ -2280,7 +2280,7 @@ void HandleAxis::DrawTickLabels(RenderEngine& gc,
 				double unitx, double unity, double unitz,
 				QVector<double>  maptics,
 				QVector<double>  minortics,
-				StringVector labels,
+				stringVector labels,
 				std::string labelname,
 				int ticlen, double ticdir) {
   gc.color(color);

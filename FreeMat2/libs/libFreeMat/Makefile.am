@@ -1,6 +1,6 @@
 noinst_LIBRARIES = libFreeMat.a
 
-INCLUDES = -I@top_srcdir@/libs/libXP -I@top_srcdir@/libs/libMex -I@top_srcdir@/libs/libMatC
+INCLUDES = -I@top_srcdir@/libs/libXP -I@top_srcdir@/libs/libMex 
 
 libFreeMat_a_MOC = Interpreter.moc.cpp
 
@@ -20,7 +20,6 @@ IEEEFP.hpp \
 LAPACK.hpp \
 LeastSquaresSolver.hpp \
 LinearEqSolver.hpp \
-List.hpp \
 LUDecompose.hpp \
 Malloc.hpp \
 Math.hpp \
@@ -42,6 +41,7 @@ Token.hpp \
 Parser.hpp \
 Scanner.hpp \
 Tree.hpp \
+JITVM.hpp \
 List.hpp \
 fftw_cycle.h
 
@@ -74,6 +74,7 @@ Token.cpp \
 Parser.cpp \
 Scanner.cpp \
 Tree.cpp \
+JITVM.cpp \
 FunctionDef.cpp \
 $(libFreeMat_a_HFILES) 
 

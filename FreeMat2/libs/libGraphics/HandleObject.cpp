@@ -34,7 +34,7 @@ void HandleObject::ToManual(std::string name) {
   qp->Data("manual");
 }
 
-bool HandleObject::HasChanged(StringVector names) {
+bool HandleObject::HasChanged(stringVector names) {
   HandleProperty *hp;
   for (int i=0;i<names.size();i++) {
     hp = LookupProperty(names[i]);
@@ -44,17 +44,17 @@ bool HandleObject::HasChanged(StringVector names) {
 }
 
 bool HandleObject::HasChanged(std::string name) {
-  StringVector names;
+  stringVector names;
   names.push_back(name);
   return HasChanged(names);
 }
 
 void HandleObject::ClearAllChanged() {
-  StringVector names(m_properties.getCompletions(""));
+  stringVector names(m_properties.getCompletions(""));
   ClearChanged(names);
 }
 
-void HandleObject::ClearChanged(StringVector names) {
+void HandleObject::ClearChanged(stringVector names) {
   HandleProperty *hp;
   for (int i=0;i<names.size();i++) {
     hp = LookupProperty(names[i]);
@@ -90,7 +90,7 @@ HandleObject::~HandleObject() {
     }
   }
   // Delete our properties also
-  StringVector propSet(m_properties.getCompletions(""));
+  stringVector propSet(m_properties.getCompletions(""));
   for (int i=0;i<propSet.size();i++) {
     HandleProperty** hp = m_properties.findSymbol(propSet[i]);
     if (hp) delete (*hp);
@@ -105,7 +105,7 @@ HandleProperty* HandleObject::LookupProperty(std::string name) {
   HandleProperty** hp = m_properties.findSymbol(name);
   if (hp) return (*hp);
   //complete it
-  StringVector completes(m_properties.getCompletions(name));
+  stringVector completes(m_properties.getCompletions(name));
   if (completes.empty())
     throw Exception("invalid property " + name);
   if (completes.size() != 1)
@@ -221,7 +221,7 @@ void HandleObject::SetConstrainedStringDefault(std::string name, std::string val
 
 void HandleObject::SetConstrainedStringSetDefault(std::string name, std::string values) {
   HPConstrainedStringSet *hp = (HPConstrainedStringSet*) LookupProperty(name);
-  StringVector data;
+  stringVector data;
   Tokenize(values,data,"|");
   ((HPStringSet*)hp)->Data(data);
 }

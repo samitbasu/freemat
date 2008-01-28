@@ -21,7 +21,6 @@
 %@$"y=linspace(0,60000,60001)(end)","60000","exact"
 %!
 % Copyright (c) 2002, 2003 Samit Basu
-% Licensed under the GPL
 function y = linspace(a,b,len)
   if (nargin < 3)
     len = 100;

@@ -40,8 +40,8 @@ static int indent_level = 0;
 static QFile *fp;
 static QTextStream *ts;
 static Interpreter *eval;
-StringVector localIdents;
-StringVector returnVals;
+stringVector localIdents;
+stringVector returnVals;
 int forDepth;
 
 bool IsVariableDefined(string varname) {
@@ -587,7 +587,7 @@ ArrayVector fccFunction(int nargout, const ArrayVector& args, Interpreter* m_eva
   return ArrayVector();
 }
 
-static void VariableReferencesList(const tree & t, StringVector& idents) {
+static void VariableReferencesList(const tree & t, stringVector& idents) {
   if (t.is(TOK_VARIABLE)) {
     bool exists = false;
     for (int i=0;(i<idents.size());i++) {
@@ -777,7 +777,7 @@ void VMInstruction::print(std::ostream& o) {
 
 void VMStream::Run(Interpreter* m_eval) {
   // Fill out the arguments
-  StringVector syms(get_symbol_names());
+  stringVector syms(get_symbol_names());
   for (int i=0;i<syms.size();i++) {
     SymbolInformation *psym = find_symbol(syms[i]);
     if (psym && psym->isArgument()) {
@@ -939,7 +939,7 @@ void VMStream::Run(Interpreter* m_eval) {
 }
 
 std::ostream& operator <<(std::ostream& o, VMStream& t) {
-  StringVector syms(t.get_symbol_names());
+  stringVector syms(t.get_symbol_names());
   for (int i=0;i<syms.size();i++) {
     SymbolInformation *psym = t.find_symbol(syms[i]);
     if (psym && psym->isArgument()) {
