@@ -32,8 +32,8 @@ HandleText::~HandleText() {
 }
 
 void HandleText::UpdateState() {
-  QFont::Style fstyle = QFont::StyleNormal;
-  QFont::Weight fweight = QFont::Normal;
+  QFont::Style fstyle;
+  QFont::Weight fweight;
   HPString *fontname = (HPString*) LookupProperty("fontname");
   HPFontAngle *fontangle = (HPFontAngle*) LookupProperty("fontangle");
   HPFontWeight *fontweight = (HPFontWeight*) LookupProperty("fontweight");
@@ -79,10 +79,9 @@ void HandleText::PaintMe(RenderEngine& gc) {
   if (!axis) return;
   // Map position -> pixel location
   int x, y;
-  QVector<double> pos(VectorPropertyLookup("position"));
+  std::vector<double> pos(VectorPropertyLookup("position"));
   // remap it
-  if (pos.size() == 2) pos << 0;
-  QVector<double> mapped(axis->ReMap(pos));
+  std::vector<double> mapped(axis->ReMap(pos));
   gc.toPixels(mapped[0],mapped[1],mapped[2],x,y);
   gc.setupDirectDraw();
   // Retrieve the margin...

@@ -70,315 +70,312 @@
 //
 // The only one missing case is the one described above.  
 //
-static bool HasNestedFunctions(Tree *root) {
-  if (root->is(TOK_NEST_FUNC)) return true;
-  for (int i=0;i<root->numChildren();i++)
-    if (HasNestedFunctions(root->child(i))) return true;
+bool HasNestedFunctions(const tree &root) {
+  if (root.is(TOK_NEST_FUNC)) return true;
+  for (int i=0;i<root.numchildren();i++)
+    if (HasNestedFunctions(root.child(i))) return true;
   return false;
 }
 
-static unsigned AdjustContextOne(unsigned m) {
+unsigned AdjustContextOne(unsigned m) {
   return (((m & 0xffff) - 1) | (m & 0xffff0000));
 }
 
-Tree* Parser::statementSeperator() {
-  Tree* root = new Tree;
-  if (match(';')) {
-    delete root;
-    root = new Tree(TOK_QSTATEMENT,AdjustContextOne(m_lex.contextNum()));
-    consume();
-    if (match('\n')) 
-      consume();
-  } else if (match('\n')) {
-    delete root;
-    root = new Tree(TOK_STATEMENT,AdjustContextOne(m_lex.contextNum()));
-    consume();
-  } else if (match(',')) {
-    delete root;
-    root = new Tree(TOK_STATEMENT,AdjustContextOne(m_lex.contextNum()));
-    consume();
+tree Parser::StatementSeperator() {
+  tree root;
+  if (Match(';')) {
+    root = mkLeaf(TOK_QSTATEMENT,AdjustContextOne(m_lex.ContextNum()));
+    Consume();
+    if (Match('\n')) 
+      Consume();
+  } else if (Match('\n')) {
+    root = mkLeaf(TOK_STATEMENT,AdjustContextOne(m_lex.ContextNum()));
+    Consume();
+  } else if (Match(',')) {
+    root = mkLeaf(TOK_STATEMENT,AdjustContextOne(m_lex.ContextNum()));
+    Consume();
   }
   return root;
 }
 
-Tree* Parser::singletonStatement() {
-  Tree* root = new Tree(next());
-  consume();
+tree Parser::SingletonStatement() {
+  tree root(mkLeaf(Next()));
+  Consume();
   return root;
 }
 
-Tree* Parser::dBStepOrTraceStatement() {
-  Tree* root = new Tree(next());
-  consume();
-  if (match(',') || match(';') || match('\n'))
+tree Parser::DBStepOrTraceStatement() {
+  tree root(mkLeaf(Next()));
+  Consume();
+  if (Match(',') || Match(';') || Match('\n'))
     return root;
-  root->addChild(expression());
+  addChild(root,Expression());
   return root;
 }
 
 
-Tree* Parser::multiFunctionCall() {
-  Tree* root(new Tree(expect('[')));
-  root->rename(TOK_MULTI);
-  Tree* lhs = new Tree(TOK_BRACKETS,m_lex.contextNum());
-  while (!match(']')) {
-    lhs->addChild(variableDereference());
-    if (match(',')) consume();
+tree Parser::MultiFunctionCall() {
+  tree root(mkLeaf(Expect('[')));
+  root.Rename(TOK_MULTI);
+  tree lhs = mkLeaf(TOK_BRACKETS,m_lex.ContextNum());
+  while (!Match(']')) {
+    addChild(lhs,VariableDereference());
+    if (Match(',')) Consume();
   }
-  expect(']');
-  root->addChild(lhs);
-  expect('=');
-  root->addChild(expression());
+  Expect(']');
+  addChild(root,lhs);
+  Expect('=');
+  addChild(root,Expression());
   return root;
 }
 
-Tree* Parser::functionDefinition() {
-  Tree* root(new Tree(expect(TOK_FUNCTION)));
-  if (match('[')) {
-    consume();
-    Tree* lhs = new Tree(TOK_BRACKETS,m_lex.contextNum());
-    while (!match(']')) {
-      lhs->addChild(identifier());
-      if (match(',')) consume();
+tree Parser::FunctionDefinition() {
+  tree root(mkLeaf(Expect(TOK_FUNCTION)));
+  if (Match('[')) {
+    Consume();
+    tree lhs = mkLeaf(TOK_BRACKETS,m_lex.ContextNum());
+    while (!Match(']')) {
+      addChild(lhs,Identifier());
+      if (Match(',')) Consume();
     }
-    expect(']');
-    root->addChild(lhs);
-    expect('=');
-    root->addChild(identifier());
+    Expect(']');
+    addChild(root,lhs);
+    Expect('=');
+    addChild(root,Identifier());
   } else {
     // Two possible parses here
-    Tree* save = identifier();
-    if (match('=')) {
-      Tree* lhs = new Tree(TOK_BRACKETS,m_lex.contextNum());
-      lhs->addChild(save);
-      root->addChild(lhs);
-      expect('=');
-      root->addChild(identifier());
+    tree save = Identifier();
+    if (Match('=')) {
+      tree lhs = mkLeaf(TOK_BRACKETS,m_lex.ContextNum());
+      addChild(lhs,save);
+      addChild(root,lhs);
+      Expect('=');
+      addChild(root,Identifier());
     } else {
-      root->addChild(new Tree(TOK_BRACKETS,m_lex.contextNum()));
-      root->addChild(save);
+      addChild(root,mkLeaf(TOK_BRACKETS,m_lex.ContextNum()));
+      addChild(root,save);
     }
   }
   // Process (optional) args
-  if (match('(')) {
-    consume();
-    Tree* args = new Tree(TOK_PARENS,m_lex.contextNum());
-    while (!match(')')) {
-      Tree* ident;
-      if (match('&')) {
-	ident = new Tree(expect('&'));
-	ident->addChild(identifier());
+  if (Match('(')) {
+    Consume();
+    tree args = mkLeaf(TOK_PARENS,m_lex.ContextNum());
+    while (!Match(')')) {
+      tree ident;
+      if (Match('&')) {
+	ident = mkLeaf(Expect('&'));
+	addChild(ident,Identifier());
       } else 
-	ident = identifier();
-      args->addChild(ident);
-      if (match(',')) consume();
+	ident = Identifier();
+      addChild(args,ident);
+      if (Match(',')) Consume();
     }
-    expect(')');
-    root->addChild(args);
+    Expect(')');
+    addChild(root,args);
   } else {
-    root->addChild(new Tree(TOK_PARENS,m_lex.contextNum()));
+    addChild(root,mkLeaf(TOK_PARENS,m_lex.ContextNum()));
   }
-  delete statementSeperator();
-  root->addChild(statementList());
+  StatementSeperator();
+  addChild(root,StatementList());
   //  if (HasNestedFunctions(root))
-  //    expect(TOK_END);
+  //    Expect(TOK_END);
   return root;
 }
 
-bool Parser::matchNumber() {
-  return (match(TOK_INTEGER) || match(TOK_FLOAT) ||
-	  match(TOK_DOUBLE) || match(TOK_COMPLEX) || 
-	  match(TOK_DCOMPLEX));
+bool Parser::MatchNumber() {
+  return (Match(TOK_INTEGER) || Match(TOK_FLOAT) ||
+	  Match(TOK_DOUBLE) || Match(TOK_COMPLEX) || 
+	  Match(TOK_DCOMPLEX));
 }
 
-Tree* Parser::specialFunctionCall() {
-  m_lex.pushWSFlag(false);
-  Tree* root = new Tree(TOK_SPECIAL,m_lex.contextNum());
-  root->addChild(identifier());
+tree Parser::SpecialFunctionCall() {
+  m_lex.PushWSFlag(false);
+  tree root = mkLeaf(TOK_SPECIAL,m_lex.ContextNum());
+  addChild(root,Identifier());
   // Next must be a whitespace
-  if (!match(TOK_SPACE)) serror("Not special call");
-  consume();
+  if (!Match(TOK_SPACE)) serror("Not special call");
+  Consume();
   {
     Scanner t_lex(m_lex);
-    if (t_lex.next().is(';') ||
-	t_lex.next().is('\n') ||
-	t_lex.next().is('(') ||
-	t_lex.next().is(','))
+    if (t_lex.Next().Is(';') ||
+	t_lex.Next().Is('\n') ||
+	t_lex.Next().Is('(') ||
+	t_lex.Next().Is(','))
       serror("Not special call");
-    if (t_lex.next().isBinaryOperator() || 
-	t_lex.next().isUnaryOperator()) {
-      t_lex.consume();
-      if (t_lex.next().is(TOK_SPACE)) serror("Not special call");
+    if (t_lex.Next().IsBinaryOperator() || 
+	t_lex.Next().IsUnaryOperator()) {
+      t_lex.Consume();
+      if (t_lex.Next().Is(TOK_SPACE)) serror("Not special call");
     }
   }
   // If the next thing is a character or a number, we grab "blobs"
-  m_lex.setBlobMode(true);
-  while (!match(';') && !match('\n') && !(match(','))) {
-    root->addChild(new Tree(next()));
-    consume();
-    if (match(TOK_SPACE)) consume();
+  m_lex.SetBlobMode(true);
+  while (!Match(';') && !Match('\n') && !(Match(','))) {
+    addChild(root,mkLeaf(Next()));
+    Consume();
+    if (Match(TOK_SPACE)) Consume();
   }
-  m_lex.setBlobMode(false);
-  m_lex.popWSFlag();
+  m_lex.SetBlobMode(false);
+  m_lex.PopWSFlag();
   return root;
 }
 
-Tree* Parser::forIndexExpression() {
-  if (match('(')) {
-    consume();
-    Tree* ret = forIndexExpression();
-    expect(')');
+tree Parser::ForIndexExpression() {
+  if (Match('(')) {
+    Consume();
+    tree ret = ForIndexExpression();
+    Expect(')');
     return ret;
   }
-  Tree* ident = identifier();
-  if (match('=')) {
-    Tree* root(new Tree(next()));
-    consume();
-    Tree* expr = expression();
-    root->addChildren(ident,expr);
+  tree ident = Identifier();
+  if (Match('=')) {
+    tree root(mkLeaf(Next()));
+    Consume();
+    tree expr = Expression();
+    addChild(root,ident,expr);
     return root;
   } else
     return ident;
 }
 
-Tree* Parser::forStatement() {
-  Tree* root(new Tree(expect(TOK_FOR)));
-  Tree* index = forIndexExpression();
-  delete statementSeperator();
-  Tree* block = statementList();
-  expect(TOK_END);
-  root->addChildren(index,block);
+tree Parser::ForStatement() {
+  tree root(mkLeaf(Expect(TOK_FOR)));
+  tree index = ForIndexExpression();
+  tree term = StatementSeperator();
+  tree block = StatementList();
+  Expect(TOK_END);
+  addChild(root,index,block);
   return root;
 }
 
-Tree* Parser::whileStatement() {
-  Tree* root(new Tree(expect(TOK_WHILE)));
-  Tree* warg = expression();
-  delete statementSeperator();
-  Tree* block = statementList();
-  expect(TOK_END);
-  root->addChildren(warg,block);
+tree Parser::WhileStatement() {
+  tree root(mkLeaf(Expect(TOK_WHILE)));
+  tree warg = Expression();
+  StatementSeperator();
+  tree block = StatementList();
+  Expect(TOK_END);
+  addChild(root,warg,block);
   return root;
 }
 
-Tree* Parser::ifStatement() {
-  Tree* root(new Tree(expect(TOK_IF)));
-  Tree* test = expression();
-  delete statementSeperator();
-  Tree* trueblock = statementList();
-  root->addChildren(test,trueblock);
-  while (match(TOK_ELSEIF)) {
-    Tree* elseif(new Tree(next()));
-    consume();
-    Tree* test = expression();
-    Tree* block = statementList();
-    elseif->addChildren(test,block);
-    root->addChild(elseif);
+tree Parser::IfStatement() {
+  tree root(mkLeaf(Expect(TOK_IF)));
+  tree test = Expression();
+  StatementSeperator();
+  tree trueblock = StatementList();
+  addChild(root,test,trueblock);
+  while (Match(TOK_ELSEIF)) {
+    tree elseif(mkLeaf(Next()));
+    Consume();
+    tree test = Expression();
+    tree block = StatementList();
+    addChild(elseif,test,block);
+    addChild(root,elseif);
   }
-  if (match(TOK_ELSE)) {
-    Tree* elseblk(new Tree(next()));
-    consume();
-    Tree* block = statementList();
-    elseblk->addChild(block);
-    root->addChild(elseblk);
+  if (Match(TOK_ELSE)) {
+    tree elseblk(mkLeaf(Next()));
+    Consume();
+    tree block = StatementList();
+    addChild(elseblk,block);
+    addChild(root,elseblk);
   }
-  expect(TOK_END);
+  Expect(TOK_END);
   return root;
 }
 
-Tree* Parser::identifier() {
-  if (!match(TOK_IDENT))
+tree Parser::Identifier() {
+  if (!Match(TOK_IDENT))
     serror("expecting identifier");
-  Tree* ret = new Tree(next());
-  consume();
+  tree ret = mkLeaf(Next());
+  Consume();
   return ret;
 }
 
-Tree* Parser::declarationStatement() {
-  Tree* root(new Tree(next()));
-  consume();
-  while (match(TOK_IDENT))
-    root->addChild(identifier());
+tree Parser::DeclarationStatement() {
+  tree root(mkLeaf(Next()));
+  Consume();
+  while (Match(TOK_IDENT))
+    addChild(root,Identifier());
   return root;
 }
 
-Tree* Parser::tryStatement() {
-  Tree* root(new Tree(expect(TOK_TRY)));
-  delete statementSeperator();
-  Tree* block = statementList();
-  root->addChild(block);
-  if (match(TOK_CATCH)) {
-    Tree* catchblock(new Tree(next()));
-    consume();
-    delete statementSeperator();
-    Tree* block = statementList();
-    catchblock->addChild(block);
-    root->addChild(catchblock);
+tree Parser::TryStatement() {
+  tree root(mkLeaf(Expect(TOK_TRY)));
+  StatementSeperator();
+  tree block = StatementList();
+  addChild(root,block);
+  if (Match(TOK_CATCH)) {
+    tree catchblock(mkLeaf(Next()));
+    Consume();
+    StatementSeperator();
+    tree block = StatementList();
+    addChild(catchblock,block);
+    addChild(root,catchblock);
   }
-  expect(TOK_END);
+  Expect(TOK_END);
   return root;
 }
 
-Tree* Parser::keyword() {
-  Tree* root(new Tree(expect('/')));
-  root->rename(TOK_KEYWORD);
-  root->addChild(identifier());
-  if (match('=')) {
-    consume();
-    root->addChild(expression());
+tree Parser::Keyword() {
+  tree root(mkLeaf(Expect('/')));
+  root.Rename(TOK_KEYWORD);
+  addChild(root,Identifier());
+  if (Match('=')) {
+    Consume();
+    addChild(root,Expression());
   }
   return root;
 }
 
 // Parse A(foo).goo{1:3}... etc
-Tree* Parser::variableDereference(bool blankRefOK) {
-  Tree* ident = identifier();
-  Tree* root = new Tree(TOK_VARIABLE,m_lex.contextNum());
-  root->addChild(ident);
+tree Parser::VariableDereference(bool blankRefOK) {
+  tree ident = Identifier();
+  tree root = mkLeaf(TOK_VARIABLE,m_lex.ContextNum());
+  addChild(root,ident);
   bool deref = true;
   while (deref) {
-    if (match('(')) {
-      consume();
-      Tree* sub = new Tree(TOK_PARENS,m_lex.contextNum());
-      while (!match(')')) {
-	if (match(':'))
-	  sub->addChild(new Tree(expect(':')));
-	else if (match('/'))
-	  sub->addChild(keyword());
+    if (Match('(')) {
+      Consume();
+      tree sub = mkLeaf(TOK_PARENS,m_lex.ContextNum());
+      while (!Match(')')) {
+	if (Match(':'))
+	  addChild(sub,mkLeaf(Expect(':')));
+	else if (Match('/'))
+	  addChild(sub,Keyword());
 	else
-	  sub->addChild(expression());
-	if (match(',')) consume();
+	  addChild(sub,Expression());
+	if (Match(',')) Consume();
       }
-      if ((sub->numChildren() == 0) && (!blankRefOK))
+      if ((sub.numchildren() == 0) && (!blankRefOK))
 	serror("The expression A() is not allowed.");
-      expect(')');
-      root->addChild(sub);
-    } else if (match('{')) {
-      consume();
-      Tree* sub = new Tree(TOK_BRACES,m_lex.contextNum());
-      while (!match('}')) {
-	if (match(':'))
-	  sub->addChild(new Tree(expect(':')));
+      Expect(')');
+      addChild(root,sub);
+    } else if (Match('{')) {
+      Consume();
+      tree sub = mkLeaf(TOK_BRACES,m_lex.ContextNum());
+      while (!Match('}')) {
+	if (Match(':'))
+	  addChild(sub,mkLeaf(Expect(':')));
 	else
-	  sub->addChild(expression());
-	if (match(',')) consume();
+	  addChild(sub,Expression());
+	if (Match(',')) Consume();
       }
-      if (sub->numChildren() == 0)
+      if (sub.numchildren() == 0)
 	serror("The expression A{} is not allowed.");
-      expect('}');
-      root->addChild(sub);
-    } else if (match('.')) {
-      Tree* dynroot(new Tree(next()));
-      consume();
-      if (match('(')) {
-	consume();
-	dynroot->rename(TOK_DYN);
-	dynroot->addChild(expression());
-	root->addChild(dynroot);
-	expect(')');
+      Expect('}');
+      addChild(root,sub);
+    } else if (Match('.')) {
+      tree dynroot(mkLeaf(Next()));
+      Consume();
+      if (Match('(')) {
+	Consume();
+	dynroot.Rename(TOK_DYN);
+	addChild(dynroot,Expression());
+	addChild(root,dynroot);
+	Expect(')');
       } else {
-	dynroot->addChild(identifier());
-	root->addChild(dynroot);
+	addChild(dynroot,Identifier());
+	addChild(root,dynroot);
       }
     } else
       deref = false;
@@ -386,174 +383,162 @@ Tree* Parser::variableDereference(bool blankRefOK) {
   return root;
 }
 
-Tree* Parser::assignmentStatement() {
-  Tree* ident = variableDereference(false);
-  Tree* root(new Tree(expect('=')));
-  Tree* expr = expression();
-  root->addChildren(ident,expr);
+tree Parser::AssignmentStatement() {
+  tree ident = VariableDereference(false);
+  tree root(mkLeaf(Expect('=')));
+  tree expr = Expression();
+  addChild(root,ident,expr);
   return root;
 }
 
-void Parser::flushSeperators() {
-  while (1) {
-    Tree* term = statementSeperator();
-    if (!term) return;
-    if (!term->valid()) {
-      delete term;
-      return;
-    }
-    delete term;
+tree Parser::SwitchStatement() {
+  tree root(mkLeaf(Expect(TOK_SWITCH)));
+  tree swexpr = Expression();
+  addChild(root,swexpr);
+  while (StatementSeperator().valid());
+  while (Match(TOK_CASE)) {
+    tree caseblock(mkLeaf(Next()));
+    Consume();
+    tree csexpr = Expression();
+    StatementSeperator();
+    tree block = StatementList();
+    addChild(caseblock,csexpr,block);
+    addChild(root,caseblock);
   }
-}
-
-Tree* Parser::switchStatement() {
-  Tree* root(new Tree(expect(TOK_SWITCH)));
-  Tree* swexpr = expression();
-  root->addChild(swexpr);
-  flushSeperators();
-  while (match(TOK_CASE)) {
-    Tree* caseblock(new Tree(next()));
-    consume();
-    Tree* csexpr = expression();
-    delete statementSeperator();
-    Tree* block = statementList();
-    caseblock->addChildren(csexpr,block);
-    root->addChild(caseblock);
+  if (Match(TOK_OTHERWISE)) {
+    tree otherwise(mkLeaf(Next()));
+    Consume();
+    StatementSeperator();
+    tree block = StatementList();
+    addChild(otherwise,block);
+    addChild(root,otherwise);
   }
-  if (match(TOK_OTHERWISE)) {
-    Tree* otherwise(new Tree(next()));
-    consume();
-    delete statementSeperator();
-    Tree* block = statementList();
-    otherwise->addChild(block);
-    root->addChild(otherwise);
-  }
-  expect(TOK_END);
+  Expect(TOK_END);
   return root;
 }
 
-Tree* Parser::statement() {
-  if (match(TOK_EOF))
-    return new Tree;
-  if (match(TOK_END))
-    return new Tree;
-  if (match(TOK_FOR))
-    return forStatement();
-  if (match(TOK_BREAK))
-    return singletonStatement();
-  if (match(TOK_CONTINUE))
-    return singletonStatement();
-  if (match(TOK_WHILE))
-    return whileStatement();
-  if (match(TOK_DBSTEP) || match(TOK_DBTRACE))
-    return dBStepOrTraceStatement();
-  if (match(TOK_IF))
-    return ifStatement();
-  if (match(TOK_SWITCH))
-    return switchStatement();
-  if (match(TOK_TRY))
-    return tryStatement();
-  if (match(TOK_KEYBOARD) || match(TOK_RETURN) || 
-      match(TOK_RETALL) || match(TOK_QUIT))
-    return singletonStatement();
-  if (match(TOK_GLOBAL) || match(TOK_PERSISTENT))
-    return declarationStatement();
+tree Parser::Statement() {
+  if (Match(TOK_EOF))
+    return tree();
+  if (Match(TOK_END))
+    return tree();
+  if (Match(TOK_FOR))
+    return ForStatement();
+  if (Match(TOK_BREAK))
+    return SingletonStatement();
+  if (Match(TOK_CONTINUE))
+    return SingletonStatement();
+  if (Match(TOK_WHILE))
+    return WhileStatement();
+  if (Match(TOK_DBSTEP) || Match(TOK_DBTRACE))
+    return DBStepOrTraceStatement();
+  if (Match(TOK_IF))
+    return IfStatement();
+  if (Match(TOK_SWITCH))
+    return SwitchStatement();
+  if (Match(TOK_TRY))
+    return TryStatement();
+  if (Match(TOK_KEYBOARD) || Match(TOK_RETURN) || 
+      Match(TOK_RETALL) || Match(TOK_QUIT))
+    return SingletonStatement();
+  if (Match(TOK_GLOBAL) || Match(TOK_PERSISTENT))
+    return DeclarationStatement();
   // Now come the tentative parses
   Scanner save(m_lex);
-  if (match(TOK_IDENT)) {
+  if (Match(TOK_IDENT)) {
     try {
-      Tree* retval = assignmentStatement();
+      tree retval = AssignmentStatement();
       return retval;
     } catch (ParseException &e) {
       m_lex = save;
     } 
   }
-  if (match('[')) {
+  if (Match('[')) {
     try {
-      Tree* retval = multiFunctionCall();
+      tree retval = MultiFunctionCall();
       return retval;
     } catch (ParseException &e) {
       m_lex = save;
     }
   }
-  if (match(TOK_IDENT)) {
+  if (Match(TOK_IDENT)) {
     try {
-      Tree* retval = specialFunctionCall();
+      tree retval = SpecialFunctionCall();
       return retval;
     } catch (ParseException &e) {
       m_lex = save;
     } 
   }
-  if (match(TOK_FUNCTION)) {
+  if (Match(TOK_FUNCTION)) {
     try {
-      Tree* retval = functionDefinition();
-      retval->rename(TOK_NEST_FUNC);
-      expect(TOK_END);
+      tree retval = FunctionDefinition();
+      retval.Rename(TOK_NEST_FUNC);
+      Expect(TOK_END);
       return retval;
     } catch (ParseException &e) {
       m_lex = save;
     }
   }
   try {
-    Tree* retval(new Tree(TOK_EXPR,m_lex.contextNum()));
-    retval->addChild(expression());
+    tree retval(mkLeaf(TOK_EXPR,m_lex.ContextNum()));
+    addChild(retval,Expression());
     return retval;
   } catch (ParseException &e) {
     m_lex = save;
   }
-  return new Tree;
+  return tree();
 }
 
-Tree* Parser::statementList() {
-  Tree* stlist = new Tree(TOK_BLOCK,m_lex.contextNum());
-  flushSeperators();
-  Tree* s = statement();
-  while (s->valid()) {
-    Tree* sep = statementSeperator();
-    if (!sep->valid()) return stlist;
-    sep->addChild(s);
-    stlist->addChild(sep);
-    flushSeperators();
-    s = statement();
+tree Parser::StatementList() {
+  tree stlist = mkLeaf(TOK_BLOCK,m_lex.ContextNum());
+  while (StatementSeperator().valid());
+  tree statement = Statement();
+  while (statement.valid()) {
+    tree sep = StatementSeperator();
+    if (!sep.valid()) return stlist;
+    addChild(sep,statement);
+    addChild(stlist,sep);
+    while (StatementSeperator().valid());
+    statement = Statement();
   }
   return stlist;
 }
 
-Tree* Parser::expression() {
-  if (match(TOK_SPACE)) consume();
-  return exp(0);
+tree Parser::Expression() {
+  if (Match(TOK_SPACE)) Consume();
+  return Exp(0);
 }
 
 Parser::Parser(Scanner& lex) : m_lex(lex), lastpos(0) {
 }
 
-const Token& Parser::next() {
-  return m_lex.next();
+const Token& Parser::Next() {
+  return m_lex.Next();
 }
 
 void Parser::serror(string errmsg) {
-  if (m_lex.contextNum() > lastpos) {
+  if (m_lex.ContextNum() > lastpos) {
     lasterr = errmsg;
-    lastpos = m_lex.contextNum();
+    lastpos = m_lex.ContextNum();
   }
-  throw ParseException(m_lex.contextNum(),errmsg);
+  throw ParseException(m_lex.ContextNum(),errmsg);
 }
 
-const Token & Parser::expect(byte a) {
-  const Token & ret(next());
-  if (!m_lex.next().is(a)) {
+const Token & Parser::Expect(byte a) {
+  const Token & ret(Next());
+  if (!m_lex.Next().Is(a)) {
     if (a != TOK_EOF)
       serror(string("Expecting ") + TokenToString(Token(a,0)));
     else
       serror(string("Unexpected input"));
   }  else {
-    consume();
+    Consume();
   }
   return ret;
 }
 
-static unsigned precedence(const Token& t) {
-  switch(t.value()) {
+unsigned Parser::Precedence(const Token& t) {
+  switch(t.Value()) {
   case TOK_SOR: return 1;
   case TOK_SAND: return 2;
   case '|': return 3;
@@ -582,136 +567,134 @@ static unsigned precedence(const Token& t) {
   return 1;
 }
 
-Tree* Parser::matDef(byte basetok, byte closebracket) {
-  m_lex.pushWSFlag(false);
-  Tree* matdef(new Tree(basetok));
-  if (match(TOK_SPACE)) consume();
-  while (!match(closebracket)) {
-    Tree* rowdef(new Tree(TOK_ROWDEF,m_lex.contextNum()));
-    while (!match(';') && !match('\n') && !match(closebracket)) {
-      rowdef->addChild(expression());
-      if (match(',')) {
-	consume();
-	while (match(TOK_SPACE)) consume();
-      } else if (match(TOK_SPACE))
-	consume();
+tree Parser::MatDef(byte basetok, byte closebracket) {
+  m_lex.PushWSFlag(false);
+  tree matdef(mkLeaf(basetok));
+  if (Match(TOK_SPACE)) Consume();
+  while (!Match(closebracket)) {
+    tree rowdef(mkLeaf(TOK_ROWDEF,m_lex.ContextNum()));
+    while (!Match(';') && !Match('\n') && !Match(closebracket)) {
+      addChild(rowdef,Expression());
+      if (Match(',')) {
+	Consume();
+	while (Match(TOK_SPACE)) Consume();
+      } else if (Match(TOK_SPACE))
+	Consume();
     }
-    if (match(';') || match('\n'))
-      consume();
-    if (match(TOK_SPACE)) consume();
-    matdef->addChild(rowdef);
+    if (Match(';') || Match('\n'))
+      Consume();
+    if (Match(TOK_SPACE)) Consume();
+    addChild(matdef,rowdef);
   }
-  m_lex.popWSFlag();
+  m_lex.PopWSFlag();
   return matdef;
 }
 
-Tree* Parser::transposeFixup(Tree* base) {
-  while ((next().value() == '\'') || (next().value() == TOK_DOTTRANSPOSE)) {
-    base = new Tree(next(),base);
-    consume();
+tree Parser::TransposeFixup(tree base) {
+  while ((Next().Value() == '\'') || (Next().Value() == TOK_DOTTRANSPOSE)) {
+    base = mkNode(Next(),base);
+    Consume();
   }
-  if (match(TOK_SPACE))
-    if (!((m_lex.peek(0,'-') || m_lex.peek(0,'+')) && !m_lex.peek(1,' ')))
-      consume();
+  if (Match(TOK_SPACE))
+    if (!((m_lex.Peek(0,'-') || m_lex.Peek(0,'+')) && !m_lex.Peek(1,' ')))
+      Consume();
   return base;
 }
 
-Tree* Parser::anonymousFunction() {
+tree Parser::AnonymousFunction() {
   unsigned pos1, pos2;
-  pos1 = m_lex.contextNum();
-  Tree* root(new Tree(TOK_ANONYMOUS_FUNC,m_lex.contextNum()));
-  expect('(');
-  Tree* args = new Tree(TOK_PARENS,m_lex.contextNum());
-  while (!match(')')) {
-    args->addChild(identifier());
-    if (!match(')')) expect(',');
+  pos1 = m_lex.ContextNum();
+  tree root(mkLeaf(TOK_ANONYMOUS_FUNC,m_lex.ContextNum()));
+  Expect('(');
+  tree args = mkLeaf(TOK_PARENS,m_lex.ContextNum());
+  while (!Match(')')) {
+    addChild(args,Identifier());
+    if (!Match(')')) Expect(',');
   }
-  expect(')');
-  root->addChild(args);
-  root->addChild(expression());
-  pos2 = m_lex.contextNum();
-  root->setText("(" + m_lex.snippet(pos1,pos2));
-  root->validate();
+  Expect(')');
+  addChild(root,args);
+  addChild(root,Expression());
+  pos2 = m_lex.ContextNum();
+  root.node().SetText("(" + m_lex.Snippet(pos1,pos2));
   return root;
 }
 
-Tree* Parser::primaryExpression() {
-  if (next().isUnaryOperator()) {
-    Token opr(next());
-    consume();
-    if (match(TOK_SPACE)) consume();
-    if (opr.is('+')) opr.setValue(TOK_UNARY_PLUS);
-    if (opr.is('-')) opr.setValue(TOK_UNARY_MINUS);
-    unsigned q = precedence(opr);
-    Tree* child = exp(q);
-    Tree* root(new Tree(opr,child));
+tree Parser::PrimaryExpression() {
+  if (Next().IsUnaryOperator()) {
+    Token opr(Next());
+    Consume();
+    if (Match(TOK_SPACE)) Consume();
+    if (opr.Is('+')) opr.SetValue(TOK_UNARY_PLUS);
+    if (opr.Is('-')) opr.SetValue(TOK_UNARY_MINUS);
+    unsigned q = Precedence(opr);
+    tree child = Exp(q);
+    tree root(mkNode(opr,child));
     return root;
-  } else if (match('(')) {
-    consume();
-    m_lex.pushWSFlag(true);
-    Tree* t = exp(0);
-    m_lex.popWSFlag();
-    expect(')');
-    return transposeFixup(t);
-  } else if (match('@')) {
-    Tree* root(new Tree(next()));
-    consume();
-    if (match('('))
-      root->addChild(anonymousFunction());
+  } else if (Match('(')) {
+    Consume();
+    m_lex.PushWSFlag(true);
+    tree t = Exp(0);
+    m_lex.PopWSFlag();
+    Expect(')');
+    return TransposeFixup(t);
+  } else if (Match('@')) {
+    tree root(mkLeaf(Next()));
+    Consume();
+    if (Match('('))
+      addChild(root,AnonymousFunction());
     else
-      root->addChild(identifier());
-    return transposeFixup(root);
-  } else if (matchNumber() || match(TOK_STRING)) {
-    Tree* t = new Tree(next());
-    consume();
-    return transposeFixup(t);
-  } else if (match(TOK_END)) {
-    return transposeFixup(new Tree(expect(TOK_END)));
-  } else if (match(TOK_IDENT)) {
-    Tree* t = variableDereference();
-    return transposeFixup(t);
-  } else if (match('[')) {
-    consume();
-    Tree* t = matDef(TOK_MATDEF,']');
-    expect(']');
-    return transposeFixup(t);
-  } else if (match('{')) {
-    consume();
-    Tree* t = matDef(TOK_CELLDEF,'}');
-    expect('}');
-    return transposeFixup(t);
+      addChild(root,Identifier());
+    return TransposeFixup(root);
+  } else if (MatchNumber() || Match(TOK_STRING)) {
+    tree t = mkLeafWithLiterals(Next());
+    Consume();
+    return TransposeFixup(t);
+  } else if (Match(TOK_END)) {
+    return TransposeFixup(mkLeaf(Expect(TOK_END)));
+  } else if (Match(TOK_IDENT)) {
+    tree t = VariableDereference();
+    return TransposeFixup(t);
+  } else if (Match('[')) {
+    Consume();
+    tree t = MatDef(TOK_MATDEF,']');
+    Expect(']');
+    return TransposeFixup(t);
+  } else if (Match('{')) {
+    Consume();
+    tree t = MatDef(TOK_CELLDEF,'}');
+    Expect('}');
+    return TransposeFixup(t);
   } else {
-    if (match(')') || match(']') || match('}'))
+    if (Match(')') || Match(']') || Match('}'))
       serror("mismatched parenthesis");
     else
       serror("unrecognized token");
   }
-  return new Tree;
 }
 
-Tree* Parser::exp(unsigned p) {
-  Tree* t = primaryExpression();
-  while (next().isBinaryOperator() && (precedence(next()) >= p)) {
-    Token opr_save(next());
-    consume();
-    if (match(TOK_SPACE)) consume();
+tree Parser::Exp(unsigned p) {
+  tree t = PrimaryExpression();
+  while (Next().IsBinaryOperator() && (Precedence(Next()) >= p)) {
+    Token opr_save(Next());
+    Consume();
+    if (Match(TOK_SPACE)) Consume();
     unsigned q;
-    if (opr_save.isRightAssociative())
-      q = precedence(opr_save);
+    if (opr_save.IsRightAssociative())
+      q = Precedence(opr_save);
     else
-      q = 1+precedence(opr_save);
-    Tree* t1 = exp(q);
-    t = new Tree(opr_save,t,t1);
+      q = 1+Precedence(opr_save);
+    tree t1 = Exp(q);
+    t = mkNode(opr_save,t,t1);
   }
   return t;
 }
 
-bool Parser::match(byte a) {
-  return m_lex.next().is(a);
+bool Parser::Match(byte a) {
+  return m_lex.Next().Is(a);
 }
 
-void Parser::consume() {
-  m_lex.consume();
+void Parser::Consume() {
+  m_lex.Consume();
 }
 
 // NOTES - 
@@ -728,59 +711,55 @@ void Parser::consume() {
 //  The current code will parse foo into a function,
 //   
 
-CodeBlock Parser::process() {
+tree Parser::Process() {
   lastpos = 0;
-  Tree* root;
-  while (match('\n'))
-    consume();
+  tree root;
+  while (Match('\n'))
+    Consume();
   try {
-    if (match(TOK_FUNCTION)) {
-      root = new Tree(TOK_FUNCTION_DEFS,m_lex.contextNum());
-      while (match(TOK_FUNCTION)) {
-	Tree* child(functionDefinition());
-	root->addChild(child);
-	while (match('\n')) consume();
+    if (Match(TOK_FUNCTION)) {
+      root = mkLeaf(TOK_FUNCTION_DEFS,m_lex.ContextNum());
+      while (Match(TOK_FUNCTION)) {
+	tree child(FunctionDefinition());
+	addChild(root,child);
+	while (Match('\n')) Consume();
       }
-      if (HasNestedFunctions(root) || match(TOK_END))
-	expect(TOK_END);
-      while (match('\n')) consume();
-      while (match(TOK_FUNCTION)) {
-	root->addChild(functionDefinition());
-	if (HasNestedFunctions(root) || match(TOK_END))
-	  expect(TOK_END);
-	while (match('\n')) consume();
+      if (HasNestedFunctions(root) || Match(TOK_END))
+	Expect(TOK_END);
+      while (Match('\n')) Consume();
+      while (Match(TOK_FUNCTION)) {
+	addChild(root,FunctionDefinition());
+	if (HasNestedFunctions(root) || Match(TOK_END))
+	  Expect(TOK_END);
+	while (Match('\n')) Consume();
       }
     } else {
-      root = new Tree(TOK_SCRIPT,m_lex.contextNum());
-      root->addChild(statementList());
+      root = mkLeaf(TOK_SCRIPT,m_lex.ContextNum());
+      addChild(root,StatementList());
     }
   } catch(ParseException &e) {
-    throw Exception(lastErr() + m_lex.context(lastPos()));
+    throw Exception(LastErr() + m_lex.Context(LastPos()));
   }
   try {
-    expect(TOK_EOF);
+    Expect(TOK_EOF);
   } catch (ParseException &e) {
-    throw Exception("Unexpected input" + m_lex.context());
+    throw Exception("Unexpected input" + m_lex.Context());
   }
-  return CodeBlock(root);
+  return root;
 }
 
-CodeBlock Parser::processStatementList() {
-  return CodeBlock(statementList());
-}
-
-CodeBlock ParseString(string arg) {
+tree ParseString(string arg) {
   Scanner S(arg,"");
   Parser P(S);
-  return P.processStatementList();
+  return P.StatementList();
 }
 
-CodeBlock ParseExpressionString(string arg) {
+tree ParseExpressionString(string arg) {
   Scanner S(arg,"");
   Parser P(S);
   try {
-    return CodeBlock(P.expression());
+    return P.Expression();
   } catch(ParseException &e) {
-    return CodeBlock(new Tree);
+    return tree();
   }
 }

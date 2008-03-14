@@ -34,7 +34,6 @@
 #include "Interpreter.hpp"
 #include "synlightconf.ui.h"
 #include "indentconf.ui.h"
-#include "Context.hpp"
 
 class FMFindDialog : public QDialog {
   Q_OBJECT
@@ -87,16 +86,11 @@ public:
   void contextMenuEvent(QContextMenuEvent*e);
   void comment();
   void uncomment();
-  void increaseIndent();
-  void decreaseIndent();
   bool replace(QString text, QString replace, QTextDocument::FindFlags flags);
   int replaceAll(QString text, QString replace, QTextDocument::FindFlags flags);
   void fontUpdate();
-protected:
-  bool event(QEvent *event);
 signals:
   void indent();
-  void showDataTips(QPoint pos, QString textSelected);
 };
 
 class FMIndent : public QObject {
@@ -182,20 +176,15 @@ private:
 
 class FMEditor : public QMainWindow {
   Q_OBJECT
-  QMenu *fileMenu, *editMenu, *toolsMenu, *debugMenu, *helpMenu;
+  QMenu *fileMenu, *editMenu, *toolsMenu, *debugMenu;
   QToolBar *editToolBar, *fileToolBar, *debugToolBar;
   QAction *newAct, *saveAct, *quitAct, *copyAct, *pasteAct;
   QAction *cutAct, *fontAct, *openAct, *saveAsAct, *closeAct;
   QAction *openNewAct, *findAct, *replaceAct, *commentAct, *uncommentAct;
-  QAction *increaseIndentAct, *decreaseIndentAct, *helpWinAct, *helpOnSelectionAct;
   QAction *dbStepAct, *dbTraceAct, *dbContinueAct;
   QAction *dbSetClearBPAct, *dbStopAct;
   QAction *redoAct, *undoAct, *colorConfigAct, *indentConfigAct;
   QAction *executeSelectedAct, *executeCurrentAct;
-  QAction *separatorAct; 
-  enum { MaxRecentFiles = 5 }; 
-  QAction *recentFileActs[MaxRecentFiles]; 
-  QAction *dataTipConfigAct;
   QTabWidget *tab;
   FMTextEdit *prevEdit;
   QFont m_font;
@@ -203,9 +192,6 @@ class FMEditor : public QMainWindow {
   FMReplaceDialog *m_replace;
   QMenu *m_popup;
   Interpreter *m_eval;
-  QStringList varNameList, varTypeList, varFlagsList, varSizeList, varValueList;
-  Context *context;
-  bool isShowToolTip;
 public:
   FMEditor(Interpreter* eval);
   virtual ~FMEditor();
@@ -227,8 +213,6 @@ private:
   void readSettings();
   void writeSettings();
   void updateFont();
-  void updateRecentFileActions();
-  bool isFileOpened(const QString &fileName); 
 signals:
   void EvaluateText(QString);
 protected:
@@ -251,13 +235,9 @@ private slots:
 		    bool backwards, bool sensitive);
   void comment();
   void uncomment();
-  void increaseIndent();
-  void decreaseIndent();
   void undo();
   void redo();
   void RefreshBPLists();
-  void refreshContext();
-  void IllegalLineOrCurrentPath(string name, int line);
   void ShowActiveLine();
   void dbstep();
   void dbtrace();
@@ -268,14 +248,8 @@ private slots:
   void configindent();
   void execSelected();
   void execCurrent();
-  void openRecentFile(); 
-  void showDataTips(QPoint pos, QString textSelected);
-  void configDataTip();
-  void helpWin();
-  void helpOnSelection();
 public:
   void closeEvent(QCloseEvent *event);
-  void setContext(Context *watch);
 };
 
 #endif

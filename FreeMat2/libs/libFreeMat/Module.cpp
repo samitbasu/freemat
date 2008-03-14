@@ -28,10 +28,10 @@
 #include <QDir>
 
 SymbolTable<DynLib*> libPointers;
-StringVector DynamicFunctions;
+stringVector DynamicFunctions;
 
 void ClearLibs(Interpreter* eval) {
-  StringVector libnames(libPointers.getCompletions(""));
+  stringVector libnames(libPointers.getCompletions(""));
   for (int i=0;i<libnames.size();i++) {
     DynLib **ptr = libPointers.findSymbol(libnames[i]);
     libPointers.deleteSymbol(libnames[i]);
@@ -120,28 +120,28 @@ const char* matchTest(const char* &cp, const char* tmplate) {
 const char* parseTypeName(const char* &cp) {
   const char* rp;
   skipWS(cp);
-  rp = matchTest(cp,"int8");
-  if (rp) return rp;
-  rp = matchTest(cp,"uint8");
-  if (rp) return rp;
-  rp = matchTest(cp,"int16");
-  if (rp) return rp;
-  rp = matchTest(cp,"uint16");
-  if (rp) return rp;
-  rp = matchTest(cp,"int32");
-  if (rp) return rp;
-  rp = matchTest(cp,"uint32");
-  if (rp) return rp;
-  rp = matchTest(cp,"float");
-  if (rp) return rp;
-  rp = matchTest(cp,"complex");
-  if (rp) return rp;
-  rp = matchTest(cp,"double");
-  if (rp) return rp;
-  rp = matchTest(cp,"dcomplex");
-  if (rp) return rp;
-  rp = matchTest(cp,"string");
-  if (rp) return rp;
+  if (rp = matchTest(cp,"int8"))
+    return rp;
+  if (rp = matchTest(cp,"uint8"))
+    return rp;
+  if (rp = matchTest(cp,"int16"))
+    return rp;
+  if (rp = matchTest(cp,"uint16"))
+    return rp;
+  if (rp = matchTest(cp,"int32"))
+    return rp;
+  if (rp = matchTest(cp,"uint32"))
+    return rp;
+  if (rp = matchTest(cp,"float"))
+    return rp;
+  if (rp = matchTest(cp,"complex"))
+    return rp;
+  if (rp = matchTest(cp,"double"))
+    return rp;
+  if (rp = matchTest(cp,"dcomplex"))
+    return rp;
+  if (rp = matchTest(cp,"string"))
+    return rp;
   return NULL;
 }
 
@@ -401,9 +401,9 @@ ArrayVector ImportFunction(int nargout, const ArrayVector& arg,
   } else
     lib = *ptr;
   func = lib->GetSymbol(symbolname.c_str());
-  StringVector types;
-  StringVector arguments;
-  CodeList checks;
+  stringVector types;
+  stringVector arguments;
+  treeVector checks;
   /**
    * Parse the arglist...
    */
@@ -426,7 +426,7 @@ ArrayVector ImportFunction(int nargout, const ArrayVector& arg,
       checks.push_back(ParseExpressionString(bc));
       free(bc);
     } else
-      checks.push_back(CodeBlock(new Tree));
+      checks.push_back(tree());
     char *ar;
     ar = parseArgumentName(cp);
     arguments.push_back(ar);

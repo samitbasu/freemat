@@ -35,18 +35,7 @@
 %@@Tests
 %@$"y=roots([1,-6,-72,-27])","[12.1228937846323905;-5.7345099422250749;-0.3883838424073199]","close"
 %!
-
-% Copyright (c) 2002-2007 Samit Basu
-% Licensed under the GPL
-
 function z = roots(p)
-  if(any(isnan(p) | isinf(p)))
-     error('Input to ROOTS must not contain NaN or Inf.');
-  end
-  while(any(isinf(p./p(1))))
-     p=p(2:end);
-  end
-   
   p = vec(p);
   n = numel(p)-1;
   A = diag(ones(n-1,1),-1);

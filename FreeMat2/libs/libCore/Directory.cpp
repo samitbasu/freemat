@@ -78,10 +78,10 @@ ArrayVector ChangeDirFunction(int nargout, const ArrayVector& arg, Interpreter* 
   return ArrayVector();
 }
 
-static void TabledOutput(StringVector sysresult, Interpreter* eval) {
+static void TabledOutput(std::vector<std::string> sysresult, Interpreter* eval) {
   int maxlen = 0;
   // Find the maximal length
-  for (int i=0;i<(int)sysresult.size();i++) {
+  for (int i=0;i<sysresult.size();i++) {
     int ellen(sysresult[i].size());
     maxlen = (maxlen < ellen) ? ellen : maxlen;
   }
@@ -92,7 +92,7 @@ static void TabledOutput(StringVector sysresult, Interpreter* eval) {
   if (outcolumns < 1) outcolumns = 1;
   int colwidth = termwidth/outcolumns;
   int entryCount = 0;
-  while (entryCount < (int)sysresult.size()) {
+  while (entryCount < sysresult.size()) {
     char buffer[4096];
     sprintf(buffer,"%s",sysresult[entryCount].c_str());
     int wlen;
@@ -166,7 +166,7 @@ ArrayVector DirFunction(int nargout, const ArrayVector& arg, Interpreter* eval) 
     }
   }
   if (nargout == 0) {
-    StringVector filelist;
+    std::vector<std::string> filelist;
     for (int i=0;i<foo.size();i++)
       filelist.push_back(foo[i].fileName().toStdString());
     TabledOutput(filelist,eval);
@@ -182,7 +182,7 @@ ArrayVector DirFunction(int nargout, const ArrayVector& arg, Interpreter* eval) 
       bytes << Array::uint64Constructor(foo[i].size());
       isdirs << Array::logicalConstructor(foo[i].isDir());
     }
-    return ArrayVector() << Array::structConstructor(StringVector() 
+    return ArrayVector() << Array::structConstructor(rvstring() 
 						     << "name"
 						     << "date"
 						     << "bytes"
@@ -236,7 +236,7 @@ ArrayVector DirFunction(int nargout, const ArrayVector& arg, Interpreter* eval) 
 //@>
 //!
 ArrayVector ListFilesFunction(int nargout, const ArrayVector& arg, Interpreter* eval) {
-  StringVector sysresult;
+  stringVector sysresult;
   string buffer;
   int i;
 
@@ -275,7 +275,7 @@ ArrayVector ListFilesFunction(int nargout, const ArrayVector& arg, Interpreter* 
 //!
 ArrayVector DirSepFunction(int nargout, const ArrayVector& arg) {
   QString psep(QDir::separator());
-  return SingleArrayVector(Array::stringConstructor(psep.toStdString()));
+  return singleArrayVector(Array::stringConstructor(psep.toStdString()));
 }
 
 //!
@@ -373,7 +373,7 @@ void RemoveDirectoryRecursive(string dirname) {
   QDir dir(QString::fromStdString(dirname));
   dir.setFilter(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
   QFileInfoList list = dir.entryInfoList();
-  for (int i=0;i<list.size();i++) {
+  for (unsigned i=0;i<list.size();i++) {
     QFileInfo fileInfo = list.at(i);
     if (fileInfo.isDir())
       RemoveDirectoryRecursive(fileInfo.absoluteFilePath().toStdString());
@@ -518,7 +518,7 @@ static void CopyDirectoryRecursive(QString srcdir, QString destdir, bool overrid
   QDir dir(srcdir);
   dir.setFilter(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
   QFileInfoList list = dir.entryInfoList();
-  for (int i=0;i<list.size();i++) {
+  for (unsigned i=0;i<list.size();i++) {
     QFileInfo fileInfo = list.at(i);
     if (fileInfo.isDir())
       CopyDirectoryRecursive(fileInfo.absoluteFilePath(),
@@ -558,7 +558,7 @@ ArrayVector CopyFileFunction(int nargout, const ArrayVector& arg) {
     sourcedir.setFilter(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
     sourcedir.setNameFilters(QStringList() << source_info.fileName());
     QFileInfoList list = sourcedir.entryInfoList();
-    for (int i=0;i<list.size();i++) {
+    for (unsigned i=0;i<list.size();i++) {
       QFileInfo fileInfo = list.at(i);
       if (fileInfo.isDir())
 	CopyDirectoryRecursive(fileInfo.absoluteFilePath(),

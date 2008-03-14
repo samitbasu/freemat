@@ -58,7 +58,6 @@
 %!
 
 % Copyright (c) 2002-2006 Samit Basu
-% Licensed under the GPL
 
 function ohandle = surf(varargin)
    % Check for an axes handle
@@ -104,11 +103,6 @@ end
   else
     error('Unrecognized arguments to surf command');
   end
-if ~ishold
-	view( handle, 3 );
-	grid;
-end
-
 axes(saveca);
 if (nargout > 0)
     ohandle = h;

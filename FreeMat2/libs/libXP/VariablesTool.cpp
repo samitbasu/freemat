@@ -41,7 +41,7 @@ void VariablesTool::refresh() {
   //   QMutexLocker lock(context->getMutex());
   //   context->getMutex()->unlock();
   m_flist->clear();
-  StringVector varnames(context->listAllVariables());
+  stringVector varnames(context->listAllVariables());
   std::sort(varnames.begin(),varnames.end());
   m_flist->setRowCount(varnames.size());
   m_flist->setColumnCount(5);

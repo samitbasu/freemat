@@ -21,6 +21,7 @@
 
 #include "Array.hpp"
 #include <string>
+#include <vector>
 
 class HandleProperty {
   bool modified;
@@ -47,38 +48,36 @@ public:
 
 class HPHandles : public HandleProperty {
 protected:
-  QVector<unsigned> data;
+  std::vector<unsigned> data;
 public:
   HPHandles();
   virtual ~HPHandles() {}
   virtual Array Get();
   virtual void Set(Array);
-  QVector<unsigned> Data() {return data;}
-  void Data(QVector<unsigned> m) {data = m;}
+  std::vector<unsigned> Data() {return data;}
+  void Data(std::vector<unsigned> m) {data = m;}
 };
 
 class HPVector : public HandleProperty {
 protected:
-  QVector<double> data;
+  std::vector<double> data;
 public:
   HPVector() {}
   virtual ~HPVector() {}
   virtual Array Get();
   virtual void Set(Array);
-  QVector<double> Data() {return data;}
-  void Data(QVector<double> m) {data = m;}
-  void Data(double m) {QVector<double> n; n.push_back(m); data = n;}
+  std::vector<double> Data() {return data;}
+  void Data(std::vector<double> m) {data = m;}
+  void Data(double m) {std::vector<double> n; n.push_back(m); data = n;}
   double& operator[](int ndx);
   double& At(int ndx);
 };
 
 class HPFixedVector : public HPVector {
 protected:
-  int m_len;
+  unsigned m_len;
 public:
-  HPFixedVector(int len) : m_len(len) {
-    for (int i=0;i<len;i++) data.push_back(0);
-  }
+  HPFixedVector(unsigned len) : m_len(len) {for (int i=0;i<len;i++) data.push_back(0);}
   virtual ~HPFixedVector() {}
   virtual void Set(Array);    
 };
@@ -99,21 +98,21 @@ public:
 
 class HPStringSet : public HandleProperty {
 protected:
-  StringVector data;
+  std::vector<std::string> data;
 public:
   HPStringSet() {}
   virtual ~HPStringSet() {}
   virtual Array Get();
   virtual void Set(Array);
-  StringVector Data() {return data;}
-  void Data(StringVector m) {data = m;}
+  std::vector<std::string> Data() {return data;}
+  void Data(std::vector<std::string> m) {data = m;}
 };
 
 class HPConstrainedString : public HPString {
 protected:
-  StringVector m_dictionary;
+  std::vector<std::string> m_dictionary;
 public:
-  HPConstrainedString(StringVector dict) : m_dictionary(dict) {
+  HPConstrainedString(std::vector<std::string> dict) : m_dictionary(dict) {
     data = dict[0];
   }
   HPConstrainedString(const char **dict) {
@@ -126,7 +125,7 @@ public:
 };
 
 class HPConstrainedStringSet : public HPStringSet {
-  StringVector m_dictionary;
+  std::vector<std::string> m_dictionary;
 public:
   HPConstrainedStringSet(const char **dict) {
     while (*dict) {
@@ -372,15 +371,15 @@ public:
 };
 
 class HPConstrainedStringColor : public HPConstrainedString {
-  QVector<double> colorspec;
+  std::vector<double> colorspec;
 public:
   HPConstrainedStringColor(const char **dict) : 
     HPConstrainedString(dict) {}
   virtual ~HPConstrainedStringColor() {}
   virtual void Set(Array);
   Array Get();
-  QVector<double> ColorSpec();
-  void ColorSpec(QVector<double> col);
+  std::vector<double> ColorSpec();
+  void ColorSpec(std::vector<double> col);
   void ColorSpec(double r, double g, double b);
 };
 

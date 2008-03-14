@@ -43,7 +43,7 @@ extern "C" {
     ArrayVector cval(a_funcDef->evaluateFunction(a_eval,tocall,1));
     if (cval.size() == 0)
       throw Exception("function to be optimized does not return any outputs!");
-    if ((int) cval[0].getLength() != (*m))
+    if (cval[0].getLength() != (*m))
       throw Exception("function output does not match size of vector 'y'");
     Array f(cval[0]);
     f.promoteType(FM_DOUBLE);
@@ -128,7 +128,7 @@ ArrayVector FitFunFunction(int nargout, const ArrayVector& arg, Interpreter* eva
   xval = xinit;
   wval = arg[3];
   wval.promoteType(FM_DOUBLE);
-  if ((int) wval.getLength() != m)
+  if (wval.getLength() != m)
     throw Exception("weight vector must be the same size as the output vector y");
   // Get the tolerance
   Array tolc(arg[4]);
@@ -146,7 +146,7 @@ ArrayVector FitFunFunction(int nargout, const ArrayVector& arg, Interpreter* eva
   ArrayVector cval(funcDef->evaluateFunction(eval,tocall,1));
   if (cval.size() == 0)
     throw Exception("function to be optimized does not return any outputs!");
-  if ((int) cval[0].getLength() != m)
+  if (cval[0].getLength() != m)
     throw Exception("function output does not match size of vector 'y'");
   // Call the lmdif1
   int *iwa;

@@ -36,7 +36,7 @@ class Exception {
   string msg;
   bool handled;
 public:
-  Exception() : msg(""), handled(false)  {}
+  Exception() : handled(false), msg("") {}
   /**
    * Construct an exception object with a given STL-string.
    */

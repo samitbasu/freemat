@@ -112,7 +112,7 @@ ArrayVector RandBetaFunction(int nargout, const ArrayVector& arg) {
   Array arg1(arg[0]);
   Array arg2(arg[1]);
   if (arg1.isEmpty() || arg2.isEmpty()) 
-    return SingleArrayVector(Array::emptyConstructor());
+    return singleArrayVector(Array::emptyConstructor());
   // Check the logic to see if one or both are scalar values
   if (!(arg1.isScalar() || arg2.isScalar() || (arg1.dimensions().equals(arg2.dimensions()))))
     throw Exception("randbeta requires either one of the two arguments to be a scalar, or both arguments to be the same size");
@@ -129,12 +129,16 @@ ArrayVector RandBetaFunction(int nargout, const ArrayVector& arg) {
   }
   arg1.promoteType(FM_FLOAT);
   arg2.promoteType(FM_FLOAT);
-  float *dp = (float *) Malloc(sizeof(float)*outDims.getElementCount());
-  float *p1 = (float*) arg1.getDataPointer();
-  float *p2 = (float*) arg2.getDataPointer();
-  for (int i=0;i<outDims.getElementCount();i++) 
+  float *dp;
+  dp = (float *) Malloc(sizeof(float)*outDims.getElementCount());
+  float *p1;
+  p1 = (float*) arg1.getDataPointer();
+  float *p2;
+  p2 = (float*) arg2.getDataPointer();
+  int i;
+  for (i=0;i<outDims.getElementCount();i++) 
     dp[i] = genbet(p1[i*arg1_advance],p2[i*arg2_advance]);
-  return SingleArrayVector(Array(FM_FLOAT,outDims,dp));
+  return singleArrayVector(Array(FM_FLOAT,outDims,dp));
 }
 
 //!
@@ -163,7 +167,7 @@ ArrayVector RandIFunction(int nargout, const ArrayVector& arg) {
   Array arg1(arg[0]);
   Array arg2(arg[1]);
   if (arg1.isEmpty() || arg2.isEmpty()) 
-    return SingleArrayVector(Array::emptyConstructor());
+    return singleArrayVector(Array::emptyConstructor());
   // Check the logic to see if one or both are scalar values
   if (!(arg1.isScalar() || arg2.isScalar() || (arg1.dimensions().equals(arg2.dimensions()))))
     throw Exception("randbeta requires either one of the two arguments to be a scalar, or both arguments to be the same size");
@@ -180,12 +184,16 @@ ArrayVector RandIFunction(int nargout, const ArrayVector& arg) {
   }
   arg1.promoteType(FM_INT32);
   arg2.promoteType(FM_INT32);
-  int32 *dp = (int32 *) Malloc(sizeof(int32)*outDims.getElementCount());
-  int32 *p1 = (int32*) arg1.getDataPointer();
-  int32 *p2 = (int32*) arg2.getDataPointer();
-  for (int i=0;i<outDims.getElementCount();i++) 
+  int32 *dp;
+  dp = (int32 *) Malloc(sizeof(int32)*outDims.getElementCount());
+  int32 *p1;
+  p1 = (int32*) arg1.getDataPointer();
+  int32 *p2;
+  p2 = (int32*) arg2.getDataPointer();
+  int i;
+  for (i=0;i<outDims.getElementCount();i++) 
     dp[i] = ignuin(p1[i*arg1_advance],p2[i*arg2_advance]);
-  return SingleArrayVector(Array(FM_INT32,outDims,dp));
+  return singleArrayVector(Array(FM_INT32,outDims,dp));
 }
   
 //!
@@ -232,18 +240,21 @@ ArrayVector RandChiFunction(int nargout, const ArrayVector& arg) {
     throw Exception("randchi requires exactly one parameter (the vector of degrees of freedom)");
   Array arg1(arg[0]);
   if (arg1.isEmpty()) 
-    return SingleArrayVector(Array::emptyConstructor());
+    return singleArrayVector(Array::emptyConstructor());
   arg1.promoteType(FM_FLOAT);
   // Output dimension is the larger of the two
   Dimensions outDims(arg1.dimensions());
-  float *dp = (float *) Malloc(sizeof(float)*outDims.getElementCount());
-  float *p1 = (float*) arg1.getDataPointer();
-  for (int i=0;i<outDims.getElementCount();i++) {
+  float *dp;
+  dp = (float *) Malloc(sizeof(float)*outDims.getElementCount());
+  float *p1;
+  p1 = (float*) arg1.getDataPointer();
+  int i;
+  for (i=0;i<outDims.getElementCount();i++) {
     if (p1[i] <= 0)
       throw Exception("argument to randchi must be positive");
     dp[i] = genchi(p1[i]);
   }
-  return SingleArrayVector(Array(FM_FLOAT,outDims,dp));
+  return singleArrayVector(Array(FM_FLOAT,outDims,dp));
 }
 
 //!
@@ -276,15 +287,18 @@ ArrayVector RandExpFunction(int nargout, const ArrayVector& arg) {
     throw Exception("randexp requires exactly one parameter (the vector of means)");
   Array arg1(arg[0]);
   if (arg1.isEmpty()) 
-    return SingleArrayVector(Array::emptyConstructor());
+    return singleArrayVector(Array::emptyConstructor());
   arg1.promoteType(FM_FLOAT);
   // Output dimension is the larger of the two
   Dimensions outDims(arg1.dimensions());
-  float *dp = (float *) Malloc(sizeof(float)*outDims.getElementCount());
-  float *p1 = (float*) arg1.getDataPointer();
-  for (int i=0;i<outDims.getElementCount();i++) 
+  float *dp;
+  dp = (float *) Malloc(sizeof(float)*outDims.getElementCount());
+  float *p1;
+  p1 = (float*) arg1.getDataPointer();
+  int i;
+  for (i=0;i<outDims.getElementCount();i++) 
     dp[i] = genexp(p1[i]);
-  return SingleArrayVector(Array(FM_FLOAT,outDims,dp));
+  return singleArrayVector(Array(FM_FLOAT,outDims,dp));
 }
 
 //!
@@ -321,15 +335,18 @@ ArrayVector RandPoissonFunction(int nargout, const ArrayVector& arg) {
     throw Exception("randp requires exactly one parameter (the vector of means)");
   Array arg1(arg[0]);
   if (arg1.isEmpty()) 
-    return SingleArrayVector(Array::emptyConstructor());
+    return singleArrayVector(Array::emptyConstructor());
   arg1.promoteType(FM_FLOAT);
   // Output dimension is the larger of the two
   Dimensions outDims(arg1.dimensions());
-  int32 *dp = (int32 *) Malloc(sizeof(int32)*outDims.getElementCount());
-  float *p1 = (float*) arg1.getDataPointer();
-  for (int i=0;i<outDims.getElementCount();i++) 
+  int32 *dp;
+  dp = (int32 *) Malloc(sizeof(int32)*outDims.getElementCount());
+  float *p1;
+  p1 = (float*) arg1.getDataPointer();
+  int i;
+  for (i=0;i<outDims.getElementCount();i++) 
     dp[i] = ignpoi(p1[i]);
-  return SingleArrayVector(Array(FM_INT32,outDims,dp));
+  return singleArrayVector(Array(FM_INT32,outDims,dp));
 }
 
 //!
@@ -367,7 +384,7 @@ ArrayVector RandBinFunction(int nargout, const ArrayVector& arg) {
   Array arg1(arg[0]);
   Array arg2(arg[1]);
   if (arg1.isEmpty() || arg2.isEmpty()) 
-    return SingleArrayVector(Array::emptyConstructor());
+    return singleArrayVector(Array::emptyConstructor());
   // Check the logic to see if one or both are scalar values
   if (!(arg1.isScalar() || arg2.isScalar() || (arg1.dimensions().equals(arg2.dimensions()))))
     throw Exception("randbin requires either one of the two arguments to be a scalar, or both arguments to be the same size");
@@ -384,12 +401,17 @@ ArrayVector RandBinFunction(int nargout, const ArrayVector& arg) {
   }
   arg1.promoteType(FM_UINT32);
   arg2.promoteType(FM_FLOAT);
-  uint32 *dp = (uint32 *) Malloc(sizeof(uint32)*outDims.getElementCount());
-  uint32 *p1 = (uint32*) arg1.getDataPointer();
-  float *p2 = (float*) arg2.getDataPointer();
-  for (int i=0;i<outDims.getElementCount();i++) 
+  uint32 *dp;
+  dp = (uint32 *) Malloc(sizeof(uint32)*outDims.getElementCount());
+  uint32 *p1;
+  p1 = (uint32*) arg1.getDataPointer();
+  float *p2;
+  p2 = (float*) arg2.getDataPointer();
+  int i;
+  for (i=0;i<outDims.getElementCount();i++) {
     dp[i] = ignbin(p1[i*arg1_advance],p2[i*arg2_advance]);
-  return SingleArrayVector(Array(FM_UINT32,outDims,dp));
+  }
+  return singleArrayVector(Array(FM_UINT32,outDims,dp));
 }
 
 //!
@@ -423,7 +445,7 @@ ArrayVector RandNBinFunction(int nargout, const ArrayVector& arg) {
   Array arg1(arg[0]);
   Array arg2(arg[1]);
   if (arg1.isEmpty() || arg2.isEmpty()) 
-    return SingleArrayVector(Array::emptyConstructor());
+    return singleArrayVector(Array::emptyConstructor());
   // Check the logic to see if one or both are scalar values
   if (!(arg1.isScalar() || arg2.isScalar() || (arg1.dimensions().equals(arg2.dimensions()))))
     throw Exception("randnbin requires either one of the two arguments to be a scalar, or both arguments to be the same size");
@@ -447,10 +469,10 @@ ArrayVector RandNBinFunction(int nargout, const ArrayVector& arg) {
   float *p2;
   p2 = (float*) arg2.getDataPointer();
   int i;
-  for (i=0;i<(int)outDims.getElementCount();i++) {
+  for (i=0;i<outDims.getElementCount();i++) {
     dp[i] = ignnbn(p1[i*arg1_advance],p2[i*arg2_advance]);
   }
-  return SingleArrayVector(Array(FM_UINT32,outDims,dp));
+  return singleArrayVector(Array(FM_UINT32,outDims,dp));
 }
 
 //!
@@ -490,7 +512,7 @@ ArrayVector RandFFunction(int nargout, const ArrayVector& arg) {
   Array arg1(arg[0]);
   Array arg2(arg[1]);
   if (arg1.isEmpty() || arg2.isEmpty()) 
-    return SingleArrayVector(Array::emptyConstructor());
+    return singleArrayVector(Array::emptyConstructor());
   // Check the logic to see if one or both are scalar values
   if (!(arg1.isScalar() || arg2.isScalar() || (arg1.dimensions().equals(arg2.dimensions()))))
     throw Exception("randf requires either one of the two arguments to be a scalar, or both arguments to be the same size");
@@ -507,15 +529,19 @@ ArrayVector RandFFunction(int nargout, const ArrayVector& arg) {
   }
   arg1.promoteType(FM_FLOAT);
   arg2.promoteType(FM_FLOAT);
-  float *dp = (float *) Malloc(sizeof(float)*outDims.getElementCount());
-  float *p1 = (float*) arg1.getDataPointer();
-  float *p2 = (float*) arg2.getDataPointer();
-  for (int i=0;i<outDims.getElementCount();i++) {
+  float *dp;
+  dp = (float *) Malloc(sizeof(float)*outDims.getElementCount());
+  float *p1;
+  p1 = (float*) arg1.getDataPointer();
+  float *p2;
+  p2 = (float*) arg2.getDataPointer();
+  int i;
+  for (i=0;i<outDims.getElementCount();i++) {
     if ((p1[i*arg1_advance] <= 0) || (p2[i*arg2_advance]) <= 0)
       throw Exception("randf requires positive arguments");
     dp[i] = genf(p1[i*arg1_advance],p2[i*arg2_advance]);
   }
-  return SingleArrayVector(Array(FM_FLOAT,outDims,dp));
+  return singleArrayVector(Array(FM_FLOAT,outDims,dp));
 }
 
 //!
@@ -558,7 +584,7 @@ ArrayVector RandGammaFunction(int nargout, const ArrayVector& arg) {
   Array arg1(arg[0]);
   Array arg2(arg[1]);
   if (arg1.isEmpty() || arg2.isEmpty()) 
-    return SingleArrayVector(Array::emptyConstructor());
+    return singleArrayVector(Array::emptyConstructor());
   // Check the logic to see if one or both are scalar values
   if (!(arg1.isScalar() || arg2.isScalar() || (arg1.dimensions().equals(arg2.dimensions()))))
     throw Exception("randgamma requires either one of the two arguments to be a scalar, or both arguments to be the same size");
@@ -575,13 +601,17 @@ ArrayVector RandGammaFunction(int nargout, const ArrayVector& arg) {
   }
   arg1.promoteType(FM_FLOAT);
   arg2.promoteType(FM_FLOAT);
-  float *dp = (float *) Malloc(sizeof(float)*outDims.getElementCount());
-  float *p1 = (float*) arg1.getDataPointer();
-  float *p2 = (float*) arg2.getDataPointer();
-  for (int i=0;i<outDims.getElementCount();i++) {
+  float *dp;
+  dp = (float *) Malloc(sizeof(float)*outDims.getElementCount());
+  float *p1;
+  p1 = (float*) arg1.getDataPointer();
+  float *p2;
+  p2 = (float*) arg2.getDataPointer();
+  int i;
+  for (i=0;i<outDims.getElementCount();i++) {
     dp[i] = gengam(p1[i*arg1_advance],p2[i*arg2_advance]);
   }
-  return SingleArrayVector(Array(FM_FLOAT,outDims,dp));
+  return singleArrayVector(Array(FM_FLOAT,outDims,dp));
 }
 
 //!
@@ -625,7 +655,7 @@ ArrayVector RandMultiFunction(int nargout, const ArrayVector& arg) {
   Array arg1(arg[0]);
   Array arg2(arg[1]);
   if (arg1.isEmpty() || arg2.isEmpty()) 
-    return SingleArrayVector(Array::emptyConstructor());
+    return singleArrayVector(Array::emptyConstructor());
   int N = arg1.getContentsAsIntegerScalar();
   if (N<0) 
     throw Exception("number of events to generate for randmulti must be a nonnegative integer");
@@ -634,19 +664,20 @@ ArrayVector RandMultiFunction(int nargout, const ArrayVector& arg) {
   float *dp;
   dp = (float*) arg2.getReadWriteDataPointer();
   float Psum = 0.0;
-  for (int i=0;i<arg2.getLength();i++) {
+  int i;
+  for (i=0;i<arg2.getLength();i++) {
     if ((dp[i] < 0) || (dp[i] > 1)) 
       throw Exception("probabiliy vector argument to randmulti must have all elements between 0 and 1");
     Psum += dp[i];
   }
-  for (int i=0;i<arg2.getLength();i++) {
+  for (i=0;i<arg2.getLength();i++) {
     dp[i] /= Psum;
   }
   Dimensions outDims;
   outDims = arg2.dimensions();
   int32 *ip = (int32*) Malloc(sizeof(int32)*arg2.getLength());
   genmul(N,dp,arg2.getLength(),(long int*) ip);
-  return SingleArrayVector(Array(FM_INT32,outDims,ip));
+  return singleArrayVector(Array(FM_INT32,outDims,ip));
 }
   
 //!
@@ -678,7 +709,7 @@ ArrayVector RandNChiFunction(int nargout, const ArrayVector& arg) {
   Array arg1(arg[0]);
   Array arg2(arg[1]);
   if (arg1.isEmpty() || arg2.isEmpty()) 
-    return SingleArrayVector(Array::emptyConstructor());
+    return singleArrayVector(Array::emptyConstructor());
   // Check the logic to see if one or both are scalar values
   if (!(arg1.isScalar() || arg2.isScalar() || (arg1.dimensions().equals(arg2.dimensions()))))
     throw Exception("randnchi requires either one of the two arguments to be a scalar, or both arguments to be the same size");
@@ -695,17 +726,21 @@ ArrayVector RandNChiFunction(int nargout, const ArrayVector& arg) {
   }
   arg1.promoteType(FM_FLOAT);
   arg2.promoteType(FM_FLOAT);
-  float *dp = (float *) Malloc(sizeof(float)*outDims.getElementCount());
-  float *p1 = (float*) arg1.getDataPointer();
-  float *p2 = (float*) arg2.getDataPointer();
-  for (int i=0;i<outDims.getElementCount();i++) {
+  float *dp;
+  dp = (float *) Malloc(sizeof(float)*outDims.getElementCount());
+  float *p1;
+  p1 = (float*) arg1.getDataPointer();
+  float *p2;
+  p2 = (float*) arg2.getDataPointer();
+  int i;
+  for (i=0;i<outDims.getElementCount();i++) {
     if (p1[i*arg1_advance] <= 1.0)
       throw Exception("degrees of freedom argument must be > 1.0");
     if (p2[i*arg2_advance] < 0.0)
       throw Exception("noncentrality parameter must be positive");
     dp[i] = gennch(p1[i*arg1_advance],p2[i*arg2_advance]);
   }
-  return SingleArrayVector(Array(FM_FLOAT,outDims,dp));
+  return singleArrayVector(Array(FM_FLOAT,outDims,dp));
 }
 
 //!
@@ -741,7 +776,7 @@ ArrayVector RandNFFunction(int nargout, const ArrayVector& arg) {
   Array arg2(arg[1]);
   Array arg3(arg[2]);
   if (arg1.isEmpty() || arg2.isEmpty() || arg3.isEmpty()) 
-    return SingleArrayVector(Array::emptyConstructor());
+    return singleArrayVector(Array::emptyConstructor());
   int arg1_advance;
   int arg2_advance;
   int arg3_advance;
@@ -767,10 +802,14 @@ ArrayVector RandNFFunction(int nargout, const ArrayVector& arg) {
   arg3.promoteType(FM_FLOAT);
   float *dp;
   dp = (float *) Malloc(sizeof(float)*outDims.getElementCount());
-  float *p1 = (float*) arg1.getDataPointer();
-  float *p2 = (float*) arg2.getDataPointer();
-  float *p3 = (float*) arg3.getDataPointer();
-  for (int i=0;i<outDims.getElementCount();i++) {
+  float *p1;
+  p1 = (float*) arg1.getDataPointer();
+  float *p2;
+  p2 = (float*) arg2.getDataPointer();
+  float *p3;
+  p3 = (float*) arg3.getDataPointer();
+  int i;
+  for (i=0;i<outDims.getElementCount();i++) {
     if (p1[i*arg1_advance] <= 1.0)
       throw Exception("numerator degrees of freedom argument must be > 1.0");
     if (p2[i*arg2_advance] <= 0.0)
@@ -779,7 +818,7 @@ ArrayVector RandNFFunction(int nargout, const ArrayVector& arg) {
       throw Exception("noncentrality parameter must be non-negative");
     dp[i] = gennf(p1[i*arg1_advance],p2[i*arg2_advance],p3[i*arg3_advance]);
   }
-  return SingleArrayVector(Array(FM_FLOAT,outDims,dp));
+  return singleArrayVector(Array(FM_FLOAT,outDims,dp));
 }
 
 void InitializeRandGen() {
@@ -795,7 +834,7 @@ ArrayVector RandStateControl(const ArrayVector& arg) {
   if (arg.size() == 1) {
     uint32 *mt = (uint32*) Malloc(sizeof(uint32)*625);
     GetRandStateVect(mt);
-    return SingleArrayVector(Array(FM_UINT32,Dimensions(625,1),mt));
+    return singleArrayVector(Array(FM_UINT32,Dimensions(625,1),mt));
   } else {
     Array statevec(arg[1]);
     if ((statevec.isScalar()) && (statevec.getContentsAsIntegerScalar() == 0)) {
@@ -921,12 +960,12 @@ ArrayVector RandnFunction(int nargout, const ArrayVector& arg) {
       t = arg[0];
       t.promoteType(FM_UINT32);
       dp = (int*) t.getDataPointer();
-      for (i=0;i<(int)t.getLength();i++)
+      for (i=0;i<t.getLength();i++)
 	dims.set(i,dp[i]);
     }
     bool allPositive;
     allPositive = true;
-    for (i=0;i<(int)dims.getLength();i++)
+    for (i=0;i<dims.getLength();i++)
       allPositive &= (dims.get(i) >= 0);
     if (!allPositive)
       throw Exception("Randn function requires positive arguments");
@@ -950,7 +989,7 @@ ArrayVector RandnFunction(int nargout, const ArrayVector& arg) {
     if (j<len-1)
       qp[j+1] = y2;
   }
-  return SingleArrayVector(Array(FM_DOUBLE,dims,qp));
+  return singleArrayVector(Array(FM_DOUBLE,dims,qp));
 }
 
 //!
@@ -1056,12 +1095,12 @@ ArrayVector RandFunction(int nargout, const ArrayVector& arg) {
       t = arg[0];
       t.promoteType(FM_UINT32);
       dp = (int*) t.getDataPointer();
-      for (i=0;i<(int)t.getLength();i++)
+      for (i=0;i<t.getLength();i++)
 	dims.set(i,dp[i]);
     }
     bool allPositive;
     allPositive = true;
-    for (i=0;i<(int)dims.getLength();i++)
+    for (i=0;i<dims.getLength();i++)
       allPositive &= (dims.get(i) >= 0);
     if (!allPositive)
       throw Exception("Rand function requires posItive arguments");
@@ -1073,5 +1112,5 @@ ArrayVector RandFunction(int nargout, const ArrayVector& arg) {
   len = dims.getElementCount();
   for (j=0;j<len;j++)
     qp[j] = genrand_res53();
-  return SingleArrayVector(Array(FM_DOUBLE,dims,qp));
+  return singleArrayVector(Array(FM_DOUBLE,dims,qp));
 }

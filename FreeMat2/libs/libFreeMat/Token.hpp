@@ -73,7 +73,6 @@ const byte TOK_FUNCTION_DEFS = 190;
 const byte TOK_SCRIPT = 191;
 const byte TOK_ANONYMOUS_FUNC = 192;
 const byte TOK_NEST_FUNC = 193;
-const byte TOK_TYPE_DECL = 194;
 typedef byte tok;
 class Serialize;
 
@@ -94,21 +93,22 @@ class Token {
 public:
   Token();
   Token(byte tok, unsigned pos = 0, string text = string());
-  Token(Serialize *s);
-  void freeze(Serialize *s) const;
-  bool is(byte tok) const {return m_tok == tok;}
-  bool isBinaryOperator() const;
-  bool isUnaryOperator() const;
-  unsigned precedence() const;
-  bool isRightAssociative() const;
-  byte value() const {return m_tok;}
-  void setValue(byte a) {m_tok = a;}
-  unsigned position()  const {return m_pos;}
-  string text()  const {return m_text;}
-  void setText(string txt) {m_text = txt;}
-  Array array() const {return m_array;}
-  void fillArray();
-  void print(ostream& o) const;
+  bool Is(byte tok) const {return m_tok == tok;}
+  bool IsBinaryOperator() const;
+  bool IsUnaryOperator() const;
+  unsigned Precedence() const;
+  bool IsRightAssociative() const;
+  byte Value() const {return m_tok;}
+  void SetValue(byte a) {m_tok = a;}
+  unsigned Position()  const {return m_pos;}
+  string Text()  const {return m_text;}
+  void SetText(string txt) {m_text = txt;}
+  Array GetArray() const {return m_array;}
+  void FillArray();
+  void Print(ostream& o) const;
+
+  friend void FreezeToken(const Token& a, Serialize *s);
+  friend Token ThawToken(Serialize *s);
 };
 
 string TokenToString(const Token& b);

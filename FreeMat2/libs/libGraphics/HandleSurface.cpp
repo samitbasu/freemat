@@ -28,8 +28,8 @@ HandleSurface::HandleSurface() {
 HandleSurface::~HandleSurface() {
 }
 
-QVector<double> HandleSurface::GetLimits() {
-  QVector<double> limits;
+std::vector<double> HandleSurface::GetLimits() {
+  std::vector<double> limits;
   UpdateState();
   Array xdata(ArrayPropertyLookup("xdata"));
   Array ydata(ArrayPropertyLookup("ydata"));
@@ -43,7 +43,7 @@ QVector<double> HandleSurface::GetLimits() {
   limits.push_back(ArrayMax(zdata));
   limits.push_back(ArrayMin(cdata));
   limits.push_back(ArrayMax(cdata));
-  QVector<double> alphadata(VectorPropertyLookup("alphadata"));
+  std::vector<double> alphadata(VectorPropertyLookup("alphadata"));
   limits.push_back(VecMin(alphadata));
   limits.push_back(VecMax(alphadata));
   return limits;
@@ -191,7 +191,7 @@ void HandleSurface::ConstructProperties() {
 
 void HandleSurface::SetupDefaults() {
   HPVector *hp = (HPVector*) LookupProperty("alphadata");
-  QVector<double> gp;
+  std::vector<double> gp;
   gp.push_back(1.0);
   hp->Data(gp);
   SetConstrainedStringDefault("alphadatamapping","none");
@@ -324,10 +324,10 @@ Array HandleSurface::GetCoordinateMatrix(std::string name, bool isXcoord) {
 }
 
 
-QVector<QVector<cpoint> > HandleSurface::BuildQuadsNoTexMap(HPConstrainedStringColor* cp,
+std::vector<std::vector<cpoint> > HandleSurface::BuildQuadsNoTexMap(HPConstrainedStringColor* cp,
 								    HPConstrainedStringScalar* ap) {
   // Get the x,y,z & color data points
-  QVector<QVector<cpoint> > retval;
+  std::vector<std::vector<cpoint> > retval;
   Array xdata(GetCoordinateMatrix("xdata",true));
   xdata.promoteType(FM_DOUBLE);
   Array ydata(GetCoordinateMatrix("ydata",false));
@@ -346,7 +346,7 @@ QVector<QVector<cpoint> > HandleSurface::BuildQuadsNoTexMap(HPConstrainedStringC
   if (cp->Is("flat") && ((img.height() < rows-1) || (img.width() < cols-1))) return retval;
   if (ap->Is("flat") && ((img.height() < rows-1) || (img.width() < cols-1))) return retval;
   if (cp->Is("none")) return retval;
-  QRgb *dummyline = NULL;
+  QRgb *dummyline;
   if (cp->Is("colorspec") || ap->Is("scalar")) {
     dummyline = new QRgb[cols];
     double r = 0;
@@ -356,7 +356,7 @@ QVector<QVector<cpoint> > HandleSurface::BuildQuadsNoTexMap(HPConstrainedStringC
     if (ap->Is("scalar"))
       alphaval = ap->Scalar();
     if (cp->Is("colorspec")) {
-      QVector<double> p(cp->ColorSpec());
+      std::vector<double> p(cp->ColorSpec());
       if (p[0] == -1) return retval;
       r = p[0]; g = p[1]; b = p[2];
     }
@@ -367,10 +367,7 @@ QVector<QVector<cpoint> > HandleSurface::BuildQuadsNoTexMap(HPConstrainedStringC
 			   (int)(255*alphaval));
   }
   for (int i=0;i<rows-1;i++) {
-    QRgb *cbits1 = NULL;
-    QRgb *cbits2 = NULL;
-    QRgb *abits1 = NULL;
-    QRgb *abits2 = NULL;
+    QRgb *cbits1, *cbits2, *abits1, *abits2;
     int col_lim, alp_lim;
     if (cp->Is("interp")) {
       cbits1 = (QRgb*) img.scanLine(i);
@@ -398,7 +395,7 @@ QVector<QVector<cpoint> > HandleSurface::BuildQuadsNoTexMap(HPConstrainedStringC
       abits2 = (QRgb*) dummyline;
       alp_lim = cols-1;
     }
-    QVector<cpoint> linequads;
+    std::vector<cpoint> linequads;
     for (int j=0;j<cols;j++) {
       int ccol = qMin(j,col_lim);
       int acol = qMin(j,alp_lim);
@@ -435,6 +432,10 @@ void HandleSurface::PaintMe(RenderEngine& gc) {
   Array zdata(ArrayPropertyLookup("zdata"));
   zdata.promoteType(FM_DOUBLE);
   if (zdata.isEmpty()) return;
+  double *xdp = (double*) xdata.getDataPointer();
+  double *ydp = (double*) ydata.getDataPointer();
+  double *zdp = (double*) zdata.getDataPointer();
+  int rows = zdata.rows();   int cols = zdata.columns();
   // There are many render styles...
   // edgealpha, edgecolor, facealpha, facecolor
   // facecolor
@@ -442,11 +443,11 @@ void HandleSurface::PaintMe(RenderEngine& gc) {
   if (StringCheck("facecolor","texturemap")) return;
   if (StringCheck("facealpha","texturemap")) return;
   // A quadstrip is defined by its 
-  QVector<QVector<cpoint> > surfquads(BuildQuadsNoTexMap((HPConstrainedStringColor*) 
+  std::vector<std::vector<cpoint> > surfquads(BuildQuadsNoTexMap((HPConstrainedStringColor*) 
 								 LookupProperty("facecolor"),
 								 (HPConstrainedStringScalar*)
 								 LookupProperty("facealpha")));
-  QVector<QVector<cpoint> > edgequads(BuildQuadsNoTexMap((HPConstrainedStringColor*) 
+  std::vector<std::vector<cpoint> > edgequads(BuildQuadsNoTexMap((HPConstrainedStringColor*) 
 								 LookupProperty("edgecolor"),
 								 (HPConstrainedStringScalar*)
 								 LookupProperty("edgealpha")));
@@ -455,8 +456,8 @@ void HandleSurface::PaintMe(RenderEngine& gc) {
 #if 0
   HPAutoFlatColor *ec = (HPAutoFlatColor*) LookupProperty("markeredgecolor");
   HPAutoFlatColor *fc = (HPAutoFlatColor*) LookupProperty("markerfacecolor");
-  QVector<double> edgecolor;
-  QVector<double> facecolor;
+  std::vector<double> edgecolor;
+  std::vector<double> facecolor;
   if (ec->Is("colorspec")) 
     edgecolor = ec->ColorSpec();
   else
@@ -471,9 +472,9 @@ void HandleSurface::PaintMe(RenderEngine& gc) {
   // Make sure there's something to draw...
   if ((typ != RenderEngine::None) || (edgecolor[0] != -1) || (facecolor[0] != -1)) {
     // Calculate the u/v coordinates (pixels)
-    QVector<double> uc;
-    QVector<double> vc;
-    QVector<double> zc;
+    std::vector<double> uc;
+    std::vector<double> vc;
+    std::vector<double> zc;
     for (int i=0;i<rows*cols;i++) {
       double u, v;
       bool clipped;

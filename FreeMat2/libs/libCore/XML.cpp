@@ -82,7 +82,7 @@ static Array QDomElementToArray(QDomElement elem);
 static Array QDomNodeToArray(QDomNode p) {
   if (p.nodeType() == QDomNode::ElementNode)
     return QDomElementToArray(p.toElement());
-  StringVector fnames;
+  rvstring fnames;
   fnames << "Name" << "Value";
   ArrayVector vals;
   vals << Array::stringConstructor(p.nodeName().toStdString());
@@ -92,13 +92,13 @@ static Array QDomNodeToArray(QDomNode p) {
 
 static Array QDomNamedNodeMapToArray(QDomNamedNodeMap attr) {
   ArrayVector nodes;
-  for (size_t i=0;i<attr.length();i++)
+  for (int i=0;i<attr.length();i++)
     nodes << QDomNodeToArray(attr.item(i));
   return Array::cellConstructor(ArrayMatrix() << nodes);
 }
 
 static Array QDomElementToArray(QDomElement elem) {
-  StringVector fnames;
+  rvstring fnames;
   fnames << "Name" << "Attributes" << "Data" << "Children";
   ArrayVector vals;
   vals << Array::stringConstructor(elem.tagName().toStdString());
@@ -198,7 +198,7 @@ void URLRetriever::run()
   if (!m_url.userName().isEmpty())
     m_http.setUser(m_url.userName(), m_url.password());
   m_httpGetId = m_http.get(m_url.path(), m_file);
-  QTimer::singleShot((int)m_timeout, &m_http, SLOT(abort()));
+  QTimer::singleShot(m_timeout, &m_http, SLOT(abort()));
   connect(&m_http, SIGNAL(done(bool)), &m_event, SLOT(quit()));
   connect(&m_http, SIGNAL(requestFinished(int, bool)), this, SLOT(requestFinished(int, bool)));
   m_event.exec();

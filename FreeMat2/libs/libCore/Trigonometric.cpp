@@ -78,7 +78,6 @@ ArrayVector CosFunction(int nargout, const ArrayVector& arg) {
   if (argType > FM_DCOMPLEX)
     throw Exception("argument to cosine must be numeric");
   switch (argType) {
-  default: throw Exception("illegal types as arguments to cosine");
   case FM_FLOAT: {
     const float *dp = ((const float *)input.getDataPointer());
     int len(input.getLength());
@@ -178,7 +177,6 @@ ArrayVector SinFunction(int nargout, const ArrayVector& arg) {
   if (argType > FM_DCOMPLEX)
     throw Exception("argument to sine must be numeric");
   switch (argType) {
-  default: throw Exception("illegal types as arguments to sin");
   case FM_FLOAT: {
     const float *dp = ((const float *)input.getDataPointer());
     int len(input.getLength());
@@ -282,7 +280,6 @@ ArrayVector TanFunction(int nargout, const ArrayVector& arg) {
   if (argType > FM_DCOMPLEX)
     throw Exception("argument to tangent must be numeric");
   switch (argType) {
-  default: throw Exception("illegal types as arguments to tangent");
   case FM_FLOAT: {
     const float *dp = ((const float *)input.getDataPointer());
     int len(input.getLength());
@@ -382,7 +379,6 @@ ArrayVector CscFunction(int nargout, const ArrayVector& arg) {
   if (argType > FM_DCOMPLEX)
     throw Exception("argument to cosecant must be numeric");
   switch (argType) {
-  default: throw Exception("illegal types as arguments to cosecant");
   case FM_FLOAT: {
     const float *dp = ((const float *)input.getDataPointer());
     int len(input.getLength());
@@ -484,7 +480,6 @@ ArrayVector SecFunction(int nargout, const ArrayVector& arg) {
   if (argType > FM_DCOMPLEX)
     throw Exception("argument to secant must be numeric");
   switch (argType) {
-  default: throw Exception("illegal types as arguments to secant");
   case FM_FLOAT: {
     const float *dp = ((const float *)input.getDataPointer());
     int len(input.getLength());
@@ -590,7 +585,6 @@ ArrayVector CotFunction(int nargout, const ArrayVector& arg) {
   if (argType > FM_DCOMPLEX)
     throw Exception("argument to cotangent must be numeric");
   switch (argType) {
-  default: throw Exception("illegal types as arguments to cotangent");
   case FM_FLOAT: {
     const float *dp = ((const float *)input.getDataPointer());
     int len(input.getLength());
@@ -696,7 +690,7 @@ ArrayVector ArccosFunction(int nargout, const ArrayVector& arg) {
   // Check the range
   if (argType == FM_FLOAT) {
     int i;
-    float rngeVal = 0;
+    float rngeVal;
     int cnt;
     bool init;
     const float *dp = (const float *) input.getDataPointer();
@@ -752,7 +746,6 @@ ArrayVector ArccosFunction(int nargout, const ArrayVector& arg) {
   if (argType > FM_DCOMPLEX)
     throw Exception("argument to arccosine must be numeric");
   switch (argType) {
-  default: throw Exception("illegal types as arguments to arccos");
   case FM_FLOAT: {
     const float *dp = ((const float *)input.getDataPointer());
     int len(input.getLength());
@@ -893,7 +886,7 @@ ArrayVector ArcsinFunction(int nargout, const ArrayVector& arg) {
   // Check the range
   if (argType == FM_FLOAT) {
     int i;
-    float rngeVal = 0;
+    float rngeVal;
     int cnt;
     bool init;
     const float *dp = (const float *) input.getDataPointer();
@@ -949,7 +942,6 @@ ArrayVector ArcsinFunction(int nargout, const ArrayVector& arg) {
   if (argType > FM_DCOMPLEX)
     throw Exception("argument to arcsine must be numeric");
   switch (argType) {
-  default: throw Exception("illegal types as arguments to arcsine");
   case FM_FLOAT: {
     const float *dp = ((const float *)input.getDataPointer());
     int len(input.getLength());
@@ -1095,7 +1087,6 @@ ArrayVector ArctanFunction(int nargout, const ArrayVector& arg) {
   if (argType > FM_DCOMPLEX)
     throw Exception("argument to arctan must be numeric");
   switch (argType) {
-  default: throw Exception("illegal types as arguments to atan");    
   case FM_FLOAT: {
     const float *dp = ((const float *)input.getDataPointer());
     int len(input.getLength());
@@ -1279,7 +1270,6 @@ ArrayVector Arctan2Function(int nargout, const ArrayVector& arg) {
     throw Exception("Illegal combination of sizes for input to atan2 - either both arguments must be the same size, or one must be a scalar");
     
   switch (argType) {
-  default: throw Exception("illegal types as arguments to atan2");
   case FM_FLOAT: {
     const float *dpx = ((const float *)x.getDataPointer());
     const float *dpy = ((const float *)y.getDataPointer());

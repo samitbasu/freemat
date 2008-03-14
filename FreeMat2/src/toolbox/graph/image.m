@@ -81,7 +81,6 @@
 %!
 
 % Copyright (c) 2002-2006 Samit Basu
-% Licensed under the GPL
 
 function ohandle = image(varargin)
   ax = newplot;
@@ -108,8 +107,8 @@ function ohandle = image(varargin)
     y = varargin{2};
     C = varargin{3};
     varargin(1:3) = [];
-    handle = himage('xdata',x([1,end]),'ydata',y([1,end]),'cdata',C,varargin{:});
-%    axis(ax,'image');
+    handle = himage('xdata',x,'ydata',y,'cdata',C,varargin{:});
+    axis(ax,'image');
   else
     error('Unrecognized form of image command');
   end

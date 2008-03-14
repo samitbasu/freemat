@@ -24,13 +24,13 @@
 #include "Types.hpp"
 
 class UserClass {
-  StringVector fieldNames;
-  StringVector parentClasses;
+  rvstring fieldNames;
+  rvstring parentClasses;
 public:
   UserClass();
-  UserClass(StringVector fields, StringVector parents);
+  UserClass(rvstring fields, rvstring parents);
   bool matchClass(UserClass test);
-  StringVector getParentClasses();
+  rvstring getParentClasses();
   ~UserClass();
 };
 
@@ -47,9 +47,9 @@ Array ClassMatrixConstructor(ArrayMatrix m, Interpreter* eval);
 ArrayVector ClassFunction(int nargout, const ArrayVector& arg,
 			  Interpreter* eval);
 
-ArrayVector ClassRHSExpression(Array a, Tree *t, Interpreter* eval);
+ArrayVector ClassRHSExpression(Array a, const tree &t, Interpreter* eval);
 
-void ClassAssignExpression(ArrayReference r, Tree *t, const Array& value, Interpreter* eval);
+void ClassAssignExpression(ArrayReference r, const tree &t, const Array& value, Interpreter* eval);
   
 bool ClassResolveFunction(Interpreter* eval, Array &args, std::string funcName, FuncPtr& val);
   

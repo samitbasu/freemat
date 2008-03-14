@@ -32,7 +32,6 @@
 #include "Print.hpp"
 #include "MemPtr.hpp"
 #include "Parser.hpp"
-#include "List.hpp"
 
 #include <algorithm>
 #undef max
@@ -552,7 +551,7 @@ ArrayVector SparseFunction(int nargout, const ArrayVector& arg, Interpreter* eva
     if ((r.dataClass() != FM_LOGICAL) && (r.dataClass() < FM_INT32))
       r.promoteType(FM_INT32);
     r.makeSparse();
-    return SingleArrayVector(r);
+    return singleArrayVector(r);
   } else if (arg.size() == 2) {
     Array m_arg(arg[0]);
     Array n_arg(arg[1]);
@@ -560,7 +559,7 @@ ArrayVector SparseFunction(int nargout, const ArrayVector& arg, Interpreter* eva
     m = m_arg.getContentsAsIntegerScalar();
     n = n_arg.getContentsAsIntegerScalar();
     Dimensions dim(m,n);
-    return SingleArrayVector(Array(FM_FLOAT,dim,SparseFloatZeros(m,n),true));
+    return singleArrayVector(Array(FM_FLOAT,dim,SparseFloatZeros(m,n),true));
   } else if (arg.size() == 3) {
     Array i_arg(arg[0]);
     Array j_arg(arg[1]);
@@ -576,7 +575,7 @@ ArrayVector SparseFunction(int nargout, const ArrayVector& arg, Interpreter* eva
     int olen;
     olen = ilen > jlen ? ilen : jlen;
     olen = vlen > olen ? vlen : olen;
-    int istride = 0, jstride = 0, vstride = 0;
+    int istride, jstride, vstride;
     if (olen > 1) {
       if (ilen == 1)
 	istride = 0;
@@ -599,15 +598,15 @@ ArrayVector SparseFunction(int nargout, const ArrayVector& arg, Interpreter* eva
     }
     // Calculate the number of rows in the matrix
     uint32 *ip = (uint32*) i_arg.getDataPointer();
-    uint32 rows = 0;
+    int rows = 0;
     for (int i=0;i<ilen;i++)
       rows = (ip[i] > rows) ? ip[i] : rows;
     uint32 *jp = (uint32*) j_arg.getDataPointer();
-    uint32 cols = 0;
+    int cols = 0;
     for (int j=0;j<jlen;j++)
       cols = (jp[j] > cols) ? jp[j] : cols;
     Dimensions dim(rows,cols);
-    return SingleArrayVector(Array(v_arg.dataClass(),dim,
+    return singleArrayVector(Array(v_arg.dataClass(),dim,
 				   makeSparseFromIJV(v_arg.dataClass(),
 						     rows,cols,olen,
 						     ip,istride,jp,jstride,
@@ -631,7 +630,7 @@ ArrayVector SparseFunction(int nargout, const ArrayVector& arg, Interpreter* eva
     int olen;
     olen = ilen > jlen ? ilen : jlen;
     olen = vlen > olen ? vlen : olen;
-    int istride = 0, jstride = 0, vstride = 0;
+    int istride, jstride, vstride;
     if (olen > 1) {
       if (ilen == 1)
 	istride = 0;
@@ -659,7 +658,7 @@ ArrayVector SparseFunction(int nargout, const ArrayVector& arg, Interpreter* eva
     Dimensions dim(rows,cols);
     uint32 *ip = (uint32*) i_arg.getDataPointer();
     uint32 *jp = (uint32*) j_arg.getDataPointer();
-    return SingleArrayVector(Array(v_arg.dataClass(),dim,
+    return singleArrayVector(Array(v_arg.dataClass(),dim,
 				   makeSparseFromIJV(v_arg.dataClass(),
 						     rows,cols,olen,
 						     ip,istride,jp,jstride,
@@ -694,7 +693,7 @@ ArrayVector InvFunction(int nargout, const ArrayVector& arg, Interpreter* eval) 
   if (arg.size() != 1)
     throw Exception("inv function needs at least one argument");
   Array r(arg[0]);
-  return SingleArrayVector(InvertMatrix(r,eval));
+  return singleArrayVector(InvertMatrix(r,eval));
 }
 
 //!
@@ -734,7 +733,7 @@ ArrayVector FullFunction(int nargout, const ArrayVector& arg) {
     throw Exception("Need one argument to full function");
   Array r(arg[0]);
   r.makeDense();
-  return SingleArrayVector(r);
+  return singleArrayVector(r);
 }
 
 //!
@@ -921,7 +920,7 @@ ArrayVector GetLineFunction(int nargout, const ArrayVector& arg, Interpreter* ev
       throw Exception("getline requires a string prompt");
     prompt = A.getContentsAsString();
   }
-  return SingleArrayVector(Array::stringConstructor(eval->getLine(prompt)));
+  return singleArrayVector(Array::stringConstructor(eval->getLine(prompt)));
 }
 
 ArrayVector GenEigFunction(int nargout, const ArrayVector &arg, Interpreter* m_eval) {
@@ -1537,7 +1536,7 @@ ArrayVector EigsFunction(int nargout, const ArrayVector& arg) {
     throw Exception("eigs can only be applied to square matrices.");
   if (arg.size() < 2) {
     k = 6;
-    if (k >= (int)A.getDimensionLength(0))
+    if (k >= A.getDimensionLength(0))
       k = A.getDimensionLength(0) - 1;
   } else {
     Array kval(arg[1]);
@@ -1608,7 +1607,6 @@ ArrayVector QRDNoPivotFunction(bool compactDec, Array A) {
   Array rmat, qmat;
   Dimensions dim;
   switch (Aclass) {
-  default: throw Exception("illegal argument type to QRD");
   case FM_FLOAT:
     {
       float *q = (float*) Malloc(nrows*minmn*sizeof(float));
@@ -1732,7 +1730,6 @@ ArrayVector QRDPivotFunction(bool compactDec, Array A) {
   Array rmat, qmat, pmat;
   Dimensions dim;
   switch (Aclass) {
-  default: throw Exception("illegal argument type to QRD");
   case FM_FLOAT:
     {
       float *q = (float*) Malloc(nrows*minmn*sizeof(float));
@@ -2306,6 +2303,8 @@ ArrayVector QRDFunction(int nargout, const ArrayVector& arg) {
     throw Exception("Cannot apply matrix operations to N-Dimensional arrays.");
   if (A.anyNotFinite())
     throw Exception("QR Decomposition only defined for matrices with finite entries.");
+  int nrows = A.getDimensionLength(0);
+  int ncols = A.getDimensionLength(1);
   bool compactDecomposition = false;
   if (arg.size() == 2) {
     Array cflag(arg[1]);
@@ -2836,7 +2835,6 @@ ArrayVector SVDFunction(int nargout, const ArrayVector& arg) {
   computevectors = (nargout>1);
   ArrayVector retval;
   switch (Aclass) {
-  default: throw Exception("illegal argument type to svd");
   case FM_FLOAT:
     {
       int mindim;
@@ -3139,13 +3137,9 @@ ArrayVector SimKeysFunction(int nargout, const ArrayVector& arg,
   if (arg[0].dataClass() != FM_CELL_ARRAY)
     throw Exception("simkeys requires a cell array of strings");
   const Array *dp = (const Array *) arg[0].getDataPointer();
-  for (int i=0;i<(int) arg[0].getLength();i++) {
-    string txt(ArrayToString(dp[i]));
-    if ((txt.size() > 0) && (txt[txt.size()-1] != '\n'))
-      txt.push_back('\n');
-    eval->ExecuteLine(txt);
-  }
-  eval->ExecuteLine("\nquit\n");
+  for (int i=0;i<arg[0].getLength();i++)
+    eval->ExecuteLine(ArrayToString(dp[i]));
+  eval->ExecuteLine("quit\n");
   try {
     while(1) 
       eval->evalCLI();
@@ -3368,13 +3362,13 @@ ArrayVector SponesFunction(int nargout, const ArrayVector& arg) {
     throw Exception("spones function requires a sparse matrix template argument");
   Array tmp(arg[0]);
   if (tmp.isEmpty())
-    return SingleArrayVector(Array::emptyConstructor());
+    return singleArrayVector(Array::emptyConstructor());
   if(tmp.isReferenceType())
     throw Exception("spones function requires a numeric sparse matrix argument");
   tmp.makeSparse();
   if (!tmp.sparse())
     throw Exception("spones function requires a sparse matrix template argument");
-  return SingleArrayVector(Array::Array(FM_FLOAT,Dimensions(tmp.getDimensionLength(0),tmp.getDimensionLength(1)),SparseOnesFunc(tmp.dataClass(),tmp.getDimensionLength(0),tmp.getDimensionLength(1),tmp.getSparseDataPointer()),true));
+  return singleArrayVector(Array::Array(FM_FLOAT,Dimensions(tmp.getDimensionLength(0),tmp.getDimensionLength(1)),SparseOnesFunc(tmp.dataClass(),tmp.getDimensionLength(0),tmp.getDimensionLength(1),tmp.getSparseDataPointer()),true));
 }
 
 //!
@@ -3456,7 +3450,7 @@ ArrayVector VerStringFunction(int nargout, const ArrayVector& arg, Interpreter* 
 //function evenoddtest(n)
 //  if (n==0)
 //    error('zero is neither even nor odd');
-//  elseif ( n ~= fix(n) )
+//  elseif (~isa(n,'int32'))
 //    error('expecting integer argument');
 //  end;
 //  if (n==int32(n/2)*2)
@@ -3592,7 +3586,7 @@ ArrayVector EvalTryFunction(int nargout, const ArrayVector& arg, Interpreter* ev
     ArrayVector retval;
     bool autostop;
     autostop = eval->AutoStop();
-    eval->setAutoStop(false);
+    eval->AutoStop(false);
     try {
       eval->getContext()->bypassScope(popSpec);
       eval->evaluateString(try_buf,true);
@@ -3603,7 +3597,7 @@ ArrayVector EvalTryFunction(int nargout, const ArrayVector& arg, Interpreter* ev
       eval->evaluateString(catch_buf,false);
       retval = RetrieveCallVars(eval,nargout);
     }
-    eval->setAutoStop(autostop);
+    eval->AutoStop(autostop);
     return retval;
   } else {
     string try_line = arg[0].getContentsAsString();
@@ -3612,7 +3606,7 @@ ArrayVector EvalTryFunction(int nargout, const ArrayVector& arg, Interpreter* ev
     string catch_buf = catch_line + "\n";
     bool autostop;
     autostop = eval->AutoStop();
-    eval->setAutoStop(false);
+    eval->AutoStop(false);
     try {
       eval->getContext()->bypassScope(popSpec);
       eval->evaluateString(try_buf,true);
@@ -3621,7 +3615,7 @@ ArrayVector EvalTryFunction(int nargout, const ArrayVector& arg, Interpreter* ev
       eval->getContext()->restoreBypassedScopes();
       eval->evaluateString(catch_buf,false);
     }
-    eval->setAutoStop(autostop);
+    eval->AutoStop(autostop);
     return ArrayVector();
   }
 }
@@ -3886,10 +3880,10 @@ ArrayVector SourceFunction(int nargout, const ArrayVector& arg, Interpreter* eva
   QString scriptText(fstr.readAll());
   Scanner S(scriptText.toStdString(),filename);
   Parser P(S);
-  CodeBlock pcode(P.process());
-  if (pcode.tree()->is(TOK_FUNCTION_DEFS))
+  tree pcode = P.Process();
+  if (pcode.is(TOK_FUNCTION_DEFS))
     throw Exception("only scripts can be source-ed, not functions");
-  Tree *code = pcode.tree()->first();
+  tree code = pcode.first();
   eval->block(code);
   return ArrayVector();
 }
@@ -4080,14 +4074,6 @@ ArrayVector BuiltinFunction(int nargout, const ArrayVector& arg,Interpreter* eva
 //@$"y = feval(@cos,pi)","-1","close"
 //@$"y = feval('cos',pi)","-1","close"
 //@$"y = feval(inline('cos(t)'),pi)","-1","close"
-//@{ test_feval1.m
-//function test_val = test_feval1
-//y = 0;
-//test_val = feval('test_feval1_local_func',y);
-//
-//function z = test_feval1_local_func(x)
-//z = 1;
-//@}
 //!
 ArrayVector FevalFunction(int nargout, const ArrayVector& arg,Interpreter* eval){
   if (arg.size() == 0)
@@ -4097,12 +4083,9 @@ ArrayVector FevalFunction(int nargout, const ArrayVector& arg,Interpreter* eval)
   FuncPtr funcDef;
   if (arg[0].isString()) {
     string fname = arg[0].getContentsAsString();
-    eval->popDebug();
-    if (!eval->lookupFunction(fname,funcDef)) {
-      eval->pushDebug("feval","feval");
+    Context *context = eval->getContext();
+    if (!context->lookupFunction(fname,funcDef))
       throw Exception(std::string("function ") + fname + " undefined!");
-    }
-    eval->pushDebug("feval","feval");
   } else {
     if (!arg[0].isScalar())
       throw Exception("function handle argument to feval must be a scalar");
@@ -4143,7 +4126,7 @@ ArrayVector DoCLIFunction(int nargout, const ArrayVector& arg, Interpreter* eval
     funcDef->updateCode(eval);
     if (funcDef->scriptFlag) {
       try {
-	eval->block(((MFunctionDef*)funcDef)->code.tree());
+	eval->block(((MFunctionDef*)funcDef)->code);
       } catch (Exception& e) {
 	eval->errorMessage("Startup script error:\n" + e.getMessageCopy());
       }
@@ -4204,7 +4187,7 @@ ArrayVector RepMatFunction(int nargout, const ArrayVector& arg) {
   if (arg.size() < 2)
     throw Exception("repmat function requires at least two arguments");
   Array x(arg[0]);
-  if (x.isEmpty()) return SingleArrayVector(Array::emptyConstructor());
+  if (x.isEmpty()) return singleArrayVector(Array::emptyConstructor());
   Dimensions repcount;
   // Case 1, look for a scalar second argument
   if ((arg.size() == 2) && (arg[1].isScalar())) {
@@ -4226,11 +4209,11 @@ ArrayVector RepMatFunction(int nargout, const ArrayVector& arg) {
     t.promoteType(FM_INT32);
     if (t.getLength() > maxDims) throw Exception("replication request exceeds maxDims constant - either rebuild FreeMat with a higher maxDims constant, or shorten the requested replication array");
     int32 *dp = (int32*) t.getDataPointer();
-    for (i=0;i<(int)t.getLength();i++)
+    for (i=0;i<t.getLength();i++)
       repcount.set(i,dp[i]);
   }
   // Check for a valid replication count
-  for (i=0;i<(int)repcount.getLength();i++)
+  for (i=0;i<repcount.getLength();i++)
     if (repcount.get(i) < 0) throw Exception("negative replication counts not allowed in argument to repmat function");
   // All is peachy.  Allocate an output array of sufficient size.
   Dimensions originalSize(x.dimensions());
@@ -4247,6 +4230,7 @@ ArrayVector RepMatFunction(int nargout, const ArrayVector& arg) {
   // pushing, because we can push a column at a time, which might
   // be slightly more efficient.
   int colsize = originalSize.get(0);
+  int outcolsize = outdims.get(0);
   int colcount = originalSize.getElementCount()/colsize;
   // copySelect stores which copy we are pushing.
   Dimensions copySelect(outdim);
@@ -4309,9 +4293,9 @@ ArrayVector SystemFunction(int nargout, const ArrayVector& arg) {
   ArrayVector retval;
   if (systemArg.size() == 0) 
     return retval;
-  StringVector cp(DoSystemCallCaptured(systemArg));
+  stringVector cp(DoSystemCallCaptured(systemArg));
   Array* np = new Array[cp.size()];
-  for (int i=0;i<(int)cp.size();i++)
+  for (int i=0;i<cp.size();i++)
     np[i] = Array::stringConstructor(cp[i]);
   Dimensions dim(cp.size(),1);
   Array ret(FM_CELL_ARRAY,dim,np);
@@ -4367,7 +4351,7 @@ ArrayVector PermuteFunction(int nargout, const ArrayVector& arg) {
   if (arg.size() < 2) throw Exception("permute requires 2 inputs, the array to permute, and the permutation vector");
   Array A(arg[0]);
   Array permutation(arg[1]);
-  permutation.promoteType(FM_UINT32);
+  permutation.promoteType(FM_INT32);
   int Adims = A.dimensions().getLength();
   if (permutation.getLength() != A.dimensions().getLength())
     throw Exception("permutation vector must contain as many elements as the array to permute has dimensions");
@@ -4375,9 +4359,9 @@ ArrayVector PermuteFunction(int nargout, const ArrayVector& arg) {
   MemBlock<bool> p(Adims);
   bool *d = &p;
   for (int i=0;i<Adims;i++) d[i] = false;
-  const uint32* dp = (const uint32*) permutation.getDataPointer();
+  const int32* dp = (const int32*) permutation.getDataPointer();
   for (int i=0;i<Adims;i++) {
-    if ((dp[i] < 1) || (dp[i] > ((uint32)Adims)))
+    if ((dp[i] < 1) || (dp[i] > Adims))
       throw Exception("permutation vector elements are limited to 1..ndims(A), where A is the array to permute");
     d[dp[i]-1] = true;
   }
@@ -4513,7 +4497,6 @@ static void Conv2MainComplex(T* C, const T* A, const T*B,
 Array Conv2FunctionDispatch(Array X,Array Y,int Cm,int Cn,
 			    int Cm_offset, int Cn_offset) {
   switch (X.dataClass()) {
-  default: throw Exception("illegal argument type to conv2");
   case FM_FLOAT: {
     float *cp = (float*) Array::allocateArray(FM_FLOAT,Cm*Cn);
     Conv2MainReal<float>(cp,
@@ -4595,7 +4578,7 @@ static ArrayVector Conv2FunctionFullXY(Array X, Array Y) {
   Cn = X.getDimensionLength(1) + Y.getDimensionLength(1) - 1;
   Cm_offset = 0;
   Cn_offset = 0;
-  return SingleArrayVector(Conv2FunctionDispatch(X,Y,Cm,Cn,Cm_offset,Cn_offset));
+  return singleArrayVector(Conv2FunctionDispatch(X,Y,Cm,Cn,Cm_offset,Cn_offset));
 }
 
 static ArrayVector Conv2FunctionSameXY(Array X, Array Y) {
@@ -4604,7 +4587,7 @@ static ArrayVector Conv2FunctionSameXY(Array X, Array Y) {
   Cn = X.getDimensionLength(1);
   Cm_offset = (int) floor((double)((Y.getDimensionLength(0)-1)/2));
   Cn_offset = (int) floor((double)((Y.getDimensionLength(1)-1)/2));
-  return SingleArrayVector(Conv2FunctionDispatch(X,Y,Cm,Cn,Cm_offset,Cn_offset));
+  return singleArrayVector(Conv2FunctionDispatch(X,Y,Cm,Cn,Cm_offset,Cn_offset));
 }
 
 static ArrayVector Conv2FunctionValidXY(Array X, Array Y) {
@@ -4612,10 +4595,10 @@ static ArrayVector Conv2FunctionValidXY(Array X, Array Y) {
   Cm = X.getDimensionLength(0)-Y.getDimensionLength(0)+1;
   Cn = X.getDimensionLength(1)-Y.getDimensionLength(1)+1;
   if ((Cm <= 0) || (Cn <= 0))
-    return SingleArrayVector(Array::emptyConstructor());
+    return singleArrayVector(Array::emptyConstructor());
   Cm_offset = Y.getDimensionLength(0)-1;
   Cn_offset = Y.getDimensionLength(1)-1;
-  return SingleArrayVector(Conv2FunctionDispatch(X,Y,Cm,Cn,Cm_offset,Cn_offset));    
+  return singleArrayVector(Conv2FunctionDispatch(X,Y,Cm,Cn,Cm_offset,Cn_offset));    
 }
 
 ArrayVector Conv2FunctionXY(Array X, Array Y, string type) {
@@ -4666,461 +4649,3 @@ ArrayVector Conv2Function(int nargout, const ArrayVector& arg) {
   throw Exception("could not recognize which form of conv2 was requested - check help conv2 for details");
 }
 
-#define BENCHLEN 1
-
-class BenchData : public QSharedData
-{
-public:
-  BenchData() {
-    length = BENCHLEN;
-    data = new float[length];
-  }
-  BenchData(const BenchData &other) {
-    length = other.length;
-    data = new float[length];
-    memcpy(data,other.data,length*sizeof(float));
-  }
-  ~BenchData() {
-    delete[] data;
-  }
-  int length;
-  float *data;
-};
-
-class Dims {
-  int64 rows;
-  int64 cols;
-  int64 *extras;
-  int n_extras;
-public:
-  Dims() {
-    n_extras = 0;
-    extras = NULL;
-  }
-  Dims(const Dims& copy) {
-    rows = copy.rows;
-    cols = copy.cols;
-    n_extras = copy.n_extras;
-    if (n_extras) {
-      extras = new int64[n_extras];
-      memcpy(extras,copy.extras,n_extras*sizeof(int64));
-    } else {
-      extras = NULL;
-    }
-  }
-  Dims& operator=(const Dims& copy) {
-    if (extras) delete[] extras;
-    rows = copy.rows;
-    cols = copy.cols;
-    n_extras = copy.n_extras;
-    if (n_extras) {
-      extras = new int64[n_extras];
-      memcpy(extras,copy.extras,n_extras*sizeof(int64));
-    } else {
-      extras = NULL;
-    }    
-  }
-};
-
-class FOO : public QSharedData {
-  int64 dims[16];
-};
-
-class BenchArray {
-  //  std::vector<int64> dims;
-  //  int64 dims[8];
-  //  int64 *dims;
-  //  QVector<int64> dims;
-  //  Dims dims;
-  bool m_isScalar;
-  //  QSharedDataPointer<FOO> p;
-  //  QSharedDataPointer<BenchData> d;
-  float m_scalar;
-  //  QSharedDataPointer<FOO> m_dims;
-  QSharedDataPointer<BenchData> m_data;
-public:
-  BenchArray() {
-    //    m_data = NULL;
-    //    m_dims = NULL;
-    m_isScalar = true;
-    m_scalar = 1.0;
-  }
-  BenchArray(const BenchArray& copy) {
-    m_isScalar = copy.m_isScalar;
-    m_scalar = copy.m_scalar;
-    if (!m_isScalar) {
-      m_data = copy.m_data;
-      //      m_dims = copy.m_dims;
-    }
-  }
-  BenchArray& operator=(const BenchArray& other) {
-    if (m_isScalar && other.m_isScalar) {
-      m_scalar = other.m_scalar;
-      return *this;
-    } else {
-      if (!m_isScalar && other.m_isScalar) {
-	m_data = NULL;
-	//	m_dims = NULL;
-	m_isScalar = true;
-	m_scalar = other.m_scalar;
-	return *this;
-      }
-    }
-    m_data = other.m_data;
-    //    m_dims = other.m_dims;
-    m_isScalar = other.m_isScalar;
-    m_scalar = other.m_scalar;
-  }
-  void resize() {
-    m_data = new BenchData;
-    //    m_dims = new FOO;
-    m_isScalar = false;
-    m_scalar = 0;
-    //    dims.resize(4);
-    //      dims.push_back(3);
-    //      dims.push_back(4);
-    //      dims.push_back(5);
-    //      dims.push_back(6);
-    //    dims[0] = dims[1] = dims[2] = dims[3] = 1;
-  }
-};
-
-template <class T>
-class TList {
-  T *d;
-  int n;
-public:
-  TList() : d(NULL), n(0) {
-  }
-  ~TList() {
-    if (d) delete[] d;
-  }
-  TList(const TList<T>& other) {
-    if (!other.d) {
-      d = NULL;
-      n = 0;
-      return;
-    } else {
-      n = other.n;
-      d = new T[n];
-      for (int i=0;i<n;i++)
-	d[i] = other.d[i];
-    }
-  }
-  TList<T>& operator=(const TList<T>& other) {
-    if (d) delete d;
-    if (other.d) {
-      n = other.n;
-      d = new T[n];
-      for (int i=0;i<n;i++)
-	d[i] = other.d[i];
-    } else {
-      d = NULL;
-      n = 0;
-    }
-    return *this;
-  }
-  inline int size() const {
-    if (d) 
-      return n; 
-    else 
-      return 0;
-  }
-  inline T& operator[](int i) {
-    if (d) 
-      return d[i]; 
-    else 
-      throw Exception("Illegal list access");
-  }
-  inline const T& operator[](int i) const {
-    if (d) 
-      return d[i]; 
-    else
-      throw Exception("Illegal list access (const)");
-  }
-  inline bool empty() const {
-    return (n>0);
-  }
-  inline void push_back(const T & value) {
-    if (d) {
-      T* q = new T[n+1];
-      for (int i=0;i<n;i++) q[i] = d[i];
-      q[n] = value;
-      d = q;
-    } else {
-      d = new T[1];
-      d[0] = value;
-    }
-    n++;
-  }
-  inline void push_front(const T & value) {
-    if (d) {
-      T* q = new T[n+1];
-      for (int i=0;i<n;i++)
-	q[i+1] = d[i];
-      q[0] = value;
-      d = q;
-    } else {
-      d = new T[1];
-      d[0] = value;
-    }
-    n++;
-  }
-  inline const T& at(int i) const {
-    if (d && (i>=0) && (i<n))
-      return d[i];
-    else 
-      throw Exception("Illegal list access (at)");
-  }
-//   inline void pop_front() {
-//     if (d) {
-//       d->pop_front();
-//     } else
-//       throw Exception("Illegal list access (pop_front)");
-//   }
-//   inline void pop_back() {
-//     if (d)
-//       d->pop_back();
-//     else
-//       throw Exception("Illegal list access (pop_back)");
-//   }
-  inline T& front() {
-    if (d)
-      return d[0];
-    else
-      throw Exception("Illegal list access (front)");
-  }
-  inline const T& front() const {
-    if (d)
-      return d[0];
-    else
-      throw Exception("Illegal list access (const front)");
-  }
-  inline T& back() {
-    if (d)
-      return d[n-1];
-    else
-      throw Exception("Illegal list access (back)");
-  }
-  inline const T& back() const {
-    if (d)
-      return d[n-1];
-    else
-      throw Exception("Illegal list access (const back)");
-  }
-  inline TList<T>& operator<<(const T & value) {
-    push_back(value);
-    return *this;
-  }
-//   inline TList<T>& operator+=(const TList<T>& other) {
-//     if (other.d) {
-//       if (d) {
-// 	(*d) += *(other.d);
-//       } else {
-// 	d = new QList<T>;
-// 	(*d) += *(other.d);
-//       }
-//     }
-//     return *this;
-//   }
-//   inline bool operator==(const TList<T>& other) {
-//     if (d && other.d) {
-//       return ((*d) == (*other.d));
-//     } else if (!d && !other.d)
-//       return true;
-//     else
-//       return false;
-//   }
-};
-
-ArrayVector CosFunction(int nargout, const ArrayVector& arg);
-
-
-ArrayVector DemoFunction(int nargout, const ArrayVector& arg) {
-#if 0
-  int test = ArrayToInt32(arg[0]);
-  switch (test) {
-  case 0:
-    {
-      Array t(Array::int32Constructor(54));
-      for (int i=0;i<100000;i++) {
-	ArrayVector g;
-	g.push_back(t);
-      }
-    }
-    break;
-  case 1:
-    {
-      Array t(Array::int32Constructor(54));
-      for (int i=0;i<100000;i++) {
-	Array g[5];
-	g[0] = t;
-      }
-    }
-    break;
-  case 2:
-    {
-      Array t(Array::int32Constructor(54));
-      for (int i=0;i<100000;i++) {
-	FMList<Array> k;
-	k.push_back(t);
-      }
-    }
-    break;
-  case 3:
-    {
-      Array t(Array::int32Constructor(54));
-      for (int i=0;i<100000;i++) {
-	Array *k = new Array;
-	k[0] = t;
-	delete k;
-      }
-    }
-  case 4:
-    {
-      Array t(Array::int32Constructor(54));
-      ArrayVector g;
-      g.push_back(t);
-      for (int i=0;i<100000;i++) {
-	ArrayVector p = g;
-      }
-    }
-  case 5:
-    {
-      Array t(Array::int32Constructor(54));
-      Array g[5];
-      g[0] = t;
-      for (int i=0;i<100000;i++) {
-	Array h[5];
-	for (int j=0;j<5;j++) h[j] = g[j];
-      }
-      
-    }
-  case 6:
-    {
-      Array t(Array::int32Constructor(54));
-      for (int i=0;i<100000;i++) {
-	std::vector<Array> k;
-	k.push_back(t);
-      }
-    }
-    break;
-  case 7:
-    {
-      Array t(Array::int32Constructor(54));
-      std::vector<Array> p;
-      for (int i=0;i<100000;i++) {
-	std::vector<Array> k;
-	k = p;
-      }
-    }
-    break;
-  case 8:
-    {
-      Array t(Array::int32Constructor(54));
-      for (int i=0;i<100000;i++) {
-	TList<Array> k;
-	k.push_back(t);
-      }
-    }
-    break;
-  case 9:
-    {
-      Array t(Array::int32Constructor(54));
-      TList<Array> p;
-      p.push_back(t);
-      for (int i=0;i<100000;i++) {
-	TList<Array> k;
-	k = p;
-      }
-    }
-    break;
-  case 10:
-    {
-      Array t(Array::int32Constructor(54));
-      for (int i=0;i<100000;i++) {
-	QVector<Array> k;
-	k.push_back(t);
-      }
-    }
-    break;
-  case 11:
-    {
-      Array t(Array::int32Constructor(54));
-      QVector<Array> p;
-      p.push_back(t);
-      for (int i=0;i<100000;i++) {
-	QVector<Array> k;
-	k = p;
-      }
-    }
-    break;
-  case 12:
-    {
-      Array t(Array::int32Constructor(54));
-      for (int i=0;i<100000;i++) {
-	QList<Array> k;
-	k.push_back(t);
-      }
-    }
-    break;
-  case 13:
-    {
-      Array t(Array::int32Constructor(54));
-      QList<Array> p;
-      p.push_back(t);
-      for (int i=0;i<100000;i++) {
-	QList<Array> k;
-	k = p;
-      }
-    }
-    break;
-  case 14:
-    {
-      MCScanner scanner(ArrayToString(arg[1]),"test.mc");
-      MCParser parser(scanner);
-      CodeBlock t(parser.processStatementList());
-      t.tree()->print();
-    }
-    break;
-  case 15:
-    {
-      Array t;
-      for (int i=0;i<1000000;i++) {
-	ArrayVector x;
-	x.push_back(Array::floatConstructor(i));
-	ArrayVector y(CosFunction(1,x));
-      }
-    }
-    break;
-  case 16:
-    {
-      BenchArray a;
-      a.resize();
-      for (int i=0;i<1000000;i++) {
-	BenchArray b = a;
-      }
-    }
-    break;
-  case 17:
-    {
-      float *g = new float[BENCHLEN];
-      for (int i=0;i<1000000;i++) {
-	float *h = new float[BENCHLEN];
-	memcpy(h,g,sizeof(float)*BENCHLEN);
-	delete[] h;
-      }
-    }
-    break;
-  case 18:
-    {
-      Array a(Array::int32RangeConstructor(0,1,100,false));
-      for (int i=0;i<1000000;i++) {
-	Array b = a;
-      }
-    }
-    break;
-  }
-#endif
-  return ArrayVector();
-}

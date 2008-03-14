@@ -38,8 +38,6 @@
 ArrayVector HandleEmpty(Array arg) {
   ArrayVector retArray;
   switch (arg.dataClass()) {
-  default:
-    throw Exception("Unexpected type argument to HandleEmpty");
   case FM_LOGICAL:
     retArray.push_back(Array::logicalConstructor(false));
     break;
@@ -86,7 +84,7 @@ ArrayVector HandleEmpty(Array arg) {
 template <class T>
 void TRealLess(const T* spx, const T* spy, T* dp, int count, 
 	       int stridex, int stridey) {
-  int i;
+  uint32 i;
   for (i=0;i<count;i++)
     dp[i] = (spx[stridex*i] < spy[stridey*i]) ? 
       spx[stridex*i] : spy[stridey*i];
@@ -95,7 +93,7 @@ void TRealLess(const T* spx, const T* spy, T* dp, int count,
 template <class T>
 void TComplexLess(const T* spx, const T* spy, T* dp, int count, 
 		  int stridex, int stridey) {
-  int i;
+  uint32 i;
   T xmag, ymag;
   for (i=0;i<count;i++) {
     xmag = complex_abs(spx[2*stridex*i],spx[2*stridex*i+1]);
@@ -115,9 +113,9 @@ void TComplexLess(const T* spx, const T* spy, T* dp, int count,
  */
 template <class T>
 void TIntMin(const T* sp, T* dp, uint32 *iptr, int planes, int planesize, int linesize) {
-  T minval = 0;
+  T minval;
   uint32 mindex;
-  int i, j, k;
+  uint32 i, j, k;
     
   for (i=0;i<planes;i++) {
     for (j=0;j<planesize;j++) {
@@ -139,9 +137,9 @@ void TIntMin(const T* sp, T* dp, uint32 *iptr, int planes, int planesize, int li
  */
 template <class T>
 void TRealMin(const T* sp, T* dp, uint32 *iptr, int planes, int planesize, int linesize) {
-  T minval = 0;
+  T minval;
   uint32 mindex;
-  int i, j, k;
+  uint32 i, j, k;
   bool init;
 
   for (i=0;i<planes;i++) {
@@ -176,10 +174,10 @@ void TRealMin(const T* sp, T* dp, uint32 *iptr, int planes, int planesize, int l
  */
 template <class T>
 void TComplexMin(const T* sp, T* dp, uint32 *iptr, int planes, int planesize, int linesize) {
-  T minval = 0, minval_r = 0, minval_i = 0;
+  T minval, minval_r, minval_i;
   T tstval;
   uint32 mindex;
-  int i, j, k;
+  uint32 i, j, k;
   bool init;
     
   for (i=0;i<planes;i++) {
@@ -221,7 +219,7 @@ void TComplexMin(const T* sp, T* dp, uint32 *iptr, int planes, int planesize, in
 template <class T>
 void TRealGreater(const T* spx, const T* spy, T* dp, int count, 
 		  int stridex, int stridey) {
-  int i;
+  uint32 i;
   for (i=0;i<count;i++)
     dp[i] = (spx[stridex*i] > spy[stridey*i]) ? 
       spx[stridex*i] : spy[stridey*i];
@@ -230,7 +228,7 @@ void TRealGreater(const T* spx, const T* spy, T* dp, int count,
 template <class T>
 void TComplexGreater(const T* spx, const T* spy, T* dp, int count, 
 		     int stridex, int stridey) {
-  int i;
+  uint32 i;
   T xmag, ymag;
   for (i=0;i<count;i++) {
     xmag = complex_abs(spx[2*stridex*i],spx[2*stridex*i+1]);
@@ -250,9 +248,9 @@ void TComplexGreater(const T* spx, const T* spy, T* dp, int count,
  */
 template <class T>
 void TIntMax(const T* sp, T* dp, uint32 *iptr, int planes, int planesize, int linesize) {
-  T maxval = 0;
+  T maxval;
   uint32 maxdex;
-  int i, j, k;
+  uint32 i, j, k;
     
   for (i=0;i<planes;i++) {
     for (j=0;j<planesize;j++) {
@@ -274,9 +272,9 @@ void TIntMax(const T* sp, T* dp, uint32 *iptr, int planes, int planesize, int li
  */
 template <class T>
 void TRealMax(const T* sp, T* dp, uint32 *iptr, int planes, int planesize, int linesize) {
-  T maxval = 0;
+  T maxval;
   uint32 maxdex;
-  int i, j, k;
+  uint32 i, j, k;
   bool init;
 
   for (i=0;i<planes;i++) {
@@ -311,10 +309,10 @@ void TRealMax(const T* sp, T* dp, uint32 *iptr, int planes, int planesize, int l
  */
 template <class T>
 void TComplexMax(const T* sp, T* dp, uint32 *iptr, int planes, int planesize, int linesize) {
-  T maxval = 0, maxval_r = 0, maxval_i = 0;
+  T maxval, maxval_r, maxval_i;
   T tstval;
   uint32 maxdex;
-  int i, j, k;
+  uint32 i, j, k;
   bool init;
     
   for (i=0;i<planes;i++) {
@@ -591,46 +589,6 @@ void TComplexProd(const T* sp, T* dp, int planes, int planesize, int linesize) {
   }
 }
 
-template <class T>
-void TBitAnd(int N, T*C, const T*A, int stride1, const T*B, int stride2) {
-  int m, p;
-  m = 0; p = 0;
-  for (int i=0;i<N;i++) {
-    C[i] = A[m] & B[p];
-    m += stride1;
-    p += stride2;
-  }
-}
-
-template <class T>
-void TBitOr(int N, T*C, const T*A, int stride1, const T*B, int stride2) {
-  int m, p;
-  m = 0; p = 0;
-  for (int i=0;i<N;i++) {
-    C[i] = A[m] | B[p];
-    m += stride1;
-    p += stride2;
-  }
-}
-
-template <class T>
-void TBitXOr(int N, T*C, const T*A, int stride1, const T*B, int stride2) {
-  int m, p;
-  m = 0; p = 0;
-  for (int i=0;i<N;i++) {
-    C[i] = A[m] ^ B[p];
-    m += stride1;
-    p += stride2;
-  }
-}
-
-template <class T>
-void TBitCmp(int N, T*C, const T*A) {
-  for (int i=0;i<N;i++) {
-    C[i] = ~A[i];
-  }
-}
-
 ArrayVector LessThan(int nargout, const ArrayVector& arg) {
   ArrayVector retvec;
   Array x(arg[0]);
@@ -681,7 +639,7 @@ ArrayVector LessThan(int nargout, const ArrayVector& arg) {
   if (x.sparse() || y.sparse()) {
     if (!(x.sparse() && y.sparse()))
       throw Exception("Cannot perform max operation with mixed sparse and full types");
-    return SingleArrayVector(Array(outType,
+    return singleArrayVector(Array(outType,
 				   outDim,
 				   SparseLessThan(outType,
 						  outDim.getDimensionLength(0),
@@ -693,7 +651,6 @@ ArrayVector LessThan(int nargout, const ArrayVector& arg) {
   // Based on the type of the output... call the associated helper function
   Array retval;
   switch(outType) {
-  default: throw Exception("Unsupported type for max operation");
   case FM_LOGICAL: {
     char* ptr = (char *) Malloc(sizeof(logical)*outDim.getElementCount());
     TRealLess<logical>((const logical *) x.getDataPointer(),
@@ -869,7 +826,8 @@ ArrayVector LessThan(int nargout, const ArrayVector& arg) {
 //\[
 //  y(m_1,\ldots,m_{d-1},1,m_{d+1},\ldots,m_{p}) = 
 //\begin{cases}
-//  x(m_1,\ldots,m_{d-1},k,m_{d+1},\ldots,m_{p}) & x(\cdots) \leq z(\cdots) \\   z(m_1,\ldots,m_{d-1},k,m_{d+1},\ldots,m_{p}) & z(\cdots) < x(\cdots).
+//  x(m_1,\ldots,m_{d-1},k,m_{d+1},\ldots,m_{p}) & x(\cdots) \leq z(\cdots) \\
+//  z(m_1,\ldots,m_{d-1},k,m_{d+1},\ldots,m_{p}) & z(\cdots) < x(\cdots).
 //\end{cases}
 //\]
 //@@Example
@@ -914,10 +872,6 @@ ArrayVector MinFunction(int nargout, const ArrayVector& arg) {
   if (arg.size() == 2)
     return LessThan(nargout,arg);
   Array input(arg[0]);
-
-  if( input.isEmpty() )
-	return ArrayVector() << Array::emptyConstructor(input.dimensions());
-
   Class argType(input.dataClass());
   if (input.isReferenceType() || input.isString())
     throw Exception("min only defined for numeric types");
@@ -960,11 +914,11 @@ ArrayVector MinFunction(int nargout, const ArrayVector& arg) {
   for (d=0;d<workDim;d++)
     planesize *= inDim.get(d);
   planecount = 1;
-  for (d=workDim+1;d<(int)inDim.getLength();d++)
+  for (d=workDim+1;d<inDim.getLength();d++)
     planecount *= inDim.get(d);
   if (input.sparse()) {
     if (workDim == 0)
-      return SingleArrayVector(Array(input.dataClass(),
+      return singleArrayVector(Array(input.dataClass(),
 				     outDim,
 				     SparseMatrixMinColumns(input.dataClass(),
 							    input.getDimensionLength(0),
@@ -972,7 +926,7 @@ ArrayVector MinFunction(int nargout, const ArrayVector& arg) {
 							    input.getSparseDataPointer()),
 				     true));
     else if (workDim == 1)
-      return SingleArrayVector(Array(input.dataClass(),
+      return singleArrayVector(Array(input.dataClass(),
 				     outDim,
 				     SparseMatrixMinRows(input.dataClass(),
 							 input.getDimensionLength(0),
@@ -980,14 +934,13 @@ ArrayVector MinFunction(int nargout, const ArrayVector& arg) {
 							 input.getSparseDataPointer()),
 				     true));
     else
-      return SingleArrayVector(input);
+      return singleArrayVector(input);
   }
   // Allocate the output that contains the indices
   uint32* iptr = (uint32 *) Malloc(sizeof(uint32)*outDim.getElementCount());
   // Allocate the values output, and call the appropriate helper func.
   Array retval;
   switch (argType) {
-  default: throw Exception("Unsupported type for min operation");
   case FM_LOGICAL: {
     char* ptr = (char *) Malloc(sizeof(logical)*outDim.getElementCount());
     TIntMin<logical>((const logical *) input.getDataPointer(),
@@ -1137,7 +1090,7 @@ ArrayVector GreaterThan(int nargout, const ArrayVector& arg) {
   if (x.sparse() || y.sparse()) {
     if (!(x.sparse() && y.sparse()))
       throw Exception("Cannot perform max operation with mixed sparse and full types");
-    return SingleArrayVector(Array(outType,
+    return singleArrayVector(Array(outType,
 				   outDim,
 				   SparseGreaterThan(outType,
 						     outDim.getDimensionLength(0),
@@ -1149,7 +1102,6 @@ ArrayVector GreaterThan(int nargout, const ArrayVector& arg) {
   // Based on the type of the output... call the associated helper function
   Array retval;
   switch(outType) {
-  default: throw Exception("Unsupported type for max operation");
   case FM_LOGICAL: {
     char* ptr = (char *) Malloc(sizeof(logical)*outDim.getElementCount());
     TRealGreater<logical>((const logical *) x.getDataPointer(),
@@ -1324,7 +1276,8 @@ ArrayVector GreaterThan(int nargout, const ArrayVector& arg) {
 //\[
 //  y(m_1,\ldots,m_{d-1},1,m_{d+1},\ldots,m_{p}) = 
 //\begin{cases}
-//  x(m_1,\ldots,m_{d-1},k,m_{d+1},\ldots,m_{p}) & x(\cdots) \leq z(\cdots) \\    z(m_1,\ldots,m_{d-1},k,m_{d+1},\ldots,m_{p}) & z(\cdots) < x(\cdots).
+//  x(m_1,\ldots,m_{d-1},k,m_{d+1},\ldots,m_{p}) & x(\cdots) \leq z(\cdots) \\
+//  z(m_1,\ldots,m_{d-1},k,m_{d+1},\ldots,m_{p}) & z(\cdots) < x(\cdots).
 //\end{cases}
 //\]
 //@@Example
@@ -1368,10 +1321,6 @@ ArrayVector MaxFunction(int nargout, const ArrayVector& arg) {
   if (arg.size() == 2)
     return GreaterThan(nargout,arg);
   Array input(arg[0]);
-
-  if( input.isEmpty() )
-	return ArrayVector() << Array::emptyConstructor(input.dimensions());
-
   Class argType(input.dataClass());
   if (input.isReferenceType() || input.isString())
     throw Exception("max only defined for numeric types");
@@ -1414,11 +1363,11 @@ ArrayVector MaxFunction(int nargout, const ArrayVector& arg) {
   for (d=0;d<workDim;d++)
     planesize *= inDim.get(d);
   planecount = 1;
-  for (d=workDim+1;d<(int)inDim.getLength();d++)
+  for (d=workDim+1;d<inDim.getLength();d++)
     planecount *= inDim.get(d);
   if (input.sparse()) {
     if (workDim == 0)
-      return SingleArrayVector(Array(input.dataClass(),
+      return singleArrayVector(Array(input.dataClass(),
 				     outDim,
 				     SparseMatrixMaxColumns(input.dataClass(),
 							    input.getDimensionLength(0),
@@ -1426,7 +1375,7 @@ ArrayVector MaxFunction(int nargout, const ArrayVector& arg) {
 							    input.getSparseDataPointer()),
 				     true));
     else if (workDim == 1)
-      return SingleArrayVector(Array(input.dataClass(),
+      return singleArrayVector(Array(input.dataClass(),
 				     outDim,
 				     SparseMatrixMaxRows(input.dataClass(),
 							 input.getDimensionLength(0),
@@ -1434,14 +1383,13 @@ ArrayVector MaxFunction(int nargout, const ArrayVector& arg) {
 							 input.getSparseDataPointer()),
 				     true));
     else
-      return SingleArrayVector(input);
+      return singleArrayVector(input);
   }
   // Allocate the output that contains the indices
   uint32* iptr = (uint32 *) Malloc(sizeof(uint32)*outDim.getElementCount());
   // Allocate the values output, and call the appropriate helper func.
   Array retval;
   switch (argType) {
-  default: throw Exception("Unsupported type for max operation");
   case FM_LOGICAL: {
     char* ptr = (char *) Malloc(sizeof(logical)*outDim.getElementCount());
     TIntMax<logical>((const logical *) input.getDataPointer(),
@@ -1586,7 +1534,6 @@ ArrayVector CeilFunction(int nargout, const ArrayVector& arg) {
     throw Exception("ceil only defined for numeric types");
   Array retval;
   switch (argType) {
-  default: throw Exception("Unsupported type for ceil operation");
   case FM_LOGICAL:
   case FM_UINT8: 
   case FM_INT8:
@@ -1672,7 +1619,6 @@ ArrayVector FloorFunction(int nargout, const ArrayVector& arg) {
     throw Exception("floor only defined for numeric types");
   Array retval;
   switch (argType) {
-  default: throw Exception("Unsupported type for floor operation");
   case FM_LOGICAL:
   case FM_UINT8: 
   case FM_INT8:
@@ -1756,7 +1702,6 @@ ArrayVector RoundFunction(int nargout, const ArrayVector& arg) {
     throw Exception("round only defined for numeric types");
   Array retval;
   switch (argType) {
-  default: throw Exception("Unsupported type for round operation");
   case FM_LOGICAL:
   case FM_UINT8: 
   case FM_INT8:
@@ -1858,7 +1803,7 @@ ArrayVector CumsumFunction(int nargout, const ArrayVector& arg) {
   if (input.isEmpty()) 
     return HandleEmpty(input);
   if (input.isScalar())
-    return SingleArrayVector(input);
+    return singleArrayVector(input);
   // No dimension supplied, look for a non-singular dimension
   Dimensions inDim(input.dimensions());
   if (workDim == -1) {
@@ -1879,12 +1824,11 @@ ArrayVector CumsumFunction(int nargout, const ArrayVector& arg) {
   for (d=0;d<workDim;d++)
     planesize *= inDim.get(d);
   planecount = 1;
-  for (d=workDim+1;d<(int)inDim.getLength();d++)
+  for (d=workDim+1;d<inDim.getLength();d++)
     planecount *= inDim.get(d);
   // Allocate the values output, and call the appropriate helper func.
   Array retval;
   switch (argType) {
-  default: throw Exception("Unsupported type for cumsum operation");
   case FM_INT32: {
     char* ptr = (char *) Malloc(sizeof(int32)*outDim.getElementCount());
     TRealCumsum<int32>((const int32 *) input.getDataPointer(),
@@ -1990,7 +1934,7 @@ ArrayVector CumprodFunction(int nargout, const ArrayVector& arg) {
   if (input.isEmpty()) 
     return HandleEmpty(input);
   if (input.isScalar())
-    return SingleArrayVector(input);
+    return singleArrayVector(input);
   // No dimension supplied, look for a non-singular dimension
   Dimensions inDim(input.dimensions());
   if (workDim == -1) {
@@ -2011,12 +1955,11 @@ ArrayVector CumprodFunction(int nargout, const ArrayVector& arg) {
   for (d=0;d<workDim;d++)
     planesize *= inDim.get(d);
   planecount = 1;
-  for (d=workDim+1;d<(int)inDim.getLength();d++)
+  for (d=workDim+1;d<inDim.getLength();d++)
     planecount *= inDim.get(d);
   // Allocate the values output, and call the appropriate helper func.
   Array retval;
   switch (argType) {
-  default: throw Exception("Unsupported type for cumprod operation");
   case FM_INT32: {
     char* ptr = (char *) Malloc(sizeof(int32)*outDim.getElementCount());
     TRealCumprod<int32>((const int32 *) input.getDataPointer(),
@@ -2123,7 +2066,7 @@ ArrayVector SumFunction(int nargout, const ArrayVector& arg) {
   if (input.isEmpty()) 
     return HandleEmpty(input);
   if (input.isScalar())
-    return SingleArrayVector(input);
+    return singleArrayVector(input);
   // No dimension supplied, look for a non-singular dimension
   Dimensions inDim(input.dimensions());
   if (workDim == -1) {
@@ -2145,13 +2088,13 @@ ArrayVector SumFunction(int nargout, const ArrayVector& arg) {
   for (d=0;d<workDim;d++)
     planesize *= inDim.get(d);
   planecount = 1;
-  for (d=workDim+1;d<(int)inDim.getLength();d++)
+  for (d=workDim+1;d<inDim.getLength();d++)
     planecount *= inDim.get(d);
   // Allocate the values output, and call the appropriate helper func.
   // Special case Sparse Matrices
   if (input.sparse()) {
     if (workDim == 0)
-      return SingleArrayVector(Array(input.dataClass(),
+      return singleArrayVector(Array(input.dataClass(),
 				     outDim,
 				     SparseMatrixSumColumns(input.dataClass(),
 							    input.getDimensionLength(0),
@@ -2159,7 +2102,7 @@ ArrayVector SumFunction(int nargout, const ArrayVector& arg) {
 							    input.getSparseDataPointer()),
 				     true));
     else if (workDim == 1)
-      return SingleArrayVector(Array(input.dataClass(),
+      return singleArrayVector(Array(input.dataClass(),
 				     outDim,
 				     SparseMatrixSumRows(input.dataClass(),
 							 input.getDimensionLength(0),
@@ -2167,11 +2110,10 @@ ArrayVector SumFunction(int nargout, const ArrayVector& arg) {
 							 input.getSparseDataPointer()),
 				     true));
     else
-      return SingleArrayVector(input);
+      return singleArrayVector(input);
   }
   Array retval;
   switch (argType) {
-  default: throw Exception("Unsupported type for sum operation");
   case FM_INT32: {
     char* ptr = (char *) Malloc(sizeof(int32)*outDim.getElementCount());
     TRealSum<int32>((const int32 *) input.getDataPointer(),
@@ -2277,7 +2219,7 @@ ArrayVector MeanFunction(int nargout, const ArrayVector& arg) {
   if (input.isEmpty()) 
     return HandleEmpty(input);
   if (input.isScalar())
-    return SingleArrayVector(input);
+    return singleArrayVector(input);
   // No dimension supplied, look for a non-singular dimension
   Dimensions inDim(input.dimensions());
   if (workDim == -1) {
@@ -2299,12 +2241,11 @@ ArrayVector MeanFunction(int nargout, const ArrayVector& arg) {
   for (d=0;d<workDim;d++)
     planesize *= inDim.get(d);
   planecount = 1;
-  for (d=workDim+1;d<(int)inDim.getLength();d++)
+  for (d=workDim+1;d<inDim.getLength();d++)
     planecount *= inDim.get(d);
   // Allocate the values output, and call the appropriate helper func.
   Array retval;
   switch (argType) {
-  default: throw Exception("Unsupported type for mean operation");
   case FM_FLOAT: {
     char* ptr = (char *) Malloc(sizeof(float)*outDim.getElementCount());
     TRealMean<float>((const float *) input.getDataPointer(),
@@ -2429,12 +2370,11 @@ ArrayVector VarFunction(int nargout, const ArrayVector& arg) {
   for (d=0;d<workDim;d++)
     planesize *= inDim.get(d);
   planecount = 1;
-  for (d=workDim+1;d<(int)inDim.getLength();d++)
+  for (d=workDim+1;d<inDim.getLength();d++)
     planecount *= inDim.get(d);
   // Allocate the values output, and call the appropriate helper func.
   Array retval;
   switch (argType) {
-  default: throw Exception("Unsupported type for var operation");
   case FM_FLOAT: {
     char* ptr = (char *) Malloc(sizeof(float)*outDim.getElementCount());
     TRealVariance<float>((const float *) input.getDataPointer(),
@@ -2700,7 +2640,7 @@ ArrayVector AbsFunction(int nargout, const ArrayVector& arg) {
     throw Exception("argument to abs function must be numeric");
   if (tmp.sparse()) {
     Class rettype;
-    if (tmp.dataClass() == FM_LOGICAL) return SingleArrayVector(tmp);
+    if (tmp.dataClass() == FM_LOGICAL) return singleArrayVector(tmp);
     rettype = tmp.dataClass();
     if (tmp.dataClass() == FM_COMPLEX) rettype = FM_FLOAT;
     if (tmp.dataClass() == FM_DCOMPLEX) rettype = FM_DOUBLE;
@@ -2709,13 +2649,12 @@ ArrayVector AbsFunction(int nargout, const ArrayVector& arg) {
 				   tmp.getDimensionLength(0),
 				   tmp.getDimensionLength(1),
 				   tmp.getSparseDataPointer()),true);
-    return SingleArrayVector(retval);
+    return singleArrayVector(retval);
   }
   Class argType(tmp.dataClass());
   Array retval;
   int i;
   switch (argType) {
-  default: throw Exception("Unsupported type for abs operation");
   case FM_STRING:
     retval = tmp;
     retval.promoteType(FM_UINT32);
@@ -2872,9 +2811,9 @@ ArrayVector ProdFunction(int nargout, const ArrayVector& arg) {
       throw Exception("Dimension argument to prod should be positive");
   }
   if (input.isEmpty())
-    return SingleArrayVector(Array::int32Constructor(1));
+    return singleArrayVector(Array::int32Constructor(1));
   if (input.isScalar())
-    return SingleArrayVector(input);
+    return singleArrayVector(input);
   // No dimension supplied, look for a non-singular dimension
   Dimensions inDim(input.dimensions());
   if (workDim == -1) {
@@ -2896,12 +2835,11 @@ ArrayVector ProdFunction(int nargout, const ArrayVector& arg) {
   for (d=0;d<workDim;d++)
     planesize *= inDim.get(d);
   planecount = 1;
-  for (d=workDim+1;d<(int)inDim.getLength();d++)
+  for (d=workDim+1;d<inDim.getLength();d++)
     planecount *= inDim.get(d);
   // Allocate the values output, and call the appropriate helper func.
   Array retval;
   switch (argType) {
-  default: throw Exception("Unsupported type for prod operation");
   case FM_INT32: {
     char* ptr = (char *) Malloc(sizeof(int32)*outDim.getElementCount());
     TRealProd<int32>((const int32 *) input.getDataPointer(),
@@ -2937,241 +2875,6 @@ ArrayVector ProdFunction(int nargout, const ArrayVector& arg) {
     retval = Array(FM_DCOMPLEX,outDim,ptr);
     break;
   }
-  }
-  ArrayVector retArray;
-  retArray.push_back(retval);
-  return retArray;
-}
-//!
-//@Module BITAND Bitwise Boolean And Operation
-//@@Section BINARY
-//@@Usage
-//Performs a bitwise binary and operation on the two arguments and
-//returns the result.  The syntax for its use is
-//@[
-//   y = bitand(a,b)
-//@]
-//where @|a| and @|b| are multi-dimensional unsigned integer arrays.
-//The and operation is performed using 32 bit unsigned intermediates.  Note that if a
-//or b is a scalar, then each element of the other array is and'ed with
-// that scalar.  Otherwise the two arrays must match in size.
-//@@Example
-//@<
-//bitand(uint16([1,16,255]),uint16([3,17,128]))
-//bitand(uint16([1,16,255]),uint16(3))
-//@>
-//!
-ArrayVector BitandFunction(int nargout, const ArrayVector& arg) {
-  if (arg.size() < 2)
-    throw Exception("bitand requires at least two arguments");
-  Array A(arg[0]);
-  A.promoteType(FM_UINT32);
-  Array B(arg[1]);
-  B.promoteType(FM_UINT32);
-
-  int Astride, Bstride;
-  void *Cp = NULL;
-  int Clen;
-  Dimensions CDim;
-
-  if (A.isScalar()) {
-    Astride = 0;
-    Bstride = 1;
-    CDim = B.dimensions();
-    Clen = B.getLength();
-  } else if (B.isScalar()) {
-    Astride = 1;
-    Bstride = 0;
-    CDim = A.dimensions();
-    Clen = A.getLength();
-  } else {
-    Astride = 1;
-    Bstride = 1;
-    CDim = A.dimensions();
-    Clen = A.getLength();
-  }
-
-  Cp = Malloc(Clen*B.getElementSize());
-  TBitAnd<uint32>( Clen, (uint32*) Cp, (uint32*) A.getDataPointer(), Astride, (uint32*) B.getDataPointer(), Bstride );
-  Array retval;
-  retval = Array(FM_UINT32, CDim, Cp);
-
-  ArrayVector retArray;
-  retArray.push_back(retval);
-  return retArray;
-}
-
-//!
-//@Module BITOR Bitwise Boolean Or Operation
-//@@Section BINARY
-//@@Usage
-//Performs a bitwise binary or operation on the two arguments and
-//returns the result.  The syntax for its use is
-//@[
-//   y = bitor(a,b)
-//@]
-//where @|a| and @|b| are multi-dimensional unsigned integer arrays.
-//The and operation is performed using 32 bit unsigned intermediates.  Note that if a
-//or b is a scalar, then each element of the other array is or'ed with
-//that scalar.  Otherwise the two arrays must match in size.
-//@@Example
-//@<
-//bitand(uint16([1,16,255]),uint16([3,17,128]))
-//bitand(uint16([1,16,255]),uint16(3))
-//@>
-//!
-ArrayVector BitorFunction(int nargout, const ArrayVector& arg) {
-  if (arg.size() < 2)
-    throw Exception("bitor requires at least two arguments");
-  Array A(arg[0]);
-  A.promoteType(FM_UINT32);
-  Array B(arg[1]);
-  B.promoteType(FM_UINT32);
-
-  int Astride, Bstride;
-  void *Cp = NULL;
-  int Clen;
-  Dimensions CDim;
-
-  if (A.isScalar()) {
-    Astride = 0;
-    Bstride = 1;
-    CDim = B.dimensions();
-    Clen = B.getLength();
-  } else if (B.isScalar()) {
-    Astride = 1;
-    Bstride = 0;
-    CDim = A.dimensions();
-    Clen = A.getLength();
-  } else {
-    Astride = 1;
-    Bstride = 1;
-    CDim = A.dimensions();
-    Clen = A.getLength();
-  }
-
-  Cp = Malloc(Clen*B.getElementSize());
-  TBitOr<uint32>( Clen, (uint32*) Cp, (uint32*) A.getDataPointer(), Astride, (uint32*) B.getDataPointer(), Bstride );
-  Array retval;
-  retval = Array(FM_UINT32, CDim, Cp);
-
-  ArrayVector retArray;
-  retArray.push_back(retval);
-  return retArray;
-}
-
-//!
-//@Module BITXOR Bitwise Boolean Exclusive-Or (XOR) Operation
-//@@Section BINARY
-//@@Usage
-//Performs a bitwise binary xor operation on the two arguments and
-//returns the result.  The syntax for its use is
-//@[
-//   y = bitxor(a,b)
-//@]
-//where @|a| and @|b| are multi-dimensional unsigned integer arrays.
-//The and operation is performed using 32 bit unsigned intermediates.  Note that if a
-//or b is a scalar, then each element of the other array is xor'ed with
-// that scalar.  Otherwise the two arrays must match in size.
-//@@Example
-//@<
-//bitand(uint16([1,16,255]),uint16([3,17,128]))
-//bitand(uint16([1,16,255]),uint16(3))
-//@>
-//!
-ArrayVector BitxorFunction(int nargout, const ArrayVector& arg) {
-  if (arg.size() < 2)
-    throw Exception("bitxor requires at least two arguments");
-  Array A(arg[0]);
-  A.promoteType(FM_UINT32);
-  Array B(arg[1]);
-  B.promoteType(FM_UINT32);
-
-  int Astride, Bstride;
-  void *Cp = NULL;
-  int Clen;
-  Dimensions CDim;
-
-  if (A.isScalar()) {
-    Astride = 0;
-    Bstride = 1;
-    CDim = B.dimensions();
-    Clen = B.getLength();
-  } else if (B.isScalar()) {
-    Astride = 1;
-    Bstride = 0;
-    CDim = A.dimensions();
-    Clen = A.getLength();
-  } else {
-    Astride = 1;
-    Bstride = 1;
-    CDim = A.dimensions();
-    Clen = A.getLength();
-  }
-
-  Cp = Malloc(Clen*B.getElementSize());
-  TBitXOr<uint32>( Clen, (uint32*) Cp, (uint32*) A.getDataPointer(), Astride, (uint32*) B.getDataPointer(), Bstride );
-  Array retval;
-  retval = Array(FM_UINT32, CDim, Cp);
-
-  ArrayVector retArray;
-  retArray.push_back(retval);
-  return retArray;
-}
-
-//!
-//@Module BITCMP_CPP Bitwise Boolean Complement Operation
-//@@Section BINARY
-//@@Usage
-//Performs a bitwise binary complement operation on the argument and
-//returns the result.  The syntax for its use is
-//@[
-//   y = bitcmp_cpp(a)
-//@]
-//where @|a| is a  multi-dimensional unsigned integer arrays.  This version of the command
-//uses as many bits as required by the type of a.  For example, if 
-//a is an uint8 type, then the complement is formed using 8 bits.
-//
-//@<
-//bitcmp_cpp(uint16(2^14-2))
-//@>
-//!
-ArrayVector BitcmpFunction(int nargout, const ArrayVector& arg) {
-  Array A(arg[0]);
-  Class argType(A.dataClass());
-
-  void *Cp = NULL;
-  int Clen;
-  Dimensions CDim;
-
-  CDim = A.dimensions();
-  Clen = A.getLength();
-
-  Cp = Malloc(Clen*A.getElementSize());
-  Array retval;
-  switch (argType) {
-  case FM_UINT8: {
-    TBitCmp<uint8>( Clen, (uint8*) Cp, (uint8*) A.getDataPointer() );
-    retval = Array(FM_UINT8, CDim, Cp);
-    break;
-  }
-  case FM_UINT16: {
-    TBitCmp<uint16>( Clen, (uint16*) Cp, (uint16*) A.getDataPointer() );
-    retval = Array(FM_UINT16, CDim, Cp);
-    break;
-  }
-  case FM_UINT32: {
-    TBitCmp<uint32>( Clen, (uint32*) Cp, (uint32*) A.getDataPointer() );
-    retval = Array(FM_UINT32, CDim, Cp);
-    break;
-  }
-  case FM_UINT64: {
-    TBitCmp<uint64>( Clen, (uint64*) Cp, (uint64*) A.getDataPointer() );
-    retval = Array(FM_UINT64, CDim, Cp);
-    break;
-  }
-  default:
-    throw Exception("bitcmp: argument type limited to unsigned integers");
   }
   ArrayVector retArray;
   retArray.push_back(retval);
@@ -3510,7 +3213,7 @@ template <class T>
 class UniqueEntryReal {
 public:
   uint32 n;
-  int len;
+  uint32 len;
   uint32 stride;
   const T* data;
 };
@@ -3544,7 +3247,7 @@ template <class T>
 class UniqueEntryComplex {
 public:
   uint32 n;
-  int len;
+  uint32 len;
   uint32 stride;
   const T* data;
 };
@@ -3674,7 +3377,7 @@ ArrayVector UniqueFunctionRowModeComplex(int nargout, Array& input) {
       i++;
     }
     delete[] sp;
-    return SingleArrayVector(Array(cls,Dimensions(cnt,cols),op));
+    return singleArrayVector(Array(cls,Dimensions(cnt,cols),op));
   } else {
     uint32* np = (uint32*) Malloc(sizeof(int32)*len);
     uint32* mp = (uint32*) Malloc(sizeof(int32)*cnt);
@@ -3748,7 +3451,7 @@ ArrayVector UniqueFunctionRowModeReal(int nargout, Array& input) {
       i++;
     }
     delete[] sp;
-    return SingleArrayVector(Array(cls,Dimensions(cnt,cols),op));
+    return singleArrayVector(Array(cls,Dimensions(cnt,cols),op));
   } else {
     uint32* np = (uint32*) Malloc(sizeof(int32)*len);
     uint32* mp = (uint32*) Malloc(sizeof(int32)*cnt);
@@ -3798,6 +3501,7 @@ ArrayVector UniqueFunctionString(int nargout, Array& input) {
       cnt++;
     i++;
   }
+  int tcnt = cnt;
   if (nargout <= 1) {
     Array *op = new Array[cnt];
     op[0] = sp[buf[0].n];
@@ -3811,7 +3515,7 @@ ArrayVector UniqueFunctionString(int nargout, Array& input) {
       i++;
     }
     delete[] buf;
-    return SingleArrayVector(Array(FM_CELL_ARRAY,Dimensions(cnt,1),op));
+    return singleArrayVector(Array(FM_CELL_ARRAY,Dimensions(cnt,1),op));
   } else {
     uint32* np = (uint32*) Malloc(sizeof(int32)*len);
     uint32* mp = (uint32*) Malloc(sizeof(int32)*cnt);
@@ -3846,7 +3550,6 @@ ArrayVector UniqueFunctionAux(int nargout, Array input, bool rowmode) {
   }
   Class argType(input.dataClass());
   switch (argType) {
-  default: throw Exception("Unsupported type for unique operation");
   case FM_INT8: 
     return UniqueFunctionRowModeReal<int8>(nargout, input);
   case FM_UINT8:
@@ -3885,7 +3588,7 @@ ArrayVector UniqueFunction(int nargout, const ArrayVector& arg) {
   Array input(arg[0]);
   if (input.isEmpty()) {
     if (nargout <= 1)
-      return SingleArrayVector(Array::emptyConstructor());
+      return singleArrayVector(Array::emptyConstructor());
     else {
       ArrayVector retval;
       retval.push_back(Array::emptyConstructor());
@@ -3966,7 +3669,7 @@ ArrayVector ClockFunction(int nargout, const ArrayVector& arg) {
   dp[3] = ctime.time().hour();
   dp[4] = ctime.time().minute();
   dp[5] = ctime.time().second() + ctime.time().msec()/1.0e3;
-  return SingleArrayVector(retvec);
+  return singleArrayVector(retvec);
 }
 
 //!
@@ -4013,7 +3716,7 @@ ArrayVector ClockToTimeFunction(int nargout, const ArrayVector& arg) {
   time_t qtime = mktime(&breakdown);
   double retval;
   retval = qtime + (dp[5] - (int) dp[5]);
-  return SingleArrayVector(Array::doubleConstructor(retval));
+  return singleArrayVector(Array::doubleConstructor(retval));
 }
   
 
@@ -4037,7 +3740,7 @@ ArrayVector ClockToTimeFunction(int nargout, const ArrayVector& arg) {
 //!
   
 ArrayVector TocFunction(int nargout, const ArrayVector& arg) {
-  return SingleArrayVector(Array::doubleConstructor(ticvalue.elapsed()/1.0e3));
+  return singleArrayVector(Array::doubleConstructor(ticvalue.elapsed()/1.0e3));
 }
 
 //!
@@ -4064,31 +3767,32 @@ ArrayVector XNrm2Function(int nargout, const ArrayVector& arg) {
     argType = input.dataClass();
   }
   switch (argType) {
-  default: throw Exception("Unsupported type for xnrm2 operation");
   case FM_FLOAT: {
     float *ptr = (float*) input.getDataPointer();
     int len = input.getLength();
     int one = 1;
-    return SingleArrayVector(Array::floatConstructor(snrm2_(&len,ptr,&one)));
+    return singleArrayVector(Array::floatConstructor(snrm2_(&len,ptr,&one)));
   }
   case FM_DOUBLE:  {
     double *ptr = (double*) input.getDataPointer();
     int len = input.getLength();
     int one = 1;
-    return SingleArrayVector(Array::doubleConstructor(dnrm2_(&len,ptr,&one)));
+    return singleArrayVector(Array::doubleConstructor(dnrm2_(&len,ptr,&one)));
   }
   case FM_COMPLEX:  {
     float *ptr = (float*) input.getDataPointer();
     int len = input.getLength();
     int one = 1;
-    return SingleArrayVector(Array::floatConstructor(scnrm2_(&len,ptr,&one)));
+    return singleArrayVector(Array::floatConstructor(scnrm2_(&len,ptr,&one)));
   }
   case FM_DCOMPLEX: {
     double *ptr = (double*) input.getDataPointer();
     int len = input.getLength();
     int one = 1;
-    return SingleArrayVector(Array::doubleConstructor(dznrm2_(&len,ptr,&one)));
+    return singleArrayVector(Array::doubleConstructor(dznrm2_(&len,ptr,&one)));
   }
+  default:
+    throw Exception("unhandled type in argument to xnrm2");
   }
   return ArrayVector();
 }
@@ -4215,13 +3919,12 @@ ArrayVector SortFunction(int nargout, const ArrayVector& arg) {
   for (d=0;d<workDim;d++)
     planesize *= inDim.get(d);
   planecount = 1;
-  for (d=workDim+1;d<(int)inDim.getLength();d++)
+  for (d=workDim+1;d<inDim.getLength();d++)
     planecount *= inDim.get(d);
   // Allocate the values output, and call the appropriate helper func.
   Array retval, ndxval;
   // Sort with index information
   switch (argType) {
-  default: throw Exception("Unsupported type for sort operation");
   case FM_INT8: {
     char* ptr = (char *) Malloc(sizeof(int8)*outDim.getElementCount());
     char* iptr = (char *) Malloc(sizeof(int32)*outDim.getElementCount());
@@ -4516,19 +4219,18 @@ ArrayVector RcondFunction(int nargout, const ArrayVector& arg) {
     Aclass = FM_DOUBLE;
   }
   switch (Aclass) {
-  default: throw Exception("Unsupported type for rcond operation");
   case FM_FLOAT:
-    return SingleArrayVector(Array::floatConstructor(floatRecipCond(nrows,ncols,
+    return singleArrayVector(Array::floatConstructor(floatRecipCond(nrows,ncols,
 								    (float*)A.getReadWriteDataPointer())));
   case FM_DOUBLE:
-    return SingleArrayVector(Array::doubleConstructor(doubleRecipCond(nrows,
+    return singleArrayVector(Array::doubleConstructor(doubleRecipCond(nrows,
 								      ncols,
 								      (double*)A.getReadWriteDataPointer())));
   case FM_COMPLEX:
-    return SingleArrayVector(Array::floatConstructor(complexRecipCond(nrows,ncols,
+    return singleArrayVector(Array::floatConstructor(complexRecipCond(nrows,ncols,
 								      (float*)A.getReadWriteDataPointer())));
   case FM_DCOMPLEX:
-    return SingleArrayVector(Array::doubleConstructor(dcomplexRecipCond(nrows,
+    return singleArrayVector(Array::doubleConstructor(dcomplexRecipCond(nrows,
 									ncols,
 									(double*)A.getReadWriteDataPointer())));
   }

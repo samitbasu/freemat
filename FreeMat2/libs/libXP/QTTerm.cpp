@@ -243,22 +243,11 @@ void QTTerm::drawLine(int linenum, QPainter *e, int yval) {
 void QTTerm::mousePressEvent( QMouseEvent *e ) {
   // Get the x and y coordinates of the mouse click - map that
   // to a row and column
-  if (e->buttons() == Qt::MidButton) { //chuong 2008-01-28
-    QClipboard *cb = QApplication::clipboard();
-    QString SelectedText = cb->text(QClipboard::Selection);
-    SelectedText.remove("--> "); //remove FreeMat prompts in selected text
-    QByteArray CharList = SelectedText.toAscii();
-    if (!SelectedText.isEmpty())
-      for (int i = 0; i<SelectedText.size(); i++) 
-       emit OnChar(CharList[i]); //paste selected text
-  }
-  else if (e->buttons() == Qt::LeftButton) {
-    int clickcol = e->x()/m_char_w;
-    int clickrow = e->y()/m_char_h;
-    selectionStart = verticalScrollBar()->value()*m_term_width + clickcol + clickrow*m_term_width;
-    selectionStart = qMax(0,selectionStart);
-    selectionStop = selectionStart;
-  }
+  int clickcol = e->x()/m_char_w;
+  int clickrow = e->y()/m_char_h;
+  selectionStart = verticalScrollBar()->value()*m_term_width + clickcol + clickrow*m_term_width;
+  selectionStart = qMax(0,selectionStart);
+  selectionStop = selectionStart;
 }
 
 void QTTerm::clearSelection() {
@@ -271,7 +260,7 @@ void QTTerm::clearSelection() {
 }
 
 void QTTerm::mouseMoveEvent( QMouseEvent *e ) {
-  if (e->buttons() != Qt::LeftButton)
+  if (!e->buttons())
     return;
   int x = e->x();
   int y = e->y();
@@ -322,13 +311,7 @@ void QTTerm::mouseReleaseEvent( QMouseEvent *e ) {
   QClipboard *cb = QApplication::clipboard();
   if (!cb->supportsSelection())
     return;
-  if (selectionStart != selectionStop) {
-    cb->setText(getSelectionText(), QClipboard::Selection);
-  }
-  else { //clear selection if left mouse click without moving
-    clearSelection();
-    viewport()->update();
-  }
+  cb->setText(getSelectionText(), QClipboard::Selection);
 }
 
 void QTTerm::drawFragment(QPainter *paint, QString todraw, char flags, int row, int col) {
@@ -422,7 +405,7 @@ void QTTerm::keyPressEvent(QKeyEvent *e) {
 }
 
 void QTTerm::OutputRawString(string txt) {
-  for (size_t i=0;i<txt.size();i++)
+  for (int i=0;i<txt.size();i++)
     setChar(txt[i],true);
 }
 
@@ -488,9 +471,8 @@ QString QTTerm::getSelectionText() {
 	ret += buffer[i].data[j].v;
 	lineHasSelectedText = true;
       }
-//    chuong 2008-01-28, the next 2 lines causing unnecessary/problematic new line, so commented them
-//    if (lineHasSelectedText)
-//      ret += '\n';
+    if (lineHasSelectedText)
+      ret += '\n';
   }
   ret.replace(QRegExp(" +\\n"),"\n");
   return ret;

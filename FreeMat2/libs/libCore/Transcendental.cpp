@@ -49,7 +49,6 @@ ArrayVector Log1PFunction(int nargout, const ArrayVector& arg) {
   if (argType > FM_DCOMPLEX)
     throw Exception("argument to log must be numeric");
   switch (argType) {
-  default: throw Exception("illegal type of argument to log1p");
   case FM_FLOAT: {
     if (input.isPositive()) {
       const float *dp=((const float *)input.getDataPointer());
@@ -176,7 +175,6 @@ ArrayVector LogFunction(int nargout, const ArrayVector& arg) {
   if (argType > FM_DCOMPLEX)
     throw Exception("argument to log must be numeric");
   switch (argType) {
-  default: throw Exception("illegal type of argument to log");
   case FM_FLOAT: {
     if (input.isPositive()) {
       const float *dp=((const float *)input.getDataPointer());
@@ -313,7 +311,6 @@ ArrayVector ExpFunction(int nargout, const ArrayVector& arg) {
   if (argType > FM_DCOMPLEX)
     throw Exception("argument to exp must be numeric");
   switch (argType) {
-  default: throw Exception("illegal type of argument to exp");
   case FM_FLOAT: {
     const float *dp=((const float *)input.getDataPointer());
     int len(input.getLength());
@@ -387,7 +384,6 @@ ArrayVector ExpM1Function(int nargout, const ArrayVector& arg) {
   if (argType > FM_DCOMPLEX)
     throw Exception("argument to expm1 must be numeric");
   switch (argType) {
-  default: throw Exception("illegal type of argument to expm1");
   case FM_FLOAT: {
     const float *dp=((const float *)input.getDataPointer());
     int len(input.getLength());

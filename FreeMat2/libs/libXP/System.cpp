@@ -25,9 +25,9 @@
 #include <windows.h>
 #endif
 
-StringVector DoSystemCallCaptured(std::string cmd) {
+std::vector<std::string> DoSystemCallCaptured(std::string cmd) {
   QProcess toRun;
-  StringVector ret;
+  std::vector<std::string> ret;
   bool runDetached = (cmd[cmd.size()-1] == '&');
 
   if (runDetached)

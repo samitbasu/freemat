@@ -38,7 +38,7 @@ private slots:
   void add();
   void addsub();
   void remove();
-  void alldone();
+  void done();
   void save();
   void up();
   void down();

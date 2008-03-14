@@ -34,7 +34,7 @@ void HandleObject::ToManual(std::string name) {
   qp->Data("manual");
 }
 
-bool HandleObject::HasChanged(StringVector names) {
+bool HandleObject::HasChanged(std::vector<std::string> names) {
   HandleProperty *hp;
   for (int i=0;i<names.size();i++) {
     hp = LookupProperty(names[i]);
@@ -44,17 +44,17 @@ bool HandleObject::HasChanged(StringVector names) {
 }
 
 bool HandleObject::HasChanged(std::string name) {
-  StringVector names;
+  std::vector<std::string> names;
   names.push_back(name);
   return HasChanged(names);
 }
 
 void HandleObject::ClearAllChanged() {
-  StringVector names(m_properties.getCompletions(""));
+  std::vector<std::string> names(m_properties.getCompletions(""));
   ClearChanged(names);
 }
 
-void HandleObject::ClearChanged(StringVector names) {
+void HandleObject::ClearChanged(std::vector<std::string> names) {
   HandleProperty *hp;
   for (int i=0;i<names.size();i++) {
     hp = LookupProperty(names[i]);
@@ -76,7 +76,7 @@ HandleObject::~HandleObject() {
   // Loop through our children
   HPHandles *hp = (HPHandles*) LookupProperty("children");
   HandleObject *gp;
-  QVector<unsigned> my_children(hp->Data());
+  std::vector<unsigned> my_children(hp->Data());
   for (int i=0;i<my_children.size();i++) {
     unsigned handle = my_children[i];
     if (handle >= HANDLE_OFFSET_OBJECT) {
@@ -90,7 +90,7 @@ HandleObject::~HandleObject() {
     }
   }
   // Delete our properties also
-  StringVector propSet(m_properties.getCompletions(""));
+  stringVector propSet(m_properties.getCompletions(""));
   for (int i=0;i<propSet.size();i++) {
     HandleProperty** hp = m_properties.findSymbol(propSet[i]);
     if (hp) delete (*hp);
@@ -105,7 +105,7 @@ HandleProperty* HandleObject::LookupProperty(std::string name) {
   HandleProperty** hp = m_properties.findSymbol(name);
   if (hp) return (*hp);
   //complete it
-  StringVector completes(m_properties.getCompletions(name));
+  stringVector completes(m_properties.getCompletions(name));
   if (completes.empty())
     throw Exception("invalid property " + name);
   if (completes.size() != 1)
@@ -116,7 +116,7 @@ HandleProperty* HandleObject::LookupProperty(std::string name) {
 
 void HandleObject::SetPropertyHandle(std::string name, unsigned value) {
   HPHandles* hp = (HPHandles*) LookupProperty(name);
-  QVector<unsigned> newval;
+  std::vector<unsigned> newval;
   newval.push_back(value);
   hp->Data(newval);
 }
@@ -158,7 +158,7 @@ std::string HandleObject::StringPropertyLookup(std::string name) {
   return (sp->Data());
 }
 
-QVector<double> HandleObject::VectorPropertyLookup(std::string name) {
+std::vector<double> HandleObject::VectorPropertyLookup(std::string name) {
   HPVector* sp = (HPVector*) LookupProperty(name);
   return (sp->Data());
 }
@@ -221,7 +221,7 @@ void HandleObject::SetConstrainedStringDefault(std::string name, std::string val
 
 void HandleObject::SetConstrainedStringSetDefault(std::string name, std::string values) {
   HPConstrainedStringSet *hp = (HPConstrainedStringSet*) LookupProperty(name);
-  StringVector data;
+  std::vector<std::string> data;
   Tokenize(values,data,"|");
   ((HPStringSet*)hp)->Data(data);
 }
@@ -262,7 +262,7 @@ bool HandleObject::StringCheck(std::string name, std::string value) {
   return hp->Is(value);
 }
 
-double VecMin(QVector<double> &v) {
+double VecMin(std::vector<double> &v) {
   double min = 0;
   bool first = true;
   for (int i=0;i<v.size();i++) {
@@ -277,7 +277,7 @@ double VecMin(QVector<double> &v) {
   return min;
 }
 
-double VecMax(QVector<double> &v) {
+double VecMax(std::vector<double> &v) {
   double max = 0;
   bool first = true;
   for (int i=0;i<v.size();i++) {

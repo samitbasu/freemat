@@ -97,7 +97,7 @@ void Serialize::checkSignature(char type, int count) {
   rcount = ntohl(rcount);
   if (!((type == rtype) && (count == rcount))) {
     char buffer[1000];
-    sprintf(buffer,"Serialization Mismatch: expected <%c,%d>, got <%c,%ld>",
+    sprintf(buffer,"Serialization Mismatch: expected <%c,%d>, got <%c,%d>",
 	    type,count,rtype,rcount);
     throw Exception(buffer);
   }
@@ -112,11 +112,6 @@ void Serialize::putBytes(const char *ptr, int count) {
 void Serialize::putShorts(const short *ptr, int count) {
   sendSignature('s',count);
   s->writeBytes(ptr,count*sizeof(short));
-}
-
-void Serialize::putI64s(const int64 *ptr, int count) {
-  sendSignature('z',count);
-  s->writeBytes(ptr,count*sizeof(int64));
 }
 
 void Serialize::putInts(const int *ptr, int count) {
@@ -159,18 +154,19 @@ void Serialize::putByte(char t) {
   putBytes(&t,1);
 }
 
-void Serialize::putStringVector(StringVector t) {
+void Serialize::putStringVector(stringVector t) {
   sendSignature('S',1);
   putInt(t.size());
-  for (int i=0;i<t.size();i++)
+  int i;
+  for (i=0;i<t.size();i++)
     putString(t[i].c_str());
 }
 
-StringVector Serialize::getStringVector() {
+stringVector Serialize::getStringVector() {
   checkSignature('S',1);
   int L = getInt();
   int i;
-  StringVector N;
+  stringVector N;
   for (i=0;i<L;i++)
     N.push_back(getString());
   return N;
@@ -206,21 +202,6 @@ void Serialize::getShorts(short *ptr, int count) {
     char tmp;
     for (int i=0;i<2*count;i+=2)
       SWAP(cptr[i],cptr[i+1]);
-  }
-}
-
-void Serialize::getI64s(int64 *ptr, int count) {
-  checkSignature('z',count);
-  s->readBytes(ptr,count*sizeof(int64));
-  if (endianSwap) {
-    char *cptr = (char *) ptr;
-    char tmp;
-    for (int i=0;i<8*count;i+=8) {
-      SWAP(cptr[i],cptr[i+7]);
-      SWAP(cptr[i+1],cptr[i+6]);
-      SWAP(cptr[i+2],cptr[i+5]);
-      SWAP(cptr[i+3],cptr[i+4]);
-    }
   }
 }
 
@@ -307,7 +288,7 @@ double Serialize::getDouble() {
   return t;
 }
 
-Class Serialize::getDataClass(bool& sparseflag, StringVector& className) {
+Class Serialize::getDataClass(bool& sparseflag, rvstring& className) {
   checkSignature('a',1);
   char a = getByte();
   sparseflag = (a & 16) > 0;
@@ -362,13 +343,11 @@ Class Serialize::getDataClass(bool& sparseflag, StringVector& className) {
 }
 
 void Serialize::putDataClass(Class cls, bool issparse, 
-			     bool isuserclass, StringVector className) {
+			     bool isuserclass, rvstring className) {
   char sparseval;
   sparseval = issparse ? 16 : 0;
   sendSignature('a',1);
   switch (cls) {
-  default:
-    throw Exception("Unhandled type in putDataClass.");
   case FM_CELL_ARRAY:
     putByte(1);
     return;
@@ -452,7 +431,6 @@ void Serialize::putArray(const Array& dat) {
   int elCount(dat.getLength());
   if (dat.isEmpty()) return;
   switch(dclass) {
-  default: throw Exception("unhandled type in putArray");
   case FM_CELL_ARRAY: {
     const Array *dp=((const Array *) dat.getDataPointer());
     for (int i=0;i<elCount;i++)
@@ -460,7 +438,7 @@ void Serialize::putArray(const Array& dat) {
     return;
   }
   case FM_STRUCT_ARRAY: {
-    StringVector fnames(dat.fieldNames());
+    rvstring fnames(dat.fieldNames());
     int ncount(fnames.size());
     putInt(ncount);
     int i;
@@ -492,11 +470,6 @@ void Serialize::putArray(const Array& dat) {
     putInts((const int*) dp,elCount);
     return;
   }
-  case FM_UINT64: {
-    const uint64 *dp = ((const uint64 *)dat.getDataPointer());
-    putI64s((const int64*) dp, elCount);
-    return;
-  }
   case FM_INT8: {
     const int8 *dp=((const int8 *)dat.getDataPointer());
     putBytes((const char*) dp,elCount);
@@ -518,11 +491,6 @@ void Serialize::putArray(const Array& dat) {
 	putInts((const int*) dp[i],1+dp[i][0]);
       }
     }
-    return;
-  }
-  case FM_INT64: {
-    const int64 *dp = ((const int64 *)dat.getDataPointer());
-    putI64s((const int64*) dp, elCount);
     return;
   }
   case FM_FLOAT: {      
@@ -583,7 +551,7 @@ void Serialize::putArray(const Array& dat) {
 void Serialize::getArray(Array& dat) {
   checkSignature('A',1);
   bool sparseflag;
-  StringVector className;
+  rvstring className;
   Class dclass(getDataClass(sparseflag,className));
   Dimensions dims(getDimensions());
   int elCount(dims.getElementCount());
@@ -592,8 +560,6 @@ void Serialize::getArray(Array& dat) {
     return;
   }
   switch(dclass) {
-  default:
-    throw Exception("Unhandled type in getArray");
   case FM_CELL_ARRAY: {
     Array *dp = new Array[elCount];
     for (int i=0;i<elCount;i++)
@@ -602,7 +568,7 @@ void Serialize::getArray(Array& dat) {
     return;
   }
   case FM_STRUCT_ARRAY: {
-    StringVector fnames;
+    rvstring fnames;
     int ncount(getInt());
     int i;
     for (i=0;i<ncount;i++) 
@@ -641,18 +607,6 @@ void Serialize::getArray(Array& dat) {
   case FM_INT16: {
     int16 *dp = (int16*) Malloc(sizeof(int16)*elCount);
     getShorts((short*) dp,elCount);
-    dat = Array(dclass,dims,dp);
-    return;
-  }
-  case FM_INT64: {
-    int64 *dp = (int64*) Malloc(sizeof(int64)*elCount);
-    getI64s((int64*) dp,elCount);
-    dat = Array(dclass,dims,dp);
-    return;
-  }
-  case FM_UINT64: {
-    uint64 *dp = (uint64*) Malloc(sizeof(uint64)*elCount);
-    getI64s((int64*) dp,elCount);
     dat = Array(dclass,dims,dp);
     return;
   }

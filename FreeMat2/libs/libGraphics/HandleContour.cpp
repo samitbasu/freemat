@@ -34,12 +34,12 @@ HandleContour::~HandleContour() {
 // Calculate the limits - should return a vector of the
 // form...
 // [xmin, xmax, ymin, ymax, zmin, zmax, cmin, cmax, amin, amax]
-QVector<double> HandleContour::GetLimits() {
-//   QVector<double> xs(VectorPropertyLookup("xdata"));
-//   QVector<double> ys(VectorPropertyLookup("ydata"));
-//  QVector<double> zs(VectorPropertyLookup("zdata"));
+std::vector<double> HandleContour::GetLimits() {
+//   std::vector<double> xs(VectorPropertyLookup("xdata"));
+//   std::vector<double> ys(VectorPropertyLookup("ydata"));
+//  std::vector<double> zs(VectorPropertyLookup("zdata"));
   UpdateState();
-  QVector<double> limits;
+  std::vector<double> limits;
   bool x_initialized = false;
   bool y_initialized = false;
   bool z_initialized = false;
@@ -157,6 +157,7 @@ lineset HandleContour::ContourCDriver(Array m, double val, Array x, Array y) {
   lineset bundledLines;
   m.promoteType(FM_DOUBLE);
   const double *func = (const double *) m.getDataPointer();
+  int outcnt = 0;
   int numy = m.rows();
   int numx = m.columns();
   for (int row=1;row<numy;row++)
@@ -219,6 +220,7 @@ lineset HandleContour::ContourCDriver(Array m, double val, Array x, Array y) {
       }
     }
   // Now we link the line segments into longer lines.
+  int allcount = allLines.size();
   while (!allLines.empty()) {
     // Start a new line segment
     cline current(allLines.takeAt(0));
@@ -354,14 +356,14 @@ void HandleContour::UpdateState() {
     levels = GetTicksInner(zmin,zmax,false,10);
     if (levels.front() == zmin) levels.pop_front();
     if (levels.back() == zmax) levels.pop_back();
-    QVector<double> ulevels;
+    std::vector<double> ulevels;
     for (int i=0;i<levels.size();i++)
       ulevels.push_back(levels[i]);
     HPVector *hp = (HPVector*) LookupProperty("levellist");
     hp->Data(ulevels);
     hp->ClearModified();
   } else {
-    QVector<double> ulevels(VectorPropertyLookup("levellist"));
+    std::vector<double> ulevels(VectorPropertyLookup("levellist"));
     for (int i=0;i<ulevels.size();i++)
       levels.push_back(ulevels[i]);
   }
@@ -377,16 +379,16 @@ void HandleContour::UpdateState() {
 void HandleContour::SelectColor(RenderEngine& gc, double zval) {
   // Need to select a color for the contour
   // Retrieve the colormap
-  QVector<double> cmap(((HandleObject*)GetParentFigure())->VectorPropertyLookup("colormap"));
+  std::vector<double> cmap(((HandleObject*)GetParentFigure())->VectorPropertyLookup("colormap"));
   HandleAxis* ap(GetParentAxis());
-  QVector<double> clim(((HandleObject*)ap)->VectorPropertyLookup("clim"));
+  std::vector<double> clim(((HandleObject*)ap)->VectorPropertyLookup("clim"));
   double clim_min(qMin(clim[0],clim[1]));
   double clim_max(qMax(clim[0],clim[1]));
   // Calculate the colormap length
   int cmaplen(cmap.size()/3);
   int ndx = (int) ((zval-clim_min)/(clim_max-clim_min)*(cmaplen-1));
   ndx = qMin(cmaplen-1,qMax(0,ndx));
-  QVector<double> color;
+  std::vector<double> color;
   color.push_back(cmap[3*ndx]);
   color.push_back(cmap[3*ndx+1]);
   color.push_back(cmap[3*ndx+2]);
@@ -413,9 +415,9 @@ void HandleContour::PaintMe(RenderEngine& gc) {
 	gc.color(lc->ColorSpec());
       for (int j=0;j<cset.size();j++) {
 	cline aline(cset[j]);
-	QVector<double> xs;
-	QVector<double> ys;
-	QVector<double> zs;
+	std::vector<double> xs;
+	std::vector<double> ys;
+	std::vector<double> zs;
 	for (int k=0;k<aline.size();k++) {
 	  xs.push_back(aline[k].x);
 	  ys.push_back(aline[k].y);
@@ -424,7 +426,7 @@ void HandleContour::PaintMe(RenderEngine& gc) {
 	  else
 	    zs.push_back(0);
 	}
-	QVector<double> mxs, mys, mzs;
+	std::vector<double> mxs, mys, mzs;
 	parent->ReMap(xs,ys,zs,mxs,mys,mzs);
 	gc.lineSeries(mxs,mys,mzs);
       }

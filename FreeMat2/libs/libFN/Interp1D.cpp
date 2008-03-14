@@ -33,7 +33,7 @@ int interv(const T *xt, int lxt, T x, int *left, int *mflag)
   static int ihi, istep, middle;
   
   /*  from  * a practical guide to splines *  by C. de Boor */
-  /* Computes  left = max( i :  xt(i) .lt. xt(lxt) .and.  xt(i) .le. x )  . */
+  /* omputes  left = max( i :  xt(i) .lt. xt(lxt) .and.  xt(i) .le. x )  . */
 
   /* ******  i n p u t  ****** */
   /*  xt.....a real sequence, of length  lxt , assumed to be nondecreasing */
@@ -262,7 +262,6 @@ void DoLinearInterpolationReal(const T* x1, const T* y1,
 
 bool TestForMonotonic(Array x) {
   switch (x.dataClass()) {
-  default: throw Exception("unhandled type in argument to testformonotonic");
   case FM_FLOAT:
     return TestForMonotonicReal<float>((const float*) x.getDataPointer(),
 				       x.getLength());
@@ -341,16 +340,12 @@ ArrayVector Interplin1Function(int nargout, const ArrayVector& arg) {
     throw Exception("arguments to interplin1 must be numerical arrays");
   if (x1.isComplex() || xi.isComplex())
     throw Exception("x-coordinates cannot be complex in interplin1");
-  if (x1.dataClass() < FM_FLOAT)
-    x1.promoteType(FM_DOUBLE);
-  if (y1.dataClass() < FM_FLOAT)
-    y1.promoteType(FM_DOUBLE);
-  if (xi.dataClass() < FM_FLOAT)
-    xi.promoteType(FM_DOUBLE);
   if (x1.dataClass() < y1.dataClass())
     x1.promoteType(y1.dataClass());
   else
     y1.promoteType(x1.dataClass());
+  if (x1.dataClass() < FM_FLOAT)
+    x1.promoteType(FM_FLOAT);
   if (xi.dataClass() > x1.dataClass())
     x1.promoteType(xi.dataClass());
   if (x1.dataClass() > xi.dataClass())
@@ -381,7 +376,6 @@ ArrayVector Interplin1Function(int nargout, const ArrayVector& arg) {
   Array retval;
   char *dp;
   switch(y1.dataClass()) {
-  default: throw Exception("unhandled type as argument to interplin1");
   case FM_FLOAT: {
     dp = (char*) Malloc(sizeof(float)*xi.getLength());
     DoLinearInterpolationReal<float>((const float*) x1.getDataPointer(),
@@ -420,7 +414,7 @@ ArrayVector Interplin1Function(int nargout, const ArrayVector& arg) {
     break;
   }
   }
-  return SingleArrayVector(Array(y1.dataClass(),
+  return singleArrayVector(Array(y1.dataClass(),
 				 xi.dimensions(),
 				 dp));
       

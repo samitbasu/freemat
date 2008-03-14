@@ -16,7 +16,6 @@
 %!
 
 % Copyright (c) 2002-2006 Samit Basu
-% Licensed under the GPL
 
 function handle = colorbar(varargin)
 axhan = gca;
@@ -26,7 +25,7 @@ if (isempty(cba))
   %Add a new one
   % Resize axhan
   pos = get(axhan,'outerposition');
-  width = 0.3;
+  width = 0.2;
   pos(3) = pos(3) - width;
   set(gca,'outerposition',pos);
   npos = [pos(1)+pos(3),pos(2),width,pos(4)];
@@ -39,8 +38,7 @@ end
 cmap = get(gcf,'colormap'); N = size(cmap,1);
 cmap = linspace(0,N,N)';
 cmap = repmat(cmap,[1,4]);
-han = himage('ydata',get(axhan,'clim'),'cdata',flipud(cmap));
-axis('tight');
+han = himage('cdata',flipud(cmap));
 axes(axhan);
 
 function cba = findColorBar(axhan)

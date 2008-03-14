@@ -26,7 +26,7 @@ HistoryWidget::HistoryWidget(QWidget *parent) : QWidget(parent) {
   layout->addWidget(m_flist);
   setLayout(layout);
   readSettings();
-  new QListWidgetItem("% " + QDateTime::currentDateTime().toString(),m_flist);
+  QListWidgetItem *p = new QListWidgetItem("% " + QDateTime::currentDateTime().toString(),m_flist);
   connect(m_flist,SIGNAL(itemDoubleClicked(QListWidgetItem*)),
 	  this,SLOT(doubleClicked(QListWidgetItem*)));
   setObjectName("history");
@@ -67,7 +67,7 @@ void HistoryWidget::addCommand(QString t) {
       QListWidgetItem *p = m_flist->takeItem(0);
       delete p;
     }
-    new QListWidgetItem(t,m_flist);
+    QListWidgetItem *d = new QListWidgetItem(t,m_flist);
     m_flist->scrollToBottom();
   }
 }
@@ -80,11 +80,9 @@ void HistoryWidget::readSettings() {
 }
 
 void HistoryWidget::clear() {
-  if (QMessageBox::warning(this,"Clear History","Are you sure you want to clear the history?  There is no undo operation",QMessageBox::Yes,QMessageBox::No | QMessageBox::Default) == QMessageBox::Yes) {
+  if (QMessageBox::warning(this,"Clear History","Are you sure you want to clear the history?  There is no undo operation",QMessageBox::Yes,QMessageBox::No | QMessageBox::Default) == QMessageBox::Yes)
     m_flist->clear();
-    new QListWidgetItem("% " + QDateTime::currentDateTime().toString(),m_flist);
-    emit clearHistory();
-  }
+  emit clearHistory();
 }
 
 

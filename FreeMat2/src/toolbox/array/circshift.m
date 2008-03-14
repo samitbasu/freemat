@@ -25,9 +25,7 @@
 %circshift(x,[2,-3,1])
 %@>
 %!
-
-% Copyright (c) 2002-2007 Samit Basu
-% Licensed under the GPL
+% Copyright (c) 2005 Samit Basu
 function x = circshift(y,shiftvec)
   szey = size(y);
   ndim = prod(size(szey));

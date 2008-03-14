@@ -871,9 +871,8 @@ ArrayVector TypeOfFunction(int nargout, const ArrayVector& arg) {
   case FM_STRING:
     retval = Array::stringConstructor(std::string("string"));
     break;
-  case FM_FUNCPTR_ARRAY:
-    retval = Array::stringConstructor(std::string("funcptr"));
-    break;
   }
-  return ArrayVector() << retval;
+  ArrayVector r;
+  r.push_back(retval);
+  return r;
 }

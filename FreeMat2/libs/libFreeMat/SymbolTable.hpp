@@ -19,6 +19,8 @@
 
 #ifndef __SYMBOLTABLE_HPP__
 #define __SYMBOLTABLE_HPP__
+#include <string>
+#include <vector>
 #include "Types.hpp"
 
 typedef std::string key_type;
@@ -120,8 +122,8 @@ public:
     hashTable[hash_value] = new Entry(key,val,hashTable[hash_value]);
   }
     
-  StringVector getCompletions(const std::string& prefix) {
-    StringVector retlist;
+  stringVector getCompletions(const std::string& prefix) {
+    stringVector retlist;
     // Search through the symbol table...
     for (int i=0;i<SYMTAB;i++) {
       if (hashTable[i] != NULL) {

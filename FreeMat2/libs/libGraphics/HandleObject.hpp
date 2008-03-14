@@ -28,8 +28,8 @@
 class HandleAxis;
 class HandleFigure;
 
-double VecMin(QVector<double> &v);
-double VecMax(QVector<double> &v);
+double VecMin(std::vector<double> &v);
+double VecMax(std::vector<double> &v);
 double ArrayMin(Array x);
 double ArrayMax(Array x);
 
@@ -44,19 +44,19 @@ public:
   unsigned RefCount() {return ref_count;}
   virtual void RegisterProperties() {}
   virtual void UpdateState() {}
-  virtual QVector<double> GetLimits() {return QVector<double>();};
-  bool HasChanged(StringVector names);
+  virtual std::vector<double> GetLimits() {return std::vector<double>();};
+  bool HasChanged(std::vector<std::string> names);
   bool HasChanged(std::string name);
   void ToManual(std::string name);
   bool IsType(std::string name);
-  void ClearChanged(StringVector names);
+  void ClearChanged(std::vector<std::string> names);
   void ClearChanged(std::string name);
   void ClearAllChanged();
   void AddProperty(HandleProperty* prop, std::string name);
   HandleProperty* LookupProperty(std::string name);
   double ScalarPropertyLookup(std::string name);
   unsigned HandlePropertyLookup(std::string name);
-  QVector<double> VectorPropertyLookup(std::string name);
+  std::vector<double> VectorPropertyLookup(std::string name);
   Array ArrayPropertyLookup(std::string name);
   std::string StringPropertyLookup(std::string name);
   bool StringCheck(std::string name, std::string value);

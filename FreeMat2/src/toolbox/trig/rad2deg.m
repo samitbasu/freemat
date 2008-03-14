@@ -21,10 +21,6 @@
 %@$"y=rad2deg(pi/4)","45","close"
 %@$"y=rad2deg(2*pi)","360","close"
 %!
-
-% Copyright (c) 2002-2007 Samit Basu
-% Licensed under the GPL
-
 function y = rad2deg(x)
   if (isa(x,'float') || isa(x,'complex'))
     y = x*float(180/pi);

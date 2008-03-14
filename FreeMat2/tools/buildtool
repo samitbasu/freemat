@@ -101,10 +101,10 @@ my %libz_pkg =  ('url' => 'http://downloads.sourceforge.net/libpng/',
 		  'md5' => 'debc62758716a169df9f62e6ab2bc634',
 		  'root' => 'zlib-1.2.3');
 my %freemat_pkg = ('url' => 'http://downloads.sourceforge.net/freemat/',
-		   'file' => 'FreeMat-3.6.tar.gz',
+		   'file' => 'FreeMat-3.5.tar.gz',
 		   'md5' => '',
-		   'root' => 'FreeMat-3.6',
-		   'version' => '3.6');
+		   'root' => 'FreeMat-3.5',
+		   'version' => '3.5');
 
 # Find a MD5 Sum program
 sub find_program {
@@ -899,7 +899,7 @@ sub job_native_freemat {
     print "    Starting FreeMat Installation\n";
     print "************************************************************\n";
     fetch_unpack_pkg(\%freemat_pkg,'build');
-    configure_make_install("build/$freemat_pkg{'root'}",$prefix,'build',$platform_opts,"CPPFLAGS=\"-I$prefix/include\" LDFLAGS=\"-L$prefix/lib\"");
+    configure_make_install("build/$freemat_pkg{'root'}",$prefix,'build',$platform_opts);
 }
 
 sub relink {
@@ -1324,9 +1324,6 @@ sub job_linux_release {
     my $cross_prefix = shift;
     my $svn_path = shift;
     my $buildtool_path = Cwd::cwd();
-    change_directory($svn_path);
-    delete_file('manifest.am');
-    system('touch manifest.am');
     change_directory($svn_path . '/build');
     system_check('make clean');
     system_check('make');

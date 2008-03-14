@@ -33,7 +33,6 @@
 %!
 
 % Copyright (c) 2002-2006 Samit Basu
-% Licensed under the GPL
 
 function varargout = ndgrid(varargin)
   if (nargin == 0)

@@ -38,7 +38,7 @@ class MainApp : public QObject
   void CheckNonClosable();
   ScopePtr m_global;
   QStringList basePath, userPath;
-  QTimer *profilerTimer;
+
 public:
   MainApp();
   ~MainApp();
@@ -48,13 +48,11 @@ public:
   void SetupInteractiveTerminalCase();
   void SetupDumbTerminalCase();
   KeyManager* GetKeyManager();
-  ApplicationWindow* getApplicationWindow();
   void SetGUIMode(bool mode);
   void TerminalReset();
   Context *NewContext();
   int  StartNewInterpreterThread();
   void UpdatePaths();
-  void ControlProfiler(bool enableflag);
 public slots:
   int Run();
   void HelpWin();
@@ -68,7 +66,6 @@ public slots:
   void RegisterInterrupt();
   void EnableRepaint();
   void DisableRepaint();
-  void CollectProfileSample();
 signals:
   void Shutdown();
   void Initialize();

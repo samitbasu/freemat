@@ -8,10 +8,6 @@
 %@]
 %where...
 %!
-
-% Copyright (c) 2002-2007 Samit Basu
-% Licensed under the GPL
-
 function ohandle = line(varargin)
   ax = gca;
   if (length(varargin) == 0), return; end

@@ -206,8 +206,10 @@ void Terminal::ProcessChar(char c) {
 // The terminal has been resized - calculate the 
 void Terminal::ResizeEvent() {
 #ifdef Q_WS_X11
+  int lines_used;       /* The number of lines currently in use */
   struct winsize size;  /* The new size information */
-  int ncolumns = 0;
+  int ncolumns;
+  int i;
   /*
    * Query the new terminal window size. Ignore invalid responses.
    */

@@ -37,9 +37,9 @@ ArrayVector StrCmpFunction(int nargout, const ArrayVector& arg) {
   arg1 = arg[0];
   arg2 = arg[1];
   if (!(arg1.isString()))
-    return SingleArrayVector(Array::logicalConstructor(false));
+    return singleArrayVector(Array::logicalConstructor(false));
   if (!(arg2.isString()))
-    return SingleArrayVector(Array::logicalConstructor(false));
+    return singleArrayVector(Array::logicalConstructor(false));
   if (!(arg1.dimensions().equals(arg2.dimensions())))
     retval = Array::logicalConstructor(false);
   else {
@@ -91,7 +91,7 @@ ArrayVector StrStrFunction(int nargout, const ArrayVector& arg) {
     retndx = 0;
   else
     retndx = pos+1;
-  return SingleArrayVector(Array::int32Constructor(retndx));
+  return singleArrayVector(Array::int32Constructor(retndx));
 }
 
 char* strrep(const char* source, const char* pattern, const char* replace) {
@@ -145,7 +145,7 @@ ArrayVector StrRepStringFunction(int nargout, const ArrayVector& arg) {
   string s2 = arg2.getContentsAsString();
   string s3 = arg3.getContentsAsString();
   char *cp = strrep(s1.c_str(),s2.c_str(),s3.c_str());
-  ArrayVector retval(SingleArrayVector(Array::stringConstructor(cp)));
+  ArrayVector retval(singleArrayVector(Array::stringConstructor(cp)));
   free(cp);
   return retval;
 }
@@ -232,7 +232,6 @@ ArrayVector StrRepStringFunction(int nargout, const ArrayVector& arg) {
 //[start,stop,tokenExtents,match,tokens,named] = regexp('quick down town zoo','(.)own')
 //@>
 //!
-#if HAVE_PCRE
 static bool isSlotSpec(string t) {
   return ((t == "start") ||
 	  (t == "end") ||
@@ -241,9 +240,8 @@ static bool isSlotSpec(string t) {
 	  (t == "tokens") ||
 	  (t == "names"));
 }
-#endif
 
-ArrayVector RegExpCoreFunction(StringVector stringed_args, bool defaultMatchCase) {
+ArrayVector RegExpCoreFunction(rvstring stringed_args, bool defaultMatchCase) {
 #if HAVE_PCRE
   // These are the default options
   bool globalMatch = true;
@@ -268,7 +266,7 @@ ArrayVector RegExpCoreFunction(StringVector stringed_args, bool defaultMatchCase
   QList<QList<uint32> > tokenExtentsList;
   QList<QStringList> tokenList;
   QStringList matchList;
-  StringVector namedTokenNames;
+  rvstring namedTokenNames;
   QList<QStringList> namedTokenValues;
 
   pcre *re;
@@ -655,7 +653,7 @@ ArrayVector RegExpWrapperFunction(int nargout, const ArrayVector& arg,
       throw Exception("all arguments to regexp must be strings");
   if (arg[0].isString() && arg[1].isString()) {
     // If both arguments are scalar strings...
-    StringVector stringed_args;
+    rvstring stringed_args;
     // Convert the argument array to strings
     for (int i=0;i<arg.size();i++) 
       stringed_args << ArrayToString(arg[i]);
@@ -664,7 +662,7 @@ ArrayVector RegExpWrapperFunction(int nargout, const ArrayVector& arg,
     const Array *dp = (const Array *) arg[0].getDataPointer();
     QList<ArrayVector> results;
     for (int j=0;j<arg[0].getLength();j++) {
-      StringVector stringed_args;
+      rvstring stringed_args;
       stringed_args << ArrayToString(dp[j]);
       for (int i=1;i<arg.size();i++) 
 	stringed_args << ArrayToString(arg[i]);
@@ -675,7 +673,7 @@ ArrayVector RegExpWrapperFunction(int nargout, const ArrayVector& arg,
     const Array *dp = (const Array *) arg[1].getDataPointer();
     QList<ArrayVector> results;
     for (int j=0;j<arg[1].getLength();j++) {
-      StringVector stringed_args;
+      rvstring stringed_args;
       stringed_args << ArrayToString(arg[0]);
       stringed_args << ArrayToString(dp[j]);
       for (int i=2;i<arg.size();i++) 
@@ -690,7 +688,7 @@ ArrayVector RegExpWrapperFunction(int nargout, const ArrayVector& arg,
     const Array *sp = (const Array *) arg[1].getDataPointer();
     QList<ArrayVector> results;
     for (int j=0;j<arg[0].getLength();j++) {
-      StringVector stringed_args;
+      rvstring stringed_args;
       stringed_args << ArrayToString(dp[j]);
       stringed_args << ArrayToString(sp[j]);
       for (int i=2;i<arg.size();i++) 
@@ -715,8 +713,8 @@ ArrayVector RegExpIFunction(int nargout, const ArrayVector& arg) {
 // Perform a replace 
 string RegExpRepCoreFunction(string subject,
 			     string pattern,
-			     StringVector modes,
-			     StringVector replacements) {
+			     rvstring modes,
+			     rvstring replacements) {
 #if HAVE_PCRE
   // These are the default options
   bool globalMatch = true;
@@ -728,7 +726,9 @@ string RegExpRepCoreFunction(string subject,
   pcre *re;
   const char *error;
   int erroffset;
-  int rc;
+  int namecount;
+  int name_entry_size;
+  int rc, i;
 
   for (int j=0;j<modes.size();j++) {
     if (modes[j]=="once")
@@ -855,7 +855,7 @@ string RegExpRepCoreFunction(string subject,
   if (replacements.size() > 1)
     nextReplacement++;
   
-  if (globalMatch && (ovector[1] < (int)subject.size())) {
+  if (globalMatch && (ovector[1] < subject.size())) {
     for (;;)
       {
 	int options = 0;                 /* Normally no options */
@@ -867,7 +867,7 @@ string RegExpRepCoreFunction(string subject,
 	
 	if (ovector[0] == ovector[1])
 	  {
-	    if (ovector[0] == (int) subject.size()) break;
+	    if (ovector[0] == subject.size()) break;
 	    options = PCRE_NOTEMPTY | PCRE_ANCHORED;
 	  }
 	
@@ -959,7 +959,7 @@ string RegExpRepCoreFunction(string subject,
       }      /* End of loop to find second and subsequent matches */
   }
 
-  while (inputPointer < (int) subject.size()) 
+  while (inputPointer < subject.size()) 
     outputString += subject[inputPointer++];
   
   pcre_free(re);
@@ -974,12 +974,12 @@ ArrayVector RegExpRepDriverFunction(int nargout, const ArrayVector& arg) {
   for (int i=3;i<arg.size();i++) 
     if (!arg[i].isString())
       throw Exception("all arguments to regexprep must be strings");
-  StringVector modes;
+  rvstring modes;
   for (int i=3;i<arg.size();i++)
     modes << ArrayToString(arg[i]);
   string subject = ArrayToString(arg[0]);
   string pattern = ArrayToString(arg[1]);
-  StringVector replist;
+  rvstring replist;
   if (arg[2].isString())
     replist << ArrayToString(arg[2]);
   else if (IsCellStrings(arg[2])) {

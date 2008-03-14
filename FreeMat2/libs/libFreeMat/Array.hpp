@@ -26,6 +26,7 @@
 #include "Dimensions.hpp"
 #include "Types.hpp"
 #include "Data.hpp"
+#include "RefVec.hpp"
 #include <QVector>
 #include "List.hpp"
 #include <QStringList>
@@ -34,8 +35,8 @@
 class Array;
 class Interpreter;
 
-typedef PList<Array> ArrayVector;
-ArrayVector SingleArrayVector(Array);
+typedef QList<Array> ArrayVector;
+ArrayVector singleArrayVector(Array);
 typedef QVector<ArrayVector> ArrayMatrix;
 
 class FuncPtr;
@@ -93,7 +94,7 @@ private:
    * array.  Throws an exception if $$a(i)$$ is outside the range
    * $$1,\ldots,\mathrm{maxD}$.
    */
-  bool* getBinaryMap(int);
+  bool* getBinaryMap(uint32);
   /** Get the internal index corresponding to a given field name.
    * Get the internal index corresponding to a given field name.  This
    * is the index into the fieldname array of the argument.  If the
@@ -108,11 +109,11 @@ public:
    * successfully.  Throws an exception if the maximum value is zero or
    * negative.
    */
-  indexType getMaxAsIndex();
+  uint32 getMaxAsIndex();
   /**
    * Allocate an array.
    */
-  static void* allocateArray(Class, uint32 length,StringVector names = StringVector());
+  static void* allocateArray(Class, uint32 length,rvstring names = rvstring());
   /** Convert us to an index type
    * Convert the current object to an ordinal one.  This has different
    * meanings for different data types.  
@@ -139,14 +140,14 @@ public:
    * Create an empty Array of the specified type.
    */
   inline Array(Class type) {
-    dp = new Data(type,Dimensions(),NULL,false,StringVector(),StringVector());
+    dp = new Data(type,Dimensions(),NULL,false,rvstring(),rvstring());
   }
   /**
    * Create an Array with the specified contents.
    */
-  inline Array(Class type, const Dimensions& dims, void* t_data, bool t_sparse = false, 
-	       StringVector t_fieldNames = StringVector(), StringVector classname = StringVector()) {
-    dp = new Data(type, dims, t_data, t_sparse, t_fieldNames, classname);
+  inline Array(Class type, const Dimensions& dims, void* data, bool sparse = false, 
+	       rvstring fieldNames = rvstring(), rvstring classname = rvstring()) {
+    dp = new Data(type, dims, data, sparse, fieldNames, classname);
   }
   /**
    * Create an Array with a default allocation of space - only useful for P.O.D. arrays
@@ -154,7 +155,7 @@ public:
   inline Array(Class type, const Dimensions& dims) {
     dp = new Data(type, dims, 
 		  allocateArray(type,dims.getElementCount()), 
-		  false, StringVector(), StringVector());
+		  false, rvstring(), rvstring());
   }
   /**
    * Get the length of the array as a vector.  This is equivalent
@@ -178,16 +179,16 @@ public:
   /**
    * Return name of user-defined class
    */
-  inline StringVector className() const {
+  inline rvstring className() const {
     if (dp)
       return dp->className();
     else
-      return StringVector();
+      return rvstring();
   }
   /**
    * Set classname tag - implies this is a structure array.
    */
-  inline void setClassName(StringVector cname) {
+  inline void setClassName(rvstring cname) {
     if (dataClass() != FM_STRUCT_ARRAY)
       throw Exception("cannot set class name for non-struct array");
     dp->setClassName(cname);
@@ -204,11 +205,11 @@ public:
   /**
    * Get the fieldnames.
    */
-  inline StringVector fieldNames() const {
+  inline rvstring fieldNames() const {
     if (dp)
       return dp->fieldNames();
     else
-      return StringVector();
+      return rvstring();
   }
   /**
    * Get our length along the given dimension.
@@ -255,8 +256,8 @@ public:
 
   inline void setData(Class aClass, const Dimensions& dims, void *s, 
 		      bool sparseflag = false, 
-		      StringVector fields = StringVector(),
-		      StringVector classname = StringVector()) {
+		      rvstring fields = rvstring(),
+		      rvstring classname = rvstring()) {
     if (dp)
       dp->putData(aClass,dims,s,sparseflag,fields,classname);
     else 
@@ -482,7 +483,7 @@ public:
    *   - we try to convert a structure-array to a non-structure array type.
    *   - we try to convert any numerical types to a reference type.
    */
-  void promoteType(Class new_type, StringVector fieldNames);
+  void promoteType(Class new_type, rvstring fieldNames);
   /**
    * Promote our array to a new type.  This is a shortcut for when new_type is not
    * FM_STRUCT_ARRAY, so that the fieldNames argument is not needed.
@@ -493,7 +494,7 @@ public:
    * we assume that the permutation vector is of the correct size and is a
    * valid permutation.
    */
-  void permute(const uint32* permutation);
+  void permute(const int32* permutation);
   /**
    * Diagonal constructor - construct an array from a given vector, with
    * the contents of the vector stored into the specified diagonal of the
@@ -506,7 +507,6 @@ public:
    * Empty constructor
    */
   static Array emptyConstructor();
-  static Array emptyConstructor(const Dimensions& dims);
   static Array funcPtrConstructor(FuncPtr fptr);
   /**
    * Scalar constructor - Construct an FM_LOGICAL object with a scalar
@@ -671,7 +671,7 @@ public:
    *    the number of entries in the values vector
    *  - the non-scalar values do not agree in dimension
    */
-  static Array structConstructor(StringVector fNames, ArrayVector& values);
+  static Array structConstructor(rvstring fNames, ArrayVector& values);
   /**
    * Get a subset of an Array.  This is for vector-indexing, meaning that
    * the argument is assumed to refer to the elements in their order as a vector.
@@ -846,5 +846,5 @@ uint32 TypeSize(Class cls);
 
 string operator+(string a, int d);
 string operator+(int d, string a);
-StringVector operator+(StringVector a, StringVector b);
+stringVector operator+(stringVector a, stringVector b);
 #endif

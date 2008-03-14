@@ -37,7 +37,11 @@
 //several interesting properties.  In particular:
 //\[
 //\begin{array}{ll}
-//   \infty \times 0 & = \mathrm{NaN} \\                                             \infty \times a & = \infty \, \mathrm{for all} \, a > 0 \\   \infty \times a & = -\infty \, \mathrm{for all} \, a < 0 \\   \infty / \infty & = \mathrm{NaN} \\   \infty / 0 & = \infty 
+//   \infty \times 0 & = \mathrm{NaN} \\
+//   \infty \times a & = \infty \, \mathrm{for all} \, a > 0 \\
+//   \infty \times a & = -\infty \, \mathrm{for all} \, a < 0 \\
+//   \infty / \infty & = \mathrm{NaN} \\
+//   \infty / 0 & = \infty 
 //\end{array}
 //\]
 //Note that infinities are not preserved under type conversion to integer types (see the examples below).
@@ -212,9 +216,11 @@ ArrayVector EFunction(int nargout, const ArrayVector& arg) {
 //@>
 //!
 ArrayVector EpsFunction(int nargout, const ArrayVector& arg) {
-  
+  char CMACH = 'E';
+  Array A(Array::doubleConstructor(dlamch_(&CMACH)));
   ArrayVector retval;
-  return retval << Array::doubleConstructor(nextafter(1.,2.)-1.);
+  retval.push_back(A);
+  return retval;
 }
 
 //!

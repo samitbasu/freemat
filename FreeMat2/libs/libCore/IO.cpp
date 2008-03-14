@@ -32,7 +32,6 @@
 #include "Core.hpp"
 #include <QThread>
 #include <QImage>
-#include <QImageWriter>
 #include <QColor>
 #include <QFile>
 #include <QTextStream>
@@ -109,7 +108,7 @@ static int DoPlayBackCallback(void *, void *output,
   int framesToCalc;
   int finished = 0;
   int i;
-  if( (unsigned long) pb->framesToGo < framesPerBuffer )
+  if( pb->framesToGo < framesPerBuffer )
     {
       framesToCalc = pb->framesToGo;
       pb->framesToGo = 0;
@@ -172,7 +171,7 @@ static int DoRecordCallback(void *input, void *,
   int framesToCalc;
   int finished = 0;
   int i;
-  if( (unsigned long) pb->framesToGo < framesPerBuffer )
+  if( pb->framesToGo < framesPerBuffer )
     {
       framesToCalc = pb->framesToGo;
       pb->framesToGo = 0;
@@ -202,6 +201,7 @@ static int DoRecordCallback(void *input, void *,
 }
 
 static PaError err;
+static bool Initialized = false;
 static bool RunningStream = false;
 static PaStream *stream;
 static PlayBack *pb_obj;
@@ -460,11 +460,11 @@ ArrayVector WavRecordFunction(int nargout, const ArrayVector& argv) {
     else if (typestring == "INT32")
       datatype = FM_INT32;
     else if (typestring == "INT16")
-      datatype = FM_INT16;
+      datatype == FM_INT16;
     else if (typestring == "INT8")
-      datatype = FM_INT8;
+      datatype == FM_INT8;
     else if (typestring == "UINT8")
-      datatype = FM_UINT8;
+      datatype == FM_UINT8;
     else
       throw Exception("unrecognized data type - expecting one of: double, float, single, int32, int16, int8, uint8");
     argvCopy.pop_back();
@@ -483,7 +483,6 @@ ArrayVector WavRecordFunction(int nargout, const ArrayVector& argv) {
   if (rdatatype == FM_DOUBLE) rdatatype = FM_FLOAT;
   void *dp = Array::allocateArray(rdatatype,samples*channels);
   switch(rdatatype) {
-  default: throw Exception("Illegal data type argument for wavrecord");
   case FM_FLOAT:
     DoRecord(dp,samples,channels,sizeof(float),paFloat32,rate);
     retvec = Array(FM_FLOAT,Dimensions(samples,channels),dp);
@@ -664,84 +663,45 @@ static ArrayVector imreadHelperIndexed(QImage img) {
 }
 
 static ArrayVector imreadHelperRGB32(QImage img) {
-  if (img.allGray()) {
-	  uint8 *img_data_dp = (uint8*) 
-		Array::allocateArray(FM_UINT8,img.width()*img.height());
-	  int imgcnt = img.height()*img.width();
-	  for (int row=0;row<img.height();row++) {
-		QRgb *p = (QRgb*) img.scanLine(row);
-		for (int col=0;col<img.width();col++) {
-		  int ndx = row+col*img.height();
-		  img_data_dp[ndx] = qGray(p[col]);
-		}
-	  }
-	  return ArrayVector() << 
-		Array(FM_UINT8,Dimensions(img.height(),img.width()),img_data_dp)
-				   << Array::emptyConstructor() 
-				   << Array::emptyConstructor();
+  uint8 *img_data_dp = (uint8*) 
+    Array::allocateArray(FM_UINT8,img.width()*img.height()*3);
+  int imgcnt = img.height()*img.width();
+  for (int row=0;row<img.height();row++) {
+    QRgb *p = (QRgb*) img.scanLine(row);
+    for (int col=0;col<img.width();col++) {
+      int ndx = row+col*img.height();
+      img_data_dp[ndx] = qRed(p[col]);
+      img_data_dp[ndx+1*imgcnt] = qGreen(p[col]);
+      img_data_dp[ndx+2*imgcnt] = qBlue(p[col]);
+    }
   }
-  else {
-	  uint8 *img_data_dp = (uint8*) 
-		Array::allocateArray(FM_UINT8,img.width()*img.height()*3);
-	  int imgcnt = img.height()*img.width();
-	  for (int row=0;row<img.height();row++) {
-		QRgb *p = (QRgb*) img.scanLine(row);
-		for (int col=0;col<img.width();col++) {
-		  int ndx = row+col*img.height();
-		  img_data_dp[ndx] = qRed(p[col]);
-		  img_data_dp[ndx+1*imgcnt] = qGreen(p[col]);
-		  img_data_dp[ndx+2*imgcnt] = qBlue(p[col]);
-		}
-	  }
-	  return ArrayVector() << 
-		Array(FM_UINT8,Dimensions(img.height(),img.width(),3),img_data_dp)
-				   << Array::emptyConstructor() 
-				   << Array::emptyConstructor();
-  }
+  return ArrayVector() << 
+    Array(FM_UINT8,Dimensions(img.height(),img.width(),3),img_data_dp)
+		       << Array::emptyConstructor() 
+		       << Array::emptyConstructor();
 }
 
 static ArrayVector imreadHelperARGB32(QImage img) {
-   uint8 *img_alpha_dp = (uint8*) 
-     Array::allocateArray(FM_UINT8,img.width()*img.height());
-  if (img.allGray()) {
-	  uint8 *img_data_dp = (uint8*)
-		Array::allocateArray(FM_UINT8,img.width()*img.height());
-	  int imgcnt = img.height()*img.width();
-	  for (int row=0;row<img.height();row++) {
-		QRgb *p = (QRgb*) img.scanLine(row);
-		for (int col=0;col<img.width();col++) {
-		  int ndx = row+col*img.height();
-		  img_data_dp[ndx] = qGray(p[col]);
-		  img_alpha_dp[ndx] = qAlpha(p[col]);
-		}
-	  }
-	  return ArrayVector() << 
-		Array(FM_UINT8,Dimensions(img.height(),img.width()),img_data_dp)
-				   << Array::emptyConstructor() 
-				   << 
-		Array(FM_UINT8,Dimensions(img.height(),img.width()),img_alpha_dp);
+  uint8 *img_alpha_dp = (uint8*) 
+    Array::allocateArray(FM_UINT8,img.width()*img.height());
+  uint8 *img_data_dp = (uint8*) 
+    Array::allocateArray(FM_UINT8,img.width()*img.height()*3);
+  int imgcnt = img.height()*img.width();
+  for (int row=0;row<img.height();row++) {
+    QRgb *p = (QRgb*) img.scanLine(row);
+    for (int col=0;col<img.width();col++) {
+      int ndx = row+col*img.height();
+      img_data_dp[ndx] = qRed(p[col]);
+      img_data_dp[ndx+1*imgcnt] = qGreen(p[col]);
+      img_data_dp[ndx+2*imgcnt] = qBlue(p[col]);
+      img_alpha_dp[ndx] = qAlpha(p[col]);
+    }
   }
-  else
-  {
-	  uint8 *img_data_dp = (uint8*)
-		Array::allocateArray(FM_UINT8,img.width()*img.height()*3);
-	  int imgcnt = img.height()*img.width();
-	  for (int row=0;row<img.height();row++) {
-		QRgb *p = (QRgb*) img.scanLine(row);
-		for (int col=0;col<img.width();col++) {
-		  int ndx = row+col*img.height();
-		  img_data_dp[ndx] = qRed(p[col]);
-		  img_data_dp[ndx+1*imgcnt] = qGreen(p[col]);
-		  img_data_dp[ndx+2*imgcnt] = qBlue(p[col]);
-		  img_alpha_dp[ndx] = qAlpha(p[col]);
-		}
-	  }
-	  return ArrayVector() << 
-		Array(FM_UINT8,Dimensions(img.height(),img.width(),3),img_data_dp)
-				   << Array::emptyConstructor() 
-				   << 
-		Array(FM_UINT8,Dimensions(img.height(),img.width()),img_alpha_dp);
-  }
+  return ArrayVector() << 
+    Array(FM_UINT8,Dimensions(img.height(),img.width(),3),img_data_dp)
+		       << Array::emptyConstructor() 
+		       << 
+    Array(FM_UINT8,Dimensions(img.height(),img.width()),img_alpha_dp);
 }
 
 ArrayVector ImReadFunction(int nargout, const ArrayVector& arg, 
@@ -766,266 +726,6 @@ ArrayVector ImReadFunction(int nargout, const ArrayVector& arg,
   if (img.format() == QImage::Format_RGB32) return imreadHelperRGB32(img);
   if (img.format() == QImage::Format_ARGB32) return imreadHelperARGB32(img);
   throw Exception("unsupported image format - only 8 bit indexed and 24 bit RGB and 32 bit ARGB images are supported");
-  return ArrayVector();
-}
-
-//!
-//@Module IMWRITE Write Matrix to Image File
-//@@Section IO
-//@@Usage
-//Write the image data from the matrix into a given file.  Note that
-//FreeMat's support for @|imread| is not complete.  Only some of the
-//formats specified in the MATLAB API are implemented.  The syntax
-//for its use is
-//@[
-//  imwrite(filename, A)
-//  imwrite(filename, A, map)
-//  imwrite(filename, A, map, alpha)
-//@]
-//where @|filename| is the name of the file to write to.  The input
-//arrays @|A| contain the image data, @|map| contains the colormap information
-//(for indexed images), and @|alpha| contains the alphamap (transparency).
-//The returned values will depend on the type of the original image.  Generally
-//you can write images in the @|jpg,png,xpm,ppm| and some other formats.
-//!
-QImage imwriteHelperIndexed(Array A, Array ctable, Array trans) {
-  QImage img(A.columns(), A.rows(), QImage::Format_Indexed8);
-  uint8 *img_data_dp = (uint8*) A.getDataPointer();
-  uint8 *ctable_dp = (uint8*) ctable.getDataPointer();
-  uint8 *img_alpha_dp = (uint8*) trans.getDataPointer();
-
-  for (int row=0;row<img.height();row++) {
-    uchar *p = img.scanLine(row);
-    for (int col=0;col<img.width();col++) 
-      p[col] = img_data_dp[row+col*img.height()];
-  }
-  
-  if (ctable_dp) {
-	  QVector<QRgb> colorTable(ctable.getLength()/3);
-	  int numcol = colorTable.size();
-	  for (int i=0;i<numcol;i++)
-		colorTable[i] = qRgb(int(ctable_dp[i]),
-		                     int(ctable_dp[i+numcol]),
-		                     int(ctable_dp[i+2*numcol]));
-	  img.setColorTable(colorTable);
-  }
-  else {
-	  int numrow = 256;
-	  QVector<QRgb> colorTable(numrow);
-	  for (int i=0;i<numrow;i++)
-		colorTable[i] = qRgb(i, i, i);
-	  img.setColorTable(colorTable);
-  }
-  
-  if (img_alpha_dp) {
-	  QImage alpha(A.columns(), A.rows(), QImage::Format_Indexed8);
-	  for (int row=0;row<alpha.height();row++) {
-		uchar *p = alpha.scanLine(row);
-		for (int col=0;col<alpha.width();col++)
-		  p[col] = img_alpha_dp[row+col*img.height()];
-	  }
-	  img.setAlphaChannel(alpha);
-  }
-  return img;
-}
-
-QImage imwriteHelperRGB32(Array A) {
-  uint8 *img_data_dp = (uint8*) A.getDataPointer();
-  QImage img(A.columns(), A.rows(), QImage::Format_RGB32);
-  int imgcnt = img.height()*img.width();
-  for (int row=0;row<img.height();row++) {
-	QRgb *p = (QRgb*) img.scanLine(row);
-	for (int col=0;col<img.width();col++) {
-	  int ndx = row+col*img.height();
-	  p[col] = qRgb(img_data_dp[ndx], 
-	                img_data_dp[ndx+1*imgcnt], 
-	                img_data_dp[ndx+2*imgcnt]);
-	}
-  }
-  return img;
-}
-
-QImage imwriteHelperARGB32(Array A, Array trans) {
-  QImage img(A.columns(), A.rows(), QImage::Format_ARGB32);
-  uint8 *img_data_dp = (uint8*) A.getDataPointer();
-  uint8 *img_alpha_dp = (uint8*) trans.getDataPointer();
-  int imgcnt = img.height()*img.width();
-  for (int row=0;row<img.height();row++) {
-	QRgb *p = (QRgb*) img.scanLine(row);
-	for (int col=0;col<img.width();col++) {
-	  int ndx = row+col*img.height();
-	  p[col] = qRgba(img_data_dp[ndx], 
-	                 img_data_dp[ndx+1*imgcnt], 
-	                 img_data_dp[ndx+2*imgcnt], 
-	                 img_alpha_dp[ndx]);
-	}
-  }
-  return img;
-}
-
-Array convert2uint8(Array A) {
-  if (A.dataClass() ==  FM_UINT8) {
-    return A;
-  }
-  //convert other data types to uint8
-  uint8 *img_data_dp1 = (uint8*) 
-	Array::allocateArray(FM_UINT8,A.getLength());
-  
-  if (A.dataClass() ==  FM_LOGICAL) {
-    uint8 *img_data_dp = (uint8*) A.getDataPointer();
-    int scale = 255;
-    for (int i = 0; i< A.getLength(); i++)
-      if (img_data_dp[i])
-        img_data_dp1[i] = 255;
-      else
-        img_data_dp1[i] = 0;
-  }
-  else if (A.dataClass() ==  FM_INT8) {
-    int8 *img_data_dp = (int8*) A.getDataPointer();
-    for (int i = 0; i< A.getLength(); i++)
-      img_data_dp1[i] = uint8(img_data_dp[i]);
-  }
-  else if (A.dataClass() ==  FM_UINT16) {
-    uint16 *img_data_dp = (uint16*) A.getDataPointer();
-    for (int i = 0; i< A.getLength(); i++)
-      img_data_dp1[i] = uint8(img_data_dp[i]);
-  }
-  else if (A.dataClass() ==  FM_INT16) {
-    int16 *img_data_dp = (int16*) A.getDataPointer();
-    for (int i = 0; i< A.getLength(); i++)
-      img_data_dp1[i] = uint8(img_data_dp[i]);
-  }
-  else if (A.dataClass() ==  FM_UINT32) {
-    uint32 *img_data_dp = (uint32*) A.getDataPointer();
-    for (int i = 0; i< A.getLength(); i++)
-      img_data_dp1[i] = uint8(img_data_dp[i]);
-  }
-  else if (A.dataClass() ==  FM_INT32) {
-    int32 *img_data_dp = (int32*) A.getDataPointer();
-    for (int i = 0; i< A.getLength(); i++)
-      img_data_dp1[i] = uint8(img_data_dp[i]);
-  }
-  else if (A.dataClass() ==  FM_UINT64) {
-    uint64 *img_data_dp = (uint64*) A.getDataPointer();
-    for (int i = 0; i< A.getLength(); i++)
-      img_data_dp1[i] = uint8(img_data_dp[i]);
-  }
-  else if (A.dataClass() ==  FM_INT64) {
-    int64 *img_data_dp = (int64*) A.getDataPointer();
-    for (int i = 0; i< A.getLength(); i++)
-      img_data_dp1[i] = uint8(img_data_dp[i]);
-  }
-  else if (A.dataClass() ==  FM_FLOAT) {
-    float *img_data_dp = (float*) A.getDataPointer();
-    float scale = 255;
-    for (int i = 0; i< A.getLength(); i++)
-      img_data_dp1[i] = uint8(scale*img_data_dp[i]);
-  }
-  else if (A.dataClass() ==  FM_DOUBLE) {
-    double *img_data_dp = (double*) A.getDataPointer();
-    double scale = 255;
-    for (int i = 0; i< A.getLength(); i++)
-      img_data_dp1[i] = uint8(scale*img_data_dp[i]);
-  }
-  else
-    throw Exception("invalid data type");
-    
-  return Array(FM_UINT8,A.dimensions(),img_data_dp1);
-}  
-
-ArrayVector ImWriteFunction(int nargout, const ArrayVector& arg, 
-			   Interpreter* eval) {
-  PathSearcher psearch(eval->getTotalPath());
-  if (arg.size() < 2)
-    throw Exception("imwrite requires at least a filename and a matrix");
-  string filename(ArrayToString(arg[0]));
-  QString FileName = QString::fromStdString(filename);
-  QByteArray ImageFormat;
-  ImageFormat.append(QFileInfo(FileName).suffix());
-  // Construct the QImageWriter object
-  QImageWriter imgWriter(FileName,ImageFormat);
-  if (!imgWriter.canWrite()) {
-     throw Exception("unable to write image file " + filename);
-  }
-
-  Array A(arg[1]);
-  if (A.dimensions().getLength() == 2) { // choose QImage::Format_Indexed8
-    if (arg.size() == 2) { // 8-bit grayscale image
-        Array ctable(FM_UINT8, Dimensions(255,1),NULL);
-        Array trans(FM_UINT8, A.dimensions(),NULL);
-        QImage img = imwriteHelperIndexed(convert2uint8(A), ctable, trans);
-	    if (!imgWriter.write(QImage(img)))
-	       throw Exception("cannot create image file" + filename);
-    }
-    else if (arg.size() == 3) { // 8-bit indexed color image
-		Array ctable(arg[2]);
-		if (ctable.getLength() != 0 && ctable.dimensions().getColumns() != 3)
-			throw Exception("color map should be a 3 columns matrix");
-		Array trans(FM_UINT8,A.dimensions(),NULL);
-		QImage img = imwriteHelperIndexed(convert2uint8(A), convert2uint8(ctable), trans);
-		if (!imgWriter.write(img))
-			throw Exception("cannot create image file" + filename);
-	}
-	else if (arg.size() == 4) { // 8-bit indexed color image with alpha channel
-		Array ctable(arg[2]);
-		if (ctable.getLength() != 0 && ctable.dimensions().getColumns() != 3)
-			throw Exception("color map should be a 3 columns matrix");
-		Array trans(arg[3]);
-		eval->warningMessage("saving alpha/transparent channel will increase file size");
-		QImage img = imwriteHelperIndexed(convert2uint8(A), convert2uint8(ctable), convert2uint8(trans));
-		if (!imgWriter.write(img))
-		  throw Exception("cannot create image file" + filename);
-	}
-	else
-		throw Exception("invalide input number of arguments");
-  }
-  else if (A.dimensions().getLength() == 3) { // choose QImage::Format_RGB32 or Format_ARGB32
-    if (arg.size() == 2) {
-        QImage img = imwriteHelperRGB32(convert2uint8(A));
-	    if (!imgWriter.write(QImage(img)))
-	       throw Exception("cannot create image file" + filename);
-	}
-	else if (arg.size() == 3) {
-		Array trans(arg[2]);
-		if (A.rows() == trans.rows() && A.columns() == trans.columns() ) {
-		    // the third argument is alpha channel
-		    QImage img = imwriteHelperARGB32(convert2uint8(A), convert2uint8(trans));
-			if (!imgWriter.write(QImage(img)))
-			   throw Exception("cannot create image file" + filename);
-		}
-		else {
-			if (trans.getLength() != 0)
-		  		eval->warningMessage("ignore colormap argument");
-		    QImage img = imwriteHelperRGB32(convert2uint8(A));
-			if (!imgWriter.write(QImage(img)))
-			   throw Exception("cannot create image file" + filename);
-	    }
-	}
-	else if (arg.size() == 4) {
-		Array ctable(arg[2]);
-		if (ctable.getLength() != 0)
-	  		eval->warningMessage("ignore colormap argument");
-		Array trans(arg[3]);
-		if (A.rows() == trans.rows() && A.columns() == trans.columns() ) {
-		    // the third argument is alpha/transparent channel
-		    QImage img = imwriteHelperARGB32(convert2uint8(A), convert2uint8(trans));
-			if (!imgWriter.write(QImage(img)))
-			   throw Exception("cannot create image file" + filename);
-		}
-		else {
-			if (trans.getLength() != 0)
-		  		eval->warningMessage("ignore invalid transparent argument");
-		    QImage img = imwriteHelperRGB32(convert2uint8(A));
-			if (!imgWriter.write(QImage(img)))
-			   throw Exception("cannot create image file" + filename);
-	    }
-	}
-	else
-		throw Exception("invalide input number of arguments");
-  }
-  else
-    throw Exception("invalid matrix dimension");
-
   return ArrayVector();
 }
 
@@ -1377,7 +1077,7 @@ ArrayVector FcloseFunction(int nargout, const ArrayVector& arg) {
     fileHandles.deleteHandle(handle+1);
     delete fptr;
   }
-  return SingleArrayVector(Array::int32Constructor(retval));
+  return singleArrayVector(Array::int32Constructor(retval));
 }
 
 //!
@@ -1491,13 +1191,9 @@ ArrayVector FreadFunction(int nargout, const ArrayVector& arg) {
   // Next, we allocate space for the result
   void *qp = Malloc(elementCount*elementSize);
   // Read in the requested number of data points...
-  int g = fread(qp,elementSize,elementCount,fptr->fp);
-  if (g != elementCount) {
-    for (int i=0;i<dimCount;i++)
-      dp[i] = 1;
-    dp[0] = g;
-    elementCount = g;
-  }
+  size_t g = fread(qp,elementSize,elementCount,fptr->fp);
+  if (g != elementCount)
+    throw Exception("Insufficient data remaining in file to fill out requested size");
   if (ferror(fptr->fp)) 
     throw Exception(strerror(errno));
   if (fptr->swapflag)
@@ -1644,7 +1340,7 @@ ArrayVector FtellFunction(int nargout, const ArrayVector& arg) {
 //end of file, and somewhat counter-intuitively, the answer is @|false|.
 //We then attempt to read past the end of the file, which causes an
 //error.  An @|feof| test now returns the expected value of @|true|.
-//@<
+//@<1
 //fp = fopen('test.dat','rb');
 //x = fread(fp,[512,inf],'float');
 //feof(fp)
@@ -1958,7 +1654,7 @@ template <class T>
 Array Num2StrHelperReal(const T*dp, Dimensions Xdims, const char *formatspec) {
   int rows(Xdims.getRows());
   int cols(Xdims.getColumns());
-  StringVector row_string;
+  stringVector row_string;
   if (Xdims.getLength() == 2)
     Xdims.set(3,1);
   Dimensions Wdims(Xdims.getLength());
@@ -1971,9 +1667,7 @@ Array Num2StrHelperReal(const T*dp, Dimensions Xdims, const char *formatspec) {
 	sprintf(elbuffer,formatspec,dp[i+j*rows+offset]);
 	char elbuffer2[1024];
 	convertEscapeSequences(elbuffer2,elbuffer);
-	if (j > 0)
-	  colbuffer += " ";
-	colbuffer += string(elbuffer2);
+	colbuffer += string(elbuffer2) + " ";
       }
       row_string.push_back(colbuffer);
     }
@@ -1982,8 +1676,8 @@ Array Num2StrHelperReal(const T*dp, Dimensions Xdims, const char *formatspec) {
   }
   // Next we compute the length of the largest string
   int maxlen = 0;
-  for (int n=0;n<(int)row_string.size();n++)
-    if ((int)row_string[n].size() > maxlen)
+  for (int n=0;n<row_string.size();n++)
+    if (row_string[n].size() > maxlen)
       maxlen = row_string[n].size();
   // Next we allocate a character array large enough to
   // hold the string array.
@@ -1993,7 +1687,7 @@ Array Num2StrHelperReal(const T*dp, Dimensions Xdims, const char *formatspec) {
   for (int i=0;i<slices;i++)
     for (int j=0;j<rows;j++) {
       string line(row_string[j+i*rows]);
-      for (int k=0;k<(int)line.size();k++)
+      for (int k=0;k<line.size();k++)
 	sp[j+i*rows*maxlen+k*rows] = line[k];
     }
   Dimensions odims(Xdims);
@@ -2006,7 +1700,7 @@ template <class T>
 Array Num2StrHelperComplex(const T*dp, Dimensions Xdims, const char *formatspec) {
   int rows(Xdims.getRows());
   int cols(Xdims.getColumns());
-  StringVector row_string;
+  stringVector row_string;
   if (Xdims.getLength() == 2)
     Xdims.set(3,1);
   Dimensions Wdims(Xdims.getLength());
@@ -2019,14 +1713,12 @@ Array Num2StrHelperComplex(const T*dp, Dimensions Xdims, const char *formatspec)
 	char elbuffer2[1024];
 	sprintf(elbuffer,formatspec,dp[2*(i+j*rows+offset)]);
 	convertEscapeSequences(elbuffer2,elbuffer);
-	if (j > 0)
-	  colbuffer += " ";
-	colbuffer += string(elbuffer2);
+	colbuffer += string(elbuffer2) + " ";
 	sprintf(elbuffer,formatspec,dp[2*(i+j*rows+offset)+1]);
 	convertEscapeSequences(elbuffer2,elbuffer);
 	if (dp[2*(i+j*rows+offset)+1]>=0) 
 	  colbuffer += "+";
-	colbuffer += string(elbuffer2) + "i";
+	colbuffer += string(elbuffer2) + "i ";
       }
       row_string.push_back(colbuffer);
     }
@@ -2035,8 +1727,8 @@ Array Num2StrHelperComplex(const T*dp, Dimensions Xdims, const char *formatspec)
   }
   // Next we compute the length of the largest string
   int maxlen = 0;
-  for (int n=0;n<(int)row_string.size();n++)
-    if ((int)row_string[n].size() > maxlen)
+  for (int n=0;n<row_string.size();n++)
+    if (row_string[n].size() > maxlen)
       maxlen = row_string[n].size();
   // Next we allocate a character array large enough to
   // hold the string array.
@@ -2046,7 +1738,7 @@ Array Num2StrHelperComplex(const T*dp, Dimensions Xdims, const char *formatspec)
   for (int i=0;i<slices;i++)
     for (int j=0;j<rows;j++) {
       string line(row_string[j+i*rows]);
-      for (int k=0;k<(int)line.size();k++)
+      for (int k=0;k<line.size();k++)
 	sp[j+i*rows*maxlen+k*rows] = line[k];
     }
   Dimensions odims(Xdims);
@@ -2066,8 +1758,7 @@ ArrayVector Num2StrFunction(int nargout, const ArrayVector& arg) {
   if (X.isIntegerClass())
     sprintf(formatspec,"%%d");
   else
-//    sprintf(formatspec,"%%11.4g");
-    sprintf(formatspec,"%%g"); //without preceding space
+    sprintf(formatspec,"%%11.4g");
   if (arg.size() > 1) {
     Array format(arg[1]);
     if (format.isString())
@@ -2075,7 +1766,6 @@ ArrayVector Num2StrFunction(int nargout, const ArrayVector& arg) {
   }
   switch (X.dataClass()) 
     {
-    default: throw Exception("illegal type argument to num2str");
     case FM_UINT8:
       return ArrayVector() << Num2StrHelperReal((const uint8*) X.getDataPointer(),
 						X.dimensions(),formatspec);
@@ -2154,7 +1844,7 @@ ArrayVector SprintfFunction(int nargout, const ArrayVector& arg) {
   Array outString(Array::stringConstructor(buff));
   free(op);
   free(buff);
-  return SingleArrayVector(outString);
+  return singleArrayVector(outString);
 }
   
 //!
@@ -2171,19 +1861,6 @@ ArrayVector SprintfFunction(int nargout, const ArrayVector& arg) {
 //an error if there are not enough variables to satisfy the format
 //string.  Note that this @|printf| command is not vectorized!  Each
 //variable must be a scalar.
-//
-//It is important to point out that the @|printf| function does not
-//add a newline (or carriage return) to the output by default.  That
-//can lead to some confusing behavior if you do not know what to expect.
-//For example, the command @|printf('Hello')| does not appear to
-//produce any output.  In fact, it does produce the text, but it then
-//gets overwritten by the prompt.  To see the text, you need 
-//@|printf('Hello\n')|.  This seems odd, but allows you to assemble a
-//line using multiple @|printf| commands, including the @|'\n'| when
-//you are done with the line.  You can also use the @|'\r'| character
-//as an explicit carriage return (with no line feed).  This allows you
-//to write to the same line many times (to show a progress string, for
-//example).
 //
 //@@Format of the format string:
 //
@@ -2310,8 +1987,8 @@ ArrayVector FgetlineFunction(int nargout, const ArrayVector& arg) {
   char buffer[65535];
   fgets(buffer,sizeof(buffer),fptr->fp);
   if (feof(fptr->fp))
-    return SingleArrayVector(Array::emptyConstructor());
-  return SingleArrayVector(Array::stringConstructor(buffer));
+    return singleArrayVector(Array::emptyConstructor());
+  return singleArrayVector(Array::stringConstructor(buffer));
 }
 
 //!
@@ -2379,13 +2056,14 @@ ArrayVector SscanfFunction(int nargout, const ArrayVector& arg) {
   fprintf(fp,"%s",txt.c_str());
   rewind(fp);
   if (feof(fp))
-    return SingleArrayVector(Array::emptyConstructor());
+    return singleArrayVector(Array::emptyConstructor());
   string frmt = format.getContentsAsString();
   char *buff = strdup(frmt.c_str());
   // Search for the start of a format subspec
   char *dp = buff;
   char *np;
   char sv;
+  int nextArg = 2;
   bool shortarg;
   bool doublearg;
   // Scan the string
@@ -2535,13 +2213,14 @@ ArrayVector FscanfFunction(int nargout, const ArrayVector& arg) {
   if (!format.isString())
     throw Exception("fscanf format argument must be a string");
   if (feof(fptr->fp))
-    return SingleArrayVector(Array::emptyConstructor());
+    return singleArrayVector(Array::emptyConstructor());
   string frmt = format.getContentsAsString();
   char *buff = strdup(frmt.c_str());
   // Search for the start of a format subspec
   char *dp = buff;
   char *np;
   char sv;
+  int nextArg = 2;
   bool shortarg;
   bool doublearg;
   // Scan the string
@@ -2675,45 +2354,35 @@ ArrayVector FscanfFunction(int nargout, const ArrayVector& arg) {
 //@[
 //  fprintf(fp,format,a1,a2,...).
 //@]
-//or, 
-//@[
-//  fprintf(format,a1,a2,...).
-//@]
 //Here @|format| is the format string, which is a string that
 //controls the format of the output.  The values of the variables
 //@|ai| are substituted into the output as required.  It is
 //an error if there are not enough variables to satisfy the format
 //string.  Note that this @|fprintf| command is not vectorized!  Each
-//variable must be a scalar.  The value @|fp| is the file handle.  If @|fp| is omitted,
-//file handle @|1| is assumed, and the behavior of @|fprintf| is effectively equivalent to @|printf|. For
-//more details on the format string, see @|printf|.
+//variable must be a scalar.  The value @|fp| is the file handle.  For
+//more details on the format string, see @|printf|.  Note also 
+//that @|fprintf| to the file handle @|1| is effectively equivalent to @|printf|.
 //@@Examples
 //A number of examples are present in the Examples section of the @|printf| command.
 //!
  ArrayVector FprintfFunction(int nargout, const ArrayVector& arg, 
 			     Interpreter* eval) {
-  if (arg.size() == 0)
-    throw Exception("fprintf requires at least one (string) argument");
-  ArrayVector argCopy(arg);
-  int handle = 1;
-  if (arg.size() > 1) {
-    Array tmp(arg[0]);
-    if (tmp.isScalar()) {
-      handle = tmp.getContentsAsIntegerScalar();
-      argCopy.pop_front();
-    }
-    else {
-      handle=1;
-    }
+  if (arg.size() < 2)
+    throw Exception("fprintf requires at least two arguments, the file handle and theformat string");
+  Array tmp(arg[0]);
+  int handle = tmp.getContentsAsIntegerScalar();
+  if (handle == 1) {
+    ArrayVector argCopy(arg);
+    argCopy.pop_front();
+    return PrintfFunction(nargout,argCopy,eval);
   }
-  Array format(argCopy[0]);
+  FilePtr *fptr=(fileHandles.lookupHandle(handle+1));
+  Array format(arg[1]);
   if (!format.isString())
     throw Exception("fprintf format argument must be a string");
-  if (handle == 1)
-    return PrintfFunction(nargout,argCopy,eval);
-
-  FilePtr *fptr=(fileHandles.lookupHandle(handle+1));
-  char *op = xprintfFunction(nargout,argCopy);
+  ArrayVector argcopy(arg);
+  argcopy.pop_front();
+  char *op = xprintfFunction(nargout,argcopy);
   char *buff = (char*) malloc(strlen(op)+1);
   convertEscapeSequences(buff,op);
   fprintf(fptr->fp,"%s",buff);
@@ -2723,7 +2392,7 @@ ArrayVector FscanfFunction(int nargout, const ArrayVector& arg) {
 }
 
   
-ArrayVector SaveNativeFunction(string filename, StringVector names, Interpreter* eval) {
+ArrayVector SaveNativeFunction(string filename, rvstring names, Interpreter* eval) {
   File ofile(filename,"wb");
   Serialize output(&ofile);
   output.handshakeServer();
@@ -2750,7 +2419,7 @@ ArrayVector SaveNativeFunction(string filename, StringVector names, Interpreter*
   return ArrayVector();
 }
   
-ArrayVector SaveASCIIFunction(string filename, StringVector names, bool tabsMode,
+ArrayVector SaveASCIIFunction(string filename, rvstring names, bool tabsMode,
 			      bool doubleMode, Interpreter* eval) {
   FILE *fp = fopen(filename.c_str(),"w");
   if (!fp) throw Exception("unable to open file " + filename + " for writing.");
@@ -2934,17 +2603,17 @@ ArrayVector SaveFunction(int nargout, const ArrayVector& arg, Interpreter* eval)
 	((fname[len-1] == 'T') || (fname[len-1] == 't'))) 
       matMode = true;    
   }
-  StringVector names;
+  rvstring names;
   for (int i=1;i<argCopy.size();i++) {
     if (!arg[i].isString())
       throw Exception("unexpected non-string argument to save command");
     names << ArrayToString(argCopy[i]);
   }
   Context *cntxt = eval->getContext();
-  StringVector toSave;
+  rvstring toSave;
   if (regexpMode || (names.size() == 0)) {
-    StringVector allNames = cntxt->listAllVariables();
-    for (int i=0;i<(int)allNames.size();i++)
+    stringVector allNames = cntxt->listAllVariables();
+    for (int i=0;i<allNames.size();i++)
       if ((names.size() == 0) || contains(names,allNames[i],regexpMode))
 	toSave << allNames[i];
   } else 
@@ -3059,7 +2728,7 @@ int DecodeSpreadsheetColumn(QString tx) {
     txb[i] = txb[i] - 'A';
   int ret = 0;
   for (int i=0;i<txb.count();i++) 
-    ret += (int) (txb.at(i)*pow(26.0,txb.count()-1-i));
+    ret += (int) txb.at(i)*pow(26.0,txb.count()-1-i);
   return ret;
 }
 
@@ -3112,42 +2781,38 @@ ArrayVector DlmReadFunction(int nargout, const ArrayVector& arg) {
   QList<QList<double> > data_imag;
   QTextStream str(&ifile);
   while (!str.atEnd()) {
-    QString whole_line = str.readLine(0);
-    QStringList line_pieces(whole_line.split("\r"));
-    for (int i=0;i<line_pieces.size();i++) {
-      QString line = line_pieces[i];
-      QStringList elements;
-      if (no_delimiter) {
-	if (line.contains(QRegExp("[,;:]")))
-	  elements = line.split(QRegExp("[,;:]"));
-	else {
-	  line = line.simplified();
-	  elements = line.split(' ');
-	}
-      } else {
-	elements = line.split(QString::fromStdString(delimiter)[0]);
+    QString line = str.readLine(0);
+    QStringList elements;
+    if (no_delimiter) {
+      if (line.contains(QRegExp("[,;:]")))
+	elements = line.split(QRegExp("[,;:]"));
+      else {
+	line = line.simplified();
+	elements = line.split(' ');
       }
-      QList<double> row_data_real;
-      QList<double> row_data_imag;
-      row_count++;
-      for (int i=0;i<elements.size();i++) {
-	QString element(elements[i]);
-	element.replace(" ","");
-	if (element.contains('i') || element.contains('I') ||
-	    element.contains('j') || element.contains('J')) {
-	  double real, imag;
-	  ParseComplexValue(element,real,imag);
-	  row_data_real << real;
-	  row_data_imag << imag;
-	} else {
-	  row_data_real << element.toDouble();
-	  row_data_imag << 0;
-	}
-      }
-      col_count = qMax(col_count,elements.size());
-      data_real << row_data_real;
-      data_imag << row_data_imag;
+    } else {
+      elements = line.split(QString::fromStdString(delimiter)[0]);
     }
+    QList<double> row_data_real;
+    QList<double> row_data_imag;
+    row_count++;
+    for (int i=0;i<elements.size();i++) {
+      QString element(elements[i]);
+      element.replace(" ","");
+      if (element.contains('i') || element.contains('I') ||
+	  element.contains('j') || element.contains('J')) {
+	double real, imag;
+	ParseComplexValue(element,real,imag);
+	row_data_real << real;
+	row_data_imag << imag;
+      } else {
+	row_data_real << element.toDouble();
+	row_data_imag << 0;
+      }
+    }
+    col_count = qMax(col_count,elements.size());
+    data_real << row_data_real;
+    data_imag << row_data_imag;
   }
   int startrow = 0;
   int startcol = 0;
@@ -3248,12 +2913,12 @@ ArrayVector LoadASCIIFunction(int nargout, string filename, Interpreter* eval) {
 }
 
 ArrayVector LoadNativeFunction(int nargout, string filename,
-			       StringVector names, bool regexpmode, Interpreter* eval) {
+			       rvstring names, bool regexpmode, Interpreter* eval) {
   File ofile(filename,"rb");
   Serialize input(&ofile);
   input.handshakeClient();
   string arrayName = input.getString();
-  StringVector fieldnames;
+  rvstring fieldnames;
   ArrayVector fieldvalues;
   while (arrayName != "__eof") {
     Array toRead;
@@ -3423,7 +3088,7 @@ ArrayVector LoadFunction(int nargout, const ArrayVector& arg,
       }
     }
   }
-  StringVector names;
+  rvstring names;
   for (int i=1;i<argCopy.size();i++) {
     if (!arg[i].isString())
       throw Exception("unexpected non-string argument to load command");

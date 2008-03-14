@@ -29,10 +29,6 @@
 %@$"y=strtrim({'  space','enough ',' for ',''})","{'space','enough','for',''}","exact"
 %!
 
-
-% Copyright (c) 2002-2007 Samit Basu
-% Licensed under the GPL
-
 function y = strtrim(x)
   if (isa(x,'string'))
     y = strtrim_string(x);
@@ -50,11 +46,8 @@ function y = strtrim_string(x)
     error('strtrim expects string arguments or a cell array of strings');
   end
   ndx = find(~isspace(x(:)));
-  if (~isempty(ndx))
-    p = numel(x);
-    todel = [1:(min(ndx)-1),(max(ndx)+1):p];
-    y = x;
-    y(todel) = [];
-  else
-   y = [];
-  end
+  p = numel(x);
+  todel = [1:(min(ndx)-1),(max(ndx)+1):p];
+  y = x;
+  y(todel) = [];
+

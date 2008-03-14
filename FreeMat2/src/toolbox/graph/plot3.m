@@ -31,7 +31,6 @@
 %!
 
 % Copyright (c) 2002-2006 Samit Basu
-% Licensed under the GPL
 
 function hout = plot3(varargin)
   % Check for an axes handle
@@ -76,10 +75,6 @@ function hout = plot3(varargin)
       varargin(1:4) = [];
     end;
   end
-if ~ishold
-	view( handle, 3 );
-	grid;
-end
 axes(saveca);
 if (nargout > 0)
    hout = h;

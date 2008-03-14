@@ -111,12 +111,12 @@ ArrayVector ReshapeFunction(int nargout, const ArrayVector& arg) {
     t = arg[1];
     t.promoteType(FM_UINT32);
     dp = (int*) t.getDataPointer();
-    for (i=0;i<(int)t.getLength();i++)
+    for (i=0;i<t.getLength();i++)
       dims.set(i,dp[i]);
   }
   bool allPositive;
   allPositive = true;
-  for (i=0;i<(int)dims.getLength();i++)
+  for (i=0;i<dims.getLength();i++)
     allPositive &= (dims.get(i) >= 0);
   if (!allPositive)
     throw Exception("reshape function requires positive arguments");
@@ -272,12 +272,12 @@ ArrayVector ZerosFunction(int nargout, const ArrayVector& arg) {
       t = trim_arg[0];
       t.promoteType(FM_UINT32);
       dp = (int*) t.getDataPointer();
-      for (i=0;i<(int)t.getLength();i++)
+      for (i=0;i<t.getLength();i++)
 	dims.set(i,dp[i]);
     }
     bool allPositive;
     allPositive = true;
-    for (i=0;i<(int)dims.getLength();i++)
+    for (i=0;i<dims.getLength();i++)
       allPositive &= (dims.get(i) >= 0);
     if (!allPositive)
       throw Exception("Zeros function requires positive arguments");
@@ -355,12 +355,12 @@ ArrayVector CellFunction(int nargout, const ArrayVector& arg) {
       t = arg[0];
       t.promoteType(FM_UINT32);
       dp = (int*) t.getDataPointer();
-      for (i=0;i<(int)t.getLength();i++)
+      for (i=0;i<t.getLength();i++)
 	dims.set(i,dp[i]);
     }
     bool allPositive;
     allPositive = true;
-    for (i=0;i<(int)dims.getLength();i++)
+    for (i=0;i<dims.getLength();i++)
       allPositive &= (dims.get(i) >= 0);
     if (!allPositive)
       throw Exception("Zeros function requires positive arguments");
@@ -444,12 +444,12 @@ ArrayVector OnesFunction(int nargout, const ArrayVector& arg) {
       t = arg[0];
       t.promoteType(FM_UINT32);
       dp = (int*) t.getDataPointer();
-      for (i=0;i<(int)t.getLength();i++)
+      for (i=0;i<t.getLength();i++)
 	dims.set(i,dp[i]);
     }
     bool allPositive;
     allPositive = true;
-    for (i=0;i<(int)dims.getLength();i++)
+    for (i=0;i<dims.getLength();i++)
       allPositive &= (dims.get(i) >= 0);
     if (!allPositive)
       throw Exception("Ones function requires positive arguments");
@@ -602,16 +602,16 @@ ArrayVector StructFunction(int nargout, const ArrayVector& arg) {
   if (arg.size() == 1) {
     Array t(arg[0]);
     if (!t.isUserClass() && t.dataClass() == FM_STRUCT_ARRAY)
-      return SingleArrayVector(t);
+      return singleArrayVector(t);
     if (!t.isUserClass())
       throw Exception("can only convert objects (user-defined types) into structs");
-    t.setClassName(StringVector());
-    return SingleArrayVector(t);
+    t.setClassName(rvstring());
+    return singleArrayVector(t);
   }
   if (arg.size() % 2)
     throw Exception("struct function requires pairs of field names and values");
   int pairCount = arg.size() / 2;
-  StringVector names;
+  rvstring names;
   ArrayVector values;
   for (int i=0;i<pairCount;i++) values.push_back(Array());
   for (int i=0;i<pairCount*2;i+=2) {

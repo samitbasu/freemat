@@ -176,7 +176,7 @@ public:
     while ((m < len) && (data[n] == 0)) {
       m += (int) data[n+1];
       n += 2;
-      if ((m < len) && (n>((int)data[0]))) {
+      if ((m < len) && (n>data[0])) {
 	throw Exception("Invalid data string!\n");
       }
     }
@@ -1760,8 +1760,8 @@ void* SparseMatrixConst(int cols, ArrayMatrix m) {
   // is active
   MemBlock<int> colindxBlock(m.size());
   int *colindx = colindxBlock.Pointer();
-  int j;
-  for (j=0;j<((int)m.size());j++) {
+  unsigned int j;
+  for (j=0;j<m.size();j++) {
     blockindx[j] = 0;
     colindx[j] = 0;
   }
@@ -1770,7 +1770,7 @@ void* SparseMatrixConst(int cols, ArrayMatrix m) {
     // For the current column, we loop over all rows of m, and
     // concatenate their strings together.
     int outstringlength = 0;
-    for (j=0;j<((int)m.size());j++) {
+    for (j=0;j<m.size();j++) {
       T** src;
       src = (T**) m[j][blockindx[j]].getSparseDataPointer();
       // Get the string length
@@ -1782,7 +1782,7 @@ void* SparseMatrixConst(int cols, ArrayMatrix m) {
     // Loop over the rows again, copying them into the new string
     // buffer
     outstringlength = 0;
-    for (j=0;j<((int)m.size());j++) {
+    for (j=0;j<m.size();j++) {
       T** src;
       src = (T**) m[j][blockindx[j]].getSparseDataPointer();
       memcpy(dst[i]+outstringlength+1,src[colindx[j]]+1,
@@ -1790,9 +1790,9 @@ void* SparseMatrixConst(int cols, ArrayMatrix m) {
       outstringlength += (int) src[colindx[j]][0];
     }
     // Now we have to update the column pointers
-    for (j=0;j<((int)m.size());j++) {
+    for (j=0;j<m.size();j++) {
       colindx[j]++;
-      if (colindx[j] >= (int)(m[j][blockindx[j]].getDimensionLength(1))) {
+      if (colindx[j] >= m[j][blockindx[j]].getDimensionLength(1)) {
 	blockindx[j]++;
 	colindx[j] = 0;
       }
@@ -2035,12 +2035,12 @@ void* SetSparseVectorSubsetsReal(int &rows, int &cols, const T** A,
   int icount;
   icount = irows*icols;
   // check to see if a resize is necessary...
-  indexType maxindx = indx[0];
+  int maxindx = indx[0];
   for (int i=0;i<icount;i++)
     maxindx = (maxindx > indx[i]) ? maxindx : indx[i];
   // if maxindx is larger than rows*cols, we have to
   // vector resize
-  if (maxindx > (indexType)(rows*cols)) {
+  if (maxindx > rows*cols) {
     // To vector resize, we set rows = maxindx, cols = 1, but
     // we also adjust the row & column index of each IJVentry
     // first
@@ -2107,12 +2107,12 @@ void* SetSparseVectorSubsetsComplex(int &rows, int &cols, const T** A,
   int icount;
   icount = irows*icols;
   // check to see if a resize is necessary...
-  indexType maxindx = indx[0];
+  int maxindx = indx[0];
   for (int i=0;i<icount;i++)
     maxindx = (maxindx > indx[i]) ? maxindx : indx[i];
   // if maxindx is larger than rows*cols, we have to
   // vector resize
-  if (maxindx > (indexType)(rows*cols)) {
+  if (maxindx > rows*cols) {
     // To vector resize, we set rows = maxindx, cols = 1, but
     // we also adjust the row & column index of each IJVentry
     // first
@@ -2294,8 +2294,7 @@ void* SetSparseVectorSubsets(Class dclass, int &rows, int &cols,
 
 
 template <class T>
-void* GetSparseColumnSubsetAssist(int cols, const T** A, const indexType*cindx, 
-				  indexType icols) {
+void* GetSparseColumnSubsetAssist(int cols, const T** A, const indexType*cindx, int icols) {
   for (int i=0;i<icols;i++) 
     if ((cindx[i] < 1) || (cindx[i] > cols))
       throw Exception("out of range column index in sparse matrix expression of type A(:,n)");
@@ -2415,7 +2414,7 @@ void* GetSparseNDimSubsetsComplex(int rows, const T** A,
 
 
 bool CheckAllRowsReference(const indexType* rindx, int rows) {
-  for (int i=0;i<rows;i++)
+  for (unsigned int i=0;i<rows;i++)
     if (rindx[i] != (i+1)) return false;
   return true;
 }
@@ -4303,7 +4302,7 @@ ArrayVector SparseEigDecomposeNonsymmetricReal(double **ap, int rows, int cols,
       eigvals[2*i] = dr[i];
       eigvals[2*i+1] = di[i];
     }
-    double *eigvecs = NULL;
+    double *eigvecs;
     if (nargout > 1) {
       eigvecs = (double*) Malloc(nev*n*sizeof(double)*2);
       // if eigenvalue i is complex, then the corresponding eigenvector
@@ -4542,7 +4541,7 @@ ArrayVector SparseEigDecomposeNonsymmetricComplex(double **ap, int rows, int col
     eigvals[2*i] = d[2*i];
     eigvals[2*i+1] = d[2*i+1];
   }
-  double *eigvecs = NULL;
+  double *eigvecs;
   if (nargout > 1) {
     eigvecs = (double*) Malloc(nev*n*sizeof(double)*2);
     for (int i=0;i<min(nev,nconv);i++) {
@@ -4696,7 +4695,7 @@ ArrayVector SparseEigDecomposeNonsymmetricRealShifted(double **ap, int rows, int
       eigvals[2*i] = dr[i];
       eigvals[2*i+1] = di[i];
     }
-    double *eigvecs = NULL;
+    double *eigvecs;
     if (nargout > 1) {
       eigvecs = (double*) Malloc(nev*n*sizeof(double)*2);
       // if eigenvalue i is complex, then the corresponding eigenvector
@@ -4885,7 +4884,7 @@ ArrayVector SparseEigDecomposeNonsymmetricComplexShifted(double **ap, int rows, 
     eigvals[2*i] = d[2*i];
     eigvals[2*i+1] = d[2*i+1];
   }
-  double *eigvecs = NULL;
+  double *eigvecs;
   if (nargout > 1) {
     eigvecs = (double*) Malloc(nev*n*sizeof(double)*2);
     for (int i=0;i<min(nev,nconv);i++) {
@@ -5846,7 +5845,7 @@ void* SparseMatrixMaxColumnsReal(int rows, int cols, const T** A) {
   MemBlock<T> bufferBlock(3);
   T* buffer = &bufferBlock;
   for (int col=0;col<cols;col++) {
-    T maxval = 0;
+    T maxval;
     bool max_inited = false;
     RLEDecoder<T> Acmp(A[col], rows);
     Acmp.update();
@@ -6015,7 +6014,7 @@ void* SparseMatrixMinColumnsReal(int rows, int cols, const T** A) {
   MemBlock<T> bufferBlock(3);
   T* buffer = &bufferBlock;
   for (int col=0;col<cols;col++) {
-    T minval = 0;
+    T minval;
     bool min_inited = false;
     RLEDecoder<T> Acmp(A[col], rows);
     Acmp.update();

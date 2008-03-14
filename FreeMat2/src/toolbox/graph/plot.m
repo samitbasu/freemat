@@ -157,10 +157,6 @@
 %test_val = 1;
 %@}
 %!
-
-% Copyright (c) 2002-2007 Samit Basu
-% Licensed under the GPL
-
 function ohandle = plot(varargin)
    % Check for an axes handle
    if (nargin>=2)
@@ -234,40 +230,24 @@ function h = plot_single(Y,handle,lineprops)
    
 function h = plot_double(X,Y,handle,lineprops)
    h = [];
-   [X,Y]=matchmat(X,Y);
-   if (isvector(X)) X = X(:); end;
-   if (isvector(Y)) Y = Y(:); end;
+   if (isvector(X) & ~isvector(Y))
+      X = matchmat(Y,X);
+   elseif (~isvector(X) & isvector(Y))
+      Y = matchmat(X,Y);
+   end
+   if (isvector(X)), X = X(:); end;
+   if (isvector(Y)), Y = Y(:); end;
    for i=1:size(Y,2)
       h = [h,tplotvector(handle,X(:,i),Y(:,i),lineprops)];
    end
    
-function [a,b] = matchmat(a,b)
-   if (isvector(a) & ~isvector(b))
-      if (length(a)==size(b,1))
-         a = repmat(a(:),[1,size(b,2)]);
-         return
-      else
-         if (length(a) == size(b,2))
-            b=b';
-            a = repmat(a(:)',[size(b,2),1])';
-            return
-         else
-            error('plot(X,Y) dimensions do not match');
-         end
-      end
-   end
-      
-   if (~isvector(a) & isvector(b))
-      if (length(b) == size(a,1))
-         b = repmat(b(:),[1,size(a,2)]);
-      else
-         if (length(b) == size(a,2))
-            a=a';
-            b = repmat(b(:)',[size(a,2),1])';
-         else
-            error('plot(X,Y) where one argument is a vector requires the other argument to have a matching dimension');
-         end
-      end
+function x = matchmat(a,b)
+   if (length(b) == size(a,1))
+      x = repmat(b(:),[1,size(a,2)]);
+   elseif (length(b) == size(a,2))
+      x = repmat(b(:)',[size(a,1),1]);
+   else
+      error('plot(X,Y) where one argument is a vector requires the other argument to have a matching dimension');
    end
    
    

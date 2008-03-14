@@ -154,10 +154,6 @@ KeyManager* MainApp::GetKeyManager() {
   return m_keys;
 }
 
-ApplicationWindow* MainApp::getApplicationWindow() {
-  return m_win;
-}
-
 void MainApp::SetupDumbTerminalCase() {
 #ifdef Q_WS_X11
   GUIHack = true;
@@ -198,18 +194,9 @@ ArrayVector EditorFunction(int nargout, const ArrayVector& arg, Interpreter* eva
     edit = new FMEditor(eval);
     QObject::connect(eval,SIGNAL(RefreshBPLists()),edit,SLOT(RefreshBPLists()));
     QObject::connect(eval,SIGNAL(ShowActiveLine()),edit,SLOT(ShowActiveLine()));
-    ApplicationWindow *m_win = m_app->getApplicationWindow();
-    QObject::connect(m_win,SIGNAL(shutdown()),edit,SLOT(close()));
     // Because of the threading setup, we need the keymanager to relay commands
     // from the editor to the interpreter.  
     QObject::connect(edit,SIGNAL(EvaluateText(QString)),m_app->GetKeyManager(),SLOT(QueueMultiString(QString)));
-    //Allow Editor to see the Context and refresh the content at the right time
-    edit->setContext(m_app->GetKeyManager()->GetCompletionContext());
-    QObject::connect(m_app->GetKeyManager(),SIGNAL(UpdateVariables()), 
-	    edit,SLOT(refreshContext()));
-    //Ask to change current path when setting breakpoint
-    QObject::connect(eval, SIGNAL(IllegalLineOrCurrentPath(string, int)), edit,
-        SLOT(IllegalLineOrCurrentPath(string, int)));
   }
   edit->showNormal();
   edit->raise();
@@ -235,8 +222,6 @@ ArrayVector EditFunction(int nargout, const ArrayVector& arg, Interpreter* eval)
         SLOT(RefreshBPLists()));
     QObject::connect(eval, SIGNAL(ShowActiveLine()), edit,
         SLOT(ShowActiveLine()));
-    ApplicationWindow *m_win = m_app->getApplicationWindow();
-    QObject::connect(m_win,SIGNAL(shutdown()),edit,SLOT(close()));
     // Because of the threading setup, we need the keymanager to relay commands
     // from the editor to the interpreter.  
     QObject::connect(edit, SIGNAL(EvaluateText(QString)),
@@ -318,6 +303,8 @@ void MainApp::UpdateTermWidth(int w) {
 void MainApp::ExecuteLine(string txt) {
   m_eval->ExecuteLine(txt);
 }
+
+static bool NonGUIModeHack = false;
 
 class NonClosable : public QWidget {
 public:
@@ -584,6 +571,7 @@ ArrayVector ThreadNewFunction(int nargout, const ArrayVector& arg, Interpreter* 
 ArrayVector ThreadStartFunction(int nargout, const ArrayVector& arg, Interpreter* eval) {
   if (arg.size() < 3) throw Exception("threadstart requires at least three arguments (the thread id, the function to spawn, and the number of output arguments)");
   int32 handle = ArrayToInt32(arg[0]);
+  unsigned long timeout = ULONG_MAX;
   Interpreter* thread = m_threadHandles.lookupHandle(handle);
   if (!thread) throw Exception("invalid thread handle");
   string fnc = ArrayToString(arg[1]);
@@ -839,125 +827,6 @@ ArrayVector ClcFunction(int nargout, const ArrayVector& arg) {
   return ArrayVector();
 }
 
-// The database of samples.  There is one profile per function.
-//std::map<std::string, unsigned[1000] >  profileDB;
-typedef std::vector<unsigned> ProfileVector;
-typedef std::map<std::string, ProfileVector> ProfileDB;
-static ProfileDB m_profileDB;
-static bool m_profiler_active = false;
-static double m_profiler_ticks = 0;
-
-static void DumpProfileDB() {
-  double profiler_ticks = m_profiler_ticks;
-  std::cout << "Total ticks " << m_profiler_ticks << "\r\n";
-  for (ProfileDB::const_iterator i=m_profileDB.begin();i!=m_profileDB.end();i++) {
-    std::cout << "Module " << i->first << "\r\n";
-    const ProfileVector &p(i->second);
-    double ticks_this_module = 0;
-    for (int j=0;j<p.size();j++) {
-      if (p[j] > 0)
-	std::cout << "Line " << j << " " << p[j] << " counts " << p[j]/profiler_ticks*100.0 << "%\r\n";
-      ticks_this_module += p[j];
-    }
-    std::cout << "Total time in " << i->first << " " << ticks_this_module << " counts "  
-	      << ticks_this_module/profiler_ticks*100.0 << "%\r\n";
-  }
-}
-
-//!
-//@Module PROFILER Control Profiling
-//@@Section FREEMAT
-//@@Usage
-//The @|profile| function allows you to control the FreeMat profiler.
-//It has two modes of operation.  The first is to enable-disable
-//the profiler.  To turn on profiling:
-//@[
-//  profiler on
-//@]
-//to turn off profiling, use
-//@[
-//  profiler off
-//@]
-//Note that regardless of the state of the profiler, only functions
-//and scripts are profiled.  Commands entered on the command line
-//are not profiled.  To see information that has accumulated in a
-//profile, you use the variant of the command:
-//@[
-//  profiler list symbol1 symbol2 ...
-//@]
-//where @|symbol1|, @|symbol2| are the functions or scripts on which
-//profiling information is desired.  If you want to see current profile
-//status issue a @|profile| command with no arguments.
-//@[
-//   profiler
-//@]
-//!
-ArrayVector ProfilerFunction(int nargout, const ArrayVector& arg) {
-  if (arg.size() < 1) {
-    if (m_profiler_active)
-      return SingleArrayVector(Array::stringConstructor("on"));
-    else
-      return SingleArrayVector(Array::stringConstructor("off"));
-  } else {
-    if (!arg[0].isString())
-      throw Exception("second argument to profile function must be either on/off/list");
-    string txt = arg[0].getContentsAsStringUpper();
-    if (txt == "ON")
-      m_app->ControlProfiler(true);
-    else if (txt == "OFF")
-      m_app->ControlProfiler(false);
-    else if (txt == "DUMP")
-      DumpProfileDB();
-//     else if (txt == "LIST") {
-//       for (int i=1;i<arg.size();i++) {
-// 	string symbol = arg[i].getContentsAsString();
-// 	FuncPtr val;
-// 	if (!eval->lookupFunction(symbol,val))
-// 	  eval->warningMessage("Unable to resolve " + symbol + " to a function/script");
-// 	else if (val->type() != FM_M_FUNCTION)
-// 	  eval->warningMessage("Function " + symbol + "  is not an M function");
-// 	else {
-// 	  MFunctionDef *ptr = (MFunctionDef*)val;
-// 	  string filename = ptr->fileName;
-// 	  // Read the file
-// 	  QFile f(QString::fromStdString(filename));
-// 	  if (!f.open(QIODevice::ReadOnly)) {
-// 	    eval->warningMessage("Unable to read file " + filename);
-// 	    return ArrayVector();
-// 	  }	    
-// 	  QTextStream str(&f);
-// 	  QString filetext(str.readAll());
-// 	  QStringList lines(filetext.split("\n"));
-// 	  // Allocate the timing vector
-// 	  MemBlock<double> timeBlock(lines.size()+1);
-// 	  double *tblock = &timeBlock;
-// 	  MemBlock<double> pctBlock(lines.size()+1);
-// 	  double *pctblock = &pctBlock;
-// 	  double accum = 0;
-// 	  for (int k=0;k<lines.size()+1;k++)
-// 	    accum += tblock[k];
-// 	  accum++;
-// 	  for (int k=0;k<lines.size()+1;k++)
-// 	    pctblock[k] = tblock[k]/accum*100.0;
-// 	  // Look for all functions
-// 	  StringVector localfuncs = eval->getContext()->getCompletions(symbol);
-// 	  for (int k=0;k<localfuncs.size();k++)
-// 	    DumpFunctionProfileData(eval,localfuncs[k],tblock);
-// 	  eval->outputMessage("Profile information for " + symbol + " (" + filename + ")\n");
-// 	  eval->outputMessage(string("Line Ticks % Code\n"));
-// 	  for (int j=1;j<lines.size()+1;j++) {
-// 	    char msg[1024];
-// 	    sprintf(msg,"%03d %g %f %s\n",j,tblock[j-1],pctblock[j-1],
-// 		    lines[j-1].toStdString().c_str());
-// 	    eval->outputMessage(string(msg));
-// 	  }
-// 	}
-//       }
-//     }
-  }
-  return ArrayVector();
-}
-
 
 void LoadThreadFunctions(Context *context) {
   context->addSpecialFunction("threadid",ThreadIDFunction,0,1,NULL);
@@ -972,7 +841,6 @@ void LoadThreadFunctions(Context *context) {
   context->addGfxFunction("clc",ClcFunction,0,0,NULL);
   context->addGfxSpecialFunction("editor",EditorFunction,0,0,NULL);
   context->addGfxSpecialFunction("edit",EditFunction,-1,0,NULL);
-  context->addFunction("profiler",ProfilerFunction,-1,1,NULL);
 }
 
 void MainApp::EnableRepaint() {
@@ -1057,33 +925,6 @@ int MainApp::StartNewInterpreterThread() {
 
 static int m_mainID;
 
-//
-// This method is called to collect information on the IP counter for a 
-// thread (currently only the main thread can be sampled).  This should
-// suspend the thread it samples, or at worst, we should protect the
-// instruction pointer with a mutex when profiling is on.
-//
-void MainApp::CollectProfileSample() {
-  m_profiler_ticks++;
-  unsigned linenumber;
-  string ip_name = m_eval->sampleInstructionPointer(linenumber);
-  if ((linenumber != 0) || (ip_name != "CLI")) {
-    ProfileVector &p(m_profileDB[ip_name]);
-    if (p.size() < linenumber) p.resize(linenumber+1);
-    p[linenumber]++;
-  }
-  // Register this as a data sample
-  //  profileDB[ip_name][linenumber]++;
-}
-
-void MainApp::ControlProfiler(bool enableflag) {
-  if (enableflag)
-    profilerTimer->start();
-  else
-    profilerTimer->stop();
-  m_profiler_active = enableflag;
-}
-
 void MainApp::RegisterInterrupt() {
   // Get the main interpreter thread
   m_eval = m_threadHandles.lookupHandle(m_mainID);
@@ -1100,12 +941,6 @@ int MainApp::Run() {
   connect(m_keys,SIGNAL(ExecuteLine(string)),this,SLOT(ExecuteLine(string)));
   connect(m_keys,SIGNAL(UpdateTermWidth(int)),this,SLOT(UpdateTermWidth(int)));
   connect(m_keys,SIGNAL(RegisterInterrupt()),this,SLOT(RegisterInterrupt()));
-  // Set up the profile timer (but don't start it)
-  profilerTimer = new QTimer(this);
-  profilerTimer->setSingleShot(false);
-  // Start out with a sampling frequency of 1/100msec
-  profilerTimer->setInterval(10); 
-  connect(profilerTimer,SIGNAL(timeout()),this,SLOT(CollectProfileSample()));
   // Get a new thread
   GfxEnableRepaint();
   m_mainID = StartNewInterpreterThread();

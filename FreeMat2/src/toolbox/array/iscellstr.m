@@ -17,9 +17,6 @@
 %@>
 %!
 
-% Copyright (c) 2002-2006 Samit Basu
-% Licensed under the GPL
-
 function x = iscellstr(y)
   if (~iscell(y))
     x = logical(0);

@@ -42,7 +42,6 @@ public:
   void putBytes(const char* ptr, int count);
   void putShorts(const short* ptr, int count);
   void putInts(const int* ptr, int count);
-  void putI64s(const int64* ptr, int count);
   void putFloats(const float* ptr, int count);
   void putDoubles(const double* ptr, int count);
   // Send a scalar object
@@ -53,12 +52,11 @@ public:
   void putFloat(float t);
   void putDouble(double t);
   void putBool(bool t);
-  void putStringVector(StringVector t);
+  void putStringVector(stringVector t);
   // Receive a stream of base objects
   void getBytes(char* ptr, int count);
   void getShorts(short* ptr, int count);
   void getInts(int* ptr, int count);
-  void getI64s(int64* ptr, int count);
   void getFloats(float* ptr, int count);
   void getDoubles(double* ptr, int count);
   // Get a scalar object
@@ -69,14 +67,14 @@ public:
   float  getFloat();
   double getDouble();
   bool   getBool();
-  StringVector getStringVector();
+  stringVector getStringVector();
   // Put an array
   void putDataClass(Class cls, bool sparseflag, 
-		    bool isuserclass, StringVector className);
+		    bool isuserclass, rvstring className);
   void putArray(const Array& dat);
   void putDimensions(const Dimensions& dim);
   // Get an array
-  Class getDataClass(bool& sparseflag, StringVector& className);
+  Class getDataClass(bool& sparseflag, rvstring& className);
   void getArray(Array& dat);
   Dimensions getDimensions();
 };

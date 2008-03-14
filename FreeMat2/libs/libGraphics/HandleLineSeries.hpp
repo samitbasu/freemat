@@ -29,7 +29,7 @@ public:
   virtual void SetupDefaults();
   virtual void UpdateState();
   virtual void PaintMe(RenderEngine& gc);    
-  QVector<double> GetLimits();
+  std::vector<double> GetLimits();
 };
 
 #endif

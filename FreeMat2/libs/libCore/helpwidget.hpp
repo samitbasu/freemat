@@ -49,7 +49,6 @@ class HelpWidget : public QDockWidget {
   Q_OBJECT
 public:
   HelpWidget(QString url, HelpWindow *mgr);
-  QListWidget *m_flist;
 private:
   QTabWidget *m_browser;
 };
@@ -59,7 +58,6 @@ class HelpWindow : public QMainWindow {
 
 public:
   HelpWindow(QString baseURL);
-  void helpText(QString fulltext);
 private slots:
   void activateModule(QListWidgetItem* item);
   void activateModule(QTreeWidgetItem* item, int);

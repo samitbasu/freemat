@@ -26,8 +26,8 @@
 //  The list of parent objects must also be the same for all objects
 //  So, classes are stored as the following:
 //     class UserClass {
-//         StringVector fieldNames;
-//         StringVector parentClasses;
+//         stringVector fieldNames;
+//         stringVector parentClasses;
 //     }
 //  Also, somewhere we require a table that
 //  tracks the hierarchy relationship of the classes.
@@ -112,7 +112,7 @@
 UserClass::UserClass() {
 }
 
-UserClass::UserClass(StringVector fields, StringVector parents) :
+UserClass::UserClass(rvstring fields, rvstring parents) :
   fieldNames(fields), parentClasses(parents) {
 }
 
@@ -124,11 +124,11 @@ bool UserClass::matchClass(UserClass test) {
 UserClass::~UserClass() {
 }
 
-StringVector UserClass::getParentClasses() {
+rvstring UserClass::getParentClasses() {
   return parentClasses;
 }
 
-Array ClassAux(Array s, std::string classname, StringVector parentNames, 
+Array ClassAux(Array s, std::string classname, rvstring parentNames, 
 	       ArrayVector parents, Interpreter* eval) {
   UserClass newclass(s.fieldNames(),parentNames);
   if (s.dataClass() != FM_STRUCT_ARRAY) 
@@ -146,7 +146,7 @@ Array ClassAux(Array s, std::string classname, StringVector parentNames,
   // Set up the new structure array.  We do this by constructing a set of fieldnames
   // that includes fields for the parent classes...  To resolve - what happens
   // if the parent arrays are different sizes than the current class.
-  StringVector newfields(s.fieldNames());
+  rvstring newfields(s.fieldNames());
   // We should check for duplicates!
   for (int i=0;i<parentNames.size();i++)
     newfields.push_back(parentNames.at(i));
@@ -174,7 +174,7 @@ Array ClassAux(Array s, std::string classname, StringVector parentNames,
     }
   // return a new object with the specified properties
   Array retval(FM_STRUCT_ARRAY,s.dimensions(),dp,false,newfields);
-  StringVector cp;
+  rvstring cp;
   cp.push_back(classname);
   retval.setClassName(cp);
   return retval;
@@ -791,9 +791,9 @@ ArrayVector ClassFunction(int nargout, const ArrayVector& arg,
   if (arg.size() == 0)
     throw Exception("class function requires at least one argument");
   if (arg.size() == 1) 
-    return SingleArrayVector(ClassOneArgFunction(arg[0]));
+    return singleArrayVector(ClassOneArgFunction(arg[0]));
   ArrayVector parents;
-  StringVector parentNames;
+  rvstring parentNames;
   for (int i=2;i<arg.size();i++) {
     Array parent(arg[i]);
     if (!parent.isUserClass())
@@ -803,7 +803,7 @@ ArrayVector ClassFunction(int nargout, const ArrayVector& arg,
   }
   Array sval(arg[0]);
   Array classname(arg[1]);
-  return SingleArrayVector(ClassAux(sval,classname.getContentsAsString(),
+  return singleArrayVector(ClassAux(sval,classname.getContentsAsString(),
 				    parentNames,parents,eval));
 }
 
@@ -816,15 +816,15 @@ void LoadClassFunction(Context* context) {
   context->insertFunction(sfdef,false);
 }
 
-QVector<int> MarkUserClasses(ArrayVector t) {
-  QVector<int> set;
+std::vector<int> MarkUserClasses(ArrayVector t) {
+  std::vector<int> set;
   for (int j=0;j<t.size();j++) 
     if (t[j].isUserClass()) set.push_back(j);
   return set;
 }
  
 bool ClassSearchOverload(Interpreter* eval, ArrayVector t, 
-			 QVector<int> userset, FuncPtr &val,
+			 std::vector<int> userset, FuncPtr &val,
 			 std::string name) {
   bool overload = false;
   int k = 0;
@@ -834,7 +834,6 @@ bool ClassSearchOverload(Interpreter* eval, ArrayVector t,
   }
   if (!overload)
     throw Exception(std::string("Unable to find overloaded '") + name + "' for user defined classes");
-  return overload;
 }
 
 Array ClassMatrixConstructor(ArrayMatrix m, Interpreter* eval) {
@@ -845,7 +844,7 @@ Array ClassMatrixConstructor(ArrayMatrix m, Interpreter* eval) {
   for (int i=0;i<m.size();i++) {
     // check this row - make a list of columns that are
     // user classes
-    QVector<int> userset(MarkUserClasses(m[i]));
+    std::vector<int> userset(MarkUserClasses(m[i]));
     if (userset.empty()) {
       ArrayMatrix n;
       n.push_back(m[i]);
@@ -854,8 +853,6 @@ Array ClassMatrixConstructor(ArrayMatrix m, Interpreter* eval) {
       FuncPtr val;
       bool horzcat_overload = ClassSearchOverload(eval,m[i],userset,
 						  val,"horzcat");
-      if (!horzcat_overload)
-	throw Exception("no overloaded version of horzcat found");
       // scan through the list of user defined classes - look
       // for one that has "horzcat" overloaded
       val->updateCode(eval);
@@ -875,22 +872,20 @@ Array ClassMatrixConstructor(ArrayMatrix m, Interpreter* eval) {
   // At this point we have a vector arrays that have to vertically
   // concatenated.  There may not be any objects in it, so we have 
   // to rescan.
-  QVector<int> userset(MarkUserClasses(rows));
+  std::vector<int> userset(MarkUserClasses(rows));
   if (userset.empty()) {
     // OK - we don't have any user-defined classes anymore,
     // so we want to call matrix constructor, which needs
     // an ArrayMatrix instead of an ArrayVector.
     ArrayMatrix ref;
     for (int i=0;i<rows.size();i++)
-      ref.push_back(SingleArrayVector(rows[i]));
+      ref.push_back(singleArrayVector(rows[i]));
     return Array::matrixConstructor(ref);
   } else {
     // We do have a user defined class - look for a vertcat defined
     FuncPtr val;
     bool vertcat_overload = ClassSearchOverload(eval,rows,userset,
 						val,"vertcat");
-    if (!vertcat_overload)
-	throw Exception("no overloaded version of vertcat found");
     val->updateCode(eval);
     ArrayVector p;
     p = val->evaluateFunction(eval,rows,1);
@@ -925,11 +920,11 @@ bool ClassResolveFunction(Interpreter* eval, Array& args, std::string funcName, 
     return true;
   } 
   UserClass eclass(eval->lookupUserClass(args.className().back()));
-  StringVector parentClasses(eclass.getParentClasses());
+  rvstring parentClasses(eclass.getParentClasses());
   // Now check the parent classes
   for (int i=0;i<parentClasses.size();i++) {
     if (context->lookupFunction(ClassMangleName(parentClasses.at(i),funcName),val)) {
-      StringVector argClass(args.className());
+      rvstring argClass(args.className());
       argClass.push_back(parentClasses.at(i));
       args.setClassName(argClass);
       return true;
@@ -940,7 +935,7 @@ bool ClassResolveFunction(Interpreter* eval, Array& args, std::string funcName, 
 }
 
 void printClassNames(Array a) {
-  StringVector classname(a.className());
+  rvstring classname(a.className());
   for (int i=0;i<classname.size();i++)
     std::cout << "class " << classname.at(i) << "\r\n";
 }
@@ -986,7 +981,6 @@ Array ClassTrinaryOperator(Array a, Array b, Array c, std::string funcname,
       return ClassTriOp(a,b,c,val,eval);
     throw Exception("Unable to find a definition of " + funcname + " for arguments of class " + b.className().back());
   }
-  throw Exception("unexpected argument types for classtrinaryoperator");
 }
 
 Array ClassBinaryOperator(Array a, Array b, std::string funcname,
@@ -1001,7 +995,6 @@ Array ClassBinaryOperator(Array a, Array b, std::string funcname,
       return ClassBiOp(a,b,val,eval);
     throw Exception("Unable to find a definition of " + funcname + " for arguments of class " + b.className().back());
   }
-  throw Exception("unexpected argument types for classbinaryoperator");
 }
 
 // void AdjustColonCalls(ArrayVector& m, treeVector t) {
@@ -1010,21 +1003,21 @@ Array ClassBinaryOperator(Array a, Array b, std::string funcname,
 //       m[index] = Array::stringConstructor(":");
 // }
 
-Array IndexExpressionToStruct(Interpreter* eval, Tree *t, Array r) {
+Array IndexExpressionToStruct(Interpreter* eval, const tree &t, Array r) {
    ArrayVector struct_args;
    ArrayVector rv;
    Array rsave(r);
-   StringVector fNames;
+   rvstring fNames;
    fNames.push_back("type");
    fNames.push_back("subs");
-   for (int index=1;index < t->numChildren();index++) {
+   for (unsigned index=1;index < t.numchildren();index++) {
      if (!rv.empty()) 
        throw Exception("Cannot reindex an expression that returns multiple values.");
-     if (t->child(index)->is(TOK_PARENS)) {
+     if (t.child(index).is(TOK_PARENS)) {
        ArrayVector m;
-       Tree *s(t->child(index));
-       for (int p=0;p<s->numChildren();p++)
-	 eval->multiexpr(s->child(p),m);
+       const tree &s(t.child(index));
+       for (unsigned p=0;p<s.numchildren();p++)
+	 eval->multiexpr(s.child(p),m);
        eval->subsindex(m);
        //        m = eval->varExpressionList(t[index].children(),r);
        //        // Scan through the expressions... adjust for "colon" calls
@@ -1036,11 +1029,11 @@ Array IndexExpressionToStruct(Interpreter* eval, Tree *t, Array r) {
        struct_args.push_back(Array::stringConstructor("()"));
        struct_args.push_back(Array::cellConstructor(q));
      }
-     if (t->child(index)->is(TOK_BRACES)) {
+     if (t.child(index).is(TOK_BRACES)) {
        ArrayVector m;
-       Tree *s(t->child(index));
-       for (int p=0;p<s->numChildren();p++)
-	 eval->multiexpr(s->child(p),m);
+       const tree &s(t.child(index));
+       for (unsigned p=0;p<s.numchildren();p++)
+	 eval->multiexpr(s.child(p),m);
        eval->subsindex(m);
        //        m = eval->varExpressionList(t[index].children(),r);
        //        AdjustColonCalls(m,t[index].children());
@@ -1051,9 +1044,9 @@ Array IndexExpressionToStruct(Interpreter* eval, Tree *t, Array r) {
        struct_args.push_back(Array::stringConstructor("{}"));
        struct_args.push_back(Array::cellConstructor(q));
      }
-     if (t->child(index)->is('.')) {
+     if (t.child(index).is('.')) {
        struct_args.push_back(Array::stringConstructor("."));
-       struct_args.push_back(Array::stringConstructor(t->child(index)->first()->text()));
+       struct_args.push_back(Array::stringConstructor(t.child(index).first().text()));
      }
    }
    int cnt = struct_args.size()/2;
@@ -1063,7 +1056,7 @@ Array IndexExpressionToStruct(Interpreter* eval, Tree *t, Array r) {
    return Array(FM_STRUCT_ARRAY,Dimensions(cnt,1),cp,false,fNames);
 }
   
-ArrayVector ClassSubsrefCall(Interpreter* eval, Tree *t, Array r, FuncPtr val) {
+ArrayVector ClassSubsrefCall(Interpreter* eval, const tree &t, Array r, FuncPtr val) {
   ArrayVector p;
   p.push_back(r);
   p.push_back(IndexExpressionToStruct(eval,t, r));
@@ -1074,9 +1067,14 @@ ArrayVector ClassSubsrefCall(Interpreter* eval, Tree *t, Array r, FuncPtr val) {
 
 // What is special here...  Need to be able to do field indexing
 // 
-ArrayVector ClassRHSExpression(Array r, Tree *t, Interpreter* eval) {
+ArrayVector ClassRHSExpression(Array r, const tree &t, Interpreter* eval) {
+ tree s;
  Array q;
  Array n, p;
+ int peerCnt;
+ int dims;
+ bool isVar;
+ bool isFun;
  FuncPtr val;
     
  // Try and look up subsref, _unless_ we are already in a method 
@@ -1087,16 +1085,16 @@ ArrayVector ClassRHSExpression(Array r, Tree *t, Interpreter* eval) {
      return ClassSubsrefCall(eval,t,r,val);
    }
  ArrayVector rv;
- for (int index=1;index < t->numChildren();index++) {
+ for (unsigned index=1;index < t.numchildren();index++) {
    if (!rv.empty()) 
      throw Exception("Cannot reindex an expression that returns multiple values.");
-   if (t->child(index)->is(TOK_PARENS)) {
+   if (t.child(index).is(TOK_PARENS)) {
      ArrayVector m;
-     Tree *s(t->child(index));
-     for (int p=0;p<s->numChildren();p++)
-       eval->multiexpr(s->child(p),m);
+     const tree &s(t.child(index));
+     for (unsigned p=0;p<s.numchildren();p++)
+       eval->multiexpr(s.child(p),m);
      eval->subsindex(m);
-     //     m = eval->varExpressionList(t->child(index).children(),r);
+     //     m = eval->varExpressionList(t.child(index).children(),r);
      if (m.size() == 0) 
 	throw Exception("Expected indexing expression!");
      else if (m.size() == 1) {
@@ -1107,13 +1105,13 @@ ArrayVector ClassRHSExpression(Array r, Tree *t, Interpreter* eval) {
 	r = q;
      }
    }
-   if (t->child(index)->is(TOK_BRACES)) {
+   if (t.child(index).is(TOK_BRACES)) {
      ArrayVector m;
-     Tree *s(t->child(index));
-     for (int p=0;p<s->numChildren();p++)
-       eval->multiexpr(s->child(p),m);
+     const tree &s(t.child(index));
+     for (unsigned p=0;p<s.numchildren();p++)
+       eval->multiexpr(s.child(p),m);
      eval->subsindex(m);
-     //     m = eval->varExpressionList(t->child(index).children(),r);
+     //     m = eval->varExpressionList(t.child(index).children(),r);
      if (m.size() == 0) 
 	throw Exception("Expected indexing expression!");
      else if (m.size() == 1)
@@ -1128,23 +1126,23 @@ ArrayVector ClassRHSExpression(Array r, Tree *t, Interpreter* eval) {
 	r = Array::emptyConstructor();
      }
    }
-   if (t->child(index)->is('.')) {
+   if (t.child(index).is('.')) {
      // This is where the classname chain comes into being.
-     StringVector className(r.className());
+     rvstring className(r.className());
      for (int i=1;i<className.size();i++) {
 	rv = r.getFieldAsList(className.at(i));
 	r = rv[0];
      }
-     rv = r.getFieldAsList(t->child(index)->first()->text());
+     rv = r.getFieldAsList(t.child(index).first().text());
      if (rv.size() <= 1) {
 	r = rv[0];
 	rv = ArrayVector();
      }
    }
-   if (t->child(index)->is(TOK_DYN)) {
+   if (t.child(index).is(TOK_DYN)) {
      string field;
      try {
-	Array fname(eval->expression(t->child(index)->first()));
+	Array fname(eval->expression(t.child(index).first()));
 	field = fname.getContentsAsString();
      } catch (Exception &e) {
 	throw Exception("dynamic field reference to structure requires a string argument");
@@ -1161,7 +1159,7 @@ ArrayVector ClassRHSExpression(Array r, Tree *t, Interpreter* eval) {
  return rv;
 }
 
-void ClassAssignExpression(ArrayReference dst, Tree *t, const Array& value, Interpreter* eval) {
+void ClassAssignExpression(ArrayReference dst, const tree &t, const Array& value, Interpreter* eval) {
   FuncPtr val;
   if (!ClassResolveFunction(eval,*dst,"subsasgn",val))
     throw Exception("The method 'subsasgn' is not defined for objects of class " + 

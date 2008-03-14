@@ -12,52 +12,51 @@ class Parser {
   unsigned lastpos;
   string lasterr;
   void serror(string);
-  bool match(byte t);
-  void consume();
-  const Token& expect(byte t);
-  const Token& next();
-  bool matchNumber();
-  void flushSeperators();
+  bool Match(byte t);
+  void Consume();
+  const Token& Expect(byte t);
+  const Token& Next();
+  unsigned Precedence(const Token&);
+  bool MatchNumber();
 private:
-  Tree* transposeFixup(Tree* base);
-  Tree* forStatement();
-  Tree* functionDefinition();
-  Tree* forIndexExpression();
-  Tree* singletonStatement();
-  Tree* dBStepOrTraceStatement();
-  Tree* whileStatement();
-  Tree* ifStatement();
-  Tree* switchStatement();
-  Tree* tryStatement();
-  Tree* expression();
-  Tree* statement();
-  Tree* declarationStatement();
-  Tree* statementSeperator();
-  Tree* identifier();
-  Tree* assignmentStatement();
-  Tree* variableDereference(bool blankRefOK = true);
-  Tree* multiFunctionCall();
-  Tree* matDef(byte basetok, byte closebracket);
-  Tree* matrixDefinition();
-  Tree* rowVectorDefinition();
-  Tree* specialFunctionCall();
-  Tree* keyword();
-  Tree* exp(unsigned p);
-  Tree* primaryExpression();
-  Tree* anonymousFunction();
-  Tree* statementList();
+  tree TransposeFixup(tree base);
+  tree ForStatement();
+  tree FunctionDefinition();
+  tree ForIndexExpression();
+  tree SingletonStatement();
+  tree DBStepOrTraceStatement();
+  tree WhileStatement();
+  tree IfStatement();
+  tree SwitchStatement();
+  tree TryStatement();
+  tree Expression();
+  tree Statement();
+  tree DeclarationStatement();
+  tree StatementSeperator();
+  tree Identifier();
+  tree AssignmentStatement();
+  tree VariableDereference(bool blankRefOK = true);
+  tree MultiFunctionCall();
+  tree MatDef(byte basetok, byte closebracket);
+  tree MatrixDefinition();
+  tree RowVectorDefinition();
+  tree SpecialFunctionCall();
+  tree Keyword();
+  tree Exp(unsigned p);
+  tree PrimaryExpression();
+  tree AnonymousFunction();
 public:
   Parser(Scanner& lex);
-  CodeBlock process();
-  CodeBlock processStatementList();
-  string lastErr() {return lasterr;}
-  unsigned lastPos() {return lastpos;}
-  void dump(); 
+  tree Process(); 
+  string LastErr() {return lasterr;}
+  unsigned LastPos() {return lastpos;}
+  tree StatementList();
+  void Dump(); 
 
-  friend CodeBlock ParseExpressionString(string);
+  friend tree ParseExpressionString(string);
 };
 
-CodeBlock ParseString(string arg);
-CodeBlock ParseExpressionString(string arg);
+tree ParseString(string arg);
+tree ParseExpressionString(string arg);
 
 #endif

@@ -40,7 +40,7 @@ class ApplicationWindow : public QMainWindow {
   QAction *aboutAct, *manualAct, *aboutQt, *editorAct;
   QAction *pathAct, *filetoolAct, *historyAct, *cleanHistoryAct;
   QAction *pauseAct, *continueAct, *stopAct, *clearAct;
-  QAction *dbStepAct, *dbTraceAct, *checkUpdates, *workAct;
+  QAction *dbStepAct, *dbTraceAct, *checkUpdates;
   ToolDock *m_tool;
   QHttp *m_http;
   QBuffer m_buffer;
@@ -65,7 +65,6 @@ signals:
   void startHelp();
   void startEditor();
   void startPathTool();
-  void shutdown();
 public slots:
   void writeSettings();
 private slots:
@@ -82,7 +81,6 @@ private slots:
   void manual();
   void tclose();
   void filetool();
-  void workspacetool();
   void history();
   void cleanhistory();
   void init();

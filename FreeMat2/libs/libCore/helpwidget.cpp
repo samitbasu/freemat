@@ -49,7 +49,7 @@ void HelpSearcher::updateSearch() {
   QDir dir(m_basepath);
   dir.setNameFilters(QStringList() << "*.html");
   QFileInfoList list = dir.entryInfoList();
-  for (int i=0;i<list.size();i++) {
+  for (unsigned i=0;i<list.size();i++) {
     QFileInfo fileInfo = list.at(i);
     QFile f(fileInfo.absoluteFilePath());
     if (f.open(QIODevice::ReadOnly)) {
@@ -84,27 +84,14 @@ void HelpWindow::activateModule(QTreeWidgetItem* item, int) {
   tb->setSource(QUrl::fromLocalFile(m_initial+"/"+item->text(1)+"_"+module+".html"));
 }
 
-void HelpWindow::helpText(QString fulltext) {
-  QList<QListWidgetItem *> items = m_helpwidget->m_flist->findItems(fulltext.toLower(),Qt::MatchStartsWith);
-  if (items.isEmpty()) {
-    QMessageBox::warning(this, "helpwin", 
-                   "Cannot find help document for '" + fulltext + "'\n",
-                   QMessageBox::Ok,QMessageBox::NoButton,QMessageBox::NoButton);    
-    return;
-  }
-  QListWidgetItem* item = items.at(0);
-  QString name_and_section(item->text());
-  QRegExp modname_pattern("^\\s*(\\b\\w+\\b)\\s*\\((\\b\\w+\\b)\\)");
-  if (modname_pattern.indexIn(name_and_section) < 0)
-    return;
-  tb->setSource(QUrl::fromLocalFile(m_initial+"/"+modname_pattern.cap(2) + "_" + modname_pattern.cap(1)+".html"));
-}
-
 HelpWidget::HelpWidget(QString url, HelpWindow *mgr) {
   setObjectName("helpwidget");
   m_browser = new QTabWidget(this);
   setWidget(m_browser);
-  m_flist = new QListWidget;
+  QWidget *m_listdoc = new QWidget;
+  QVBoxLayout *layout = new QVBoxLayout;
+  
+  QListWidget *m_flist = new QListWidget;
   // Populate the list widget
   QFile *file = new QFile(url + "/modules.txt");
   if (!file->open(QFile::ReadOnly | QIODevice::Text))
@@ -140,14 +127,13 @@ HelpWidget::HelpWidget(QString url, HelpWindow *mgr) {
     QMessageBox::warning(this,"Cannot Find Section Index","The file sectable.txt is missing from the directory "+url+" where I think help files should be.  The Index widget will not function properly.",QMessageBox::Ok,QMessageBox::NoButton,QMessageBox::NoButton);
   else {
     QTextStream t(file);
-    QTreeWidgetItem *prev = NULL;
+    QTreeWidgetItem *prev;
     while (!t.atEnd()) {
       QString line(t.readLine());
       if (reg.indexIn(line) < 0)
 	prev = new QTreeWidgetItem(m_tindex,QStringList() << line);
-      else {
+      else
 	new QTreeWidgetItem(prev,QStringList() << reg.cap(2) << reg.cap(1));
-      }
     }
   }
   delete file;

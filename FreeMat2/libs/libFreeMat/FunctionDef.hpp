@@ -91,7 +91,7 @@ public:
    * Should have "varargin" as the last entry for variable argument
    * functions.
    */
-  StringVector arguments;
+  stringVector arguments;
   /**
    * The constructor.
    */
@@ -152,15 +152,15 @@ public:
 class AnonymousFunctionDef : public FunctionDef {
   VariableTable workspace;
 public:
-  CodeBlock code;
+  tree code;
   AnonymousFunctionDef();
   ~AnonymousFunctionDef();
   virtual const FunctionType type() {return FM_ANONYMOUS_FUNCTION;}
-  void printMe(Interpreter*) {}
+  void printMe(Interpreter* io) {}
   virtual int inputArgCount();
   virtual int outputArgCount();
   virtual ArrayVector evaluateFunction(Interpreter *, ArrayVector&, int);
-  void initialize(Tree *t, Interpreter *);
+  void initialize(const tree &t, Interpreter *);
 };
 
 /**
@@ -170,7 +170,7 @@ public:
  * When the updateCode() member function is called, the contents of
  * the file are parsed (if necessary), and the resulting AST code tree
  * is stored.  The number of input and output arguments are computed
- * based on the contents of the returnVals and arguments StringVectors.
+ * based on the contents of the returnVals and arguments stringVectors.
  */
 class MFunctionDef : public FunctionDef {
 public:
@@ -181,12 +181,12 @@ public:
    * returnVals contains two entries: "a", and "b".  For variable
    * return functions, the last entry should be "varargout".
    */
-  StringVector returnVals;
+  stringVector returnVals;
   /**
    * The AST for the code that defines the function (only the body of the
    * function is contained in this AST, not the function declaration itself).
    */
-  CodeBlock code;
+  tree code;
   /**
    * Flag to indicate if the function has been compiled.
    */
@@ -209,12 +209,12 @@ public:
   /**
    * The help text.
    */
-  StringVector helpText;
+  stringVector helpText;
   /**
    * The variable access list - used as a hinting mechanism to try and
    * resolve scope rules for nested functions.
    */
-  StringVector variablesAccessed;
+  stringVector variablesAccessed;
   /**
    * The workspace for this function - used for capturing variables
    * when functions are used out of scope.
@@ -382,11 +382,11 @@ public:
   /**
    * The types of each argument
    */
-  StringVector types;
+  stringVector types;
   /**
    * The guard expressions associated with each argument
    */
-  CodeList sizeCheckExpressions;
+  treeVector sizeCheckExpressions;
   /**
    * The return type of the function
    */
@@ -395,9 +395,9 @@ public:
    * Default constructor
    */
   ImportedFunctionDef(GenericFuncPointer address_arg,
-		      StringVector types_arg,
-		      StringVector arguments_arg,
-		      CodeList sizeChecks,
+		      stringVector types_arg,
+		      stringVector arguments_arg,
+		      treeVector sizeChecks,
 		      std::string retType_arg);
   /**
    * Default destructor

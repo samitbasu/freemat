@@ -31,7 +31,7 @@ void ComplexSplit(const Array &x, Array &real, Array &imag) {
     const float *dp = (const float *) x.getDataPointer();
     float *rp = (float *) real.getReadWriteDataPointer();
     float *ip = (float *) imag.getReadWriteDataPointer();
-    for (int i=0;i<x.getLength();i++) {
+    for (unsigned i=0;i<x.getLength();i++) {
       rp[i] = dp[2*i];
       ip[i] = dp[2*i+1];
     }      
@@ -41,7 +41,7 @@ void ComplexSplit(const Array &x, Array &real, Array &imag) {
     const double *dp = (const double *) x.getDataPointer();
     double *rp = (double *) real.getReadWriteDataPointer();
     double *ip = (double *) imag.getReadWriteDataPointer();
-    for (int i=0;i<x.getLength();i++) {
+    for (unsigned i=0;i<x.getLength();i++) {
       rp[i] = dp[2*i];
       ip[i] = dp[2*i+1];
     }      
@@ -50,7 +50,6 @@ void ComplexSplit(const Array &x, Array &real, Array &imag) {
 
 uint32 ElementSize(Class cls) {
   switch (cls) {
-  default: throw Exception("illegal type as argument to elementsize");
   case FM_LOGICAL:
     return sizeof(logical);
   case FM_UINT8:
@@ -81,7 +80,6 @@ uint32 ElementSize(Class cls) {
 
 MatTypes ToMatType(Class x) {
   switch (x) {
-  default: throw Exception("unhandled type as argument to tomattype");
   case FM_INT8:
     return miINT8;
   case FM_UINT8:
@@ -145,12 +143,10 @@ MatIO::mxArrayTypes GetArrayType(Class x) {
   case FM_STRING:
     return MatIO::mxCHAR_CLASS;
   }  
-  throw Exception("unhandled type in GetArrayType");
 }
 
 Class ToFreeMatClass(MatTypes x) {
   switch (x) {
-  default: throw Exception("unhandled type as argument to tofreematclass");
   case miINT8:
     return FM_INT8;
   case miUINT8:
@@ -276,7 +272,7 @@ Array MatIO::getSparseArray(Dimensions dm, bool complexFlag) {
   uint32 *jr = &jrBlock;
   int outptr = 0;
   for (int i=0;i<dm.get(1);i++)
-    for (uint32 j=jc_data[i];j<jc_data[i+1];j++)
+    for (int j=jc_data[i];j<jc_data[i+1];j++)
       jr[outptr++] = (i+1);
   if (!complexFlag)
     return Array(outType,dm,
@@ -321,7 +317,6 @@ Array MatIO::getNumericArray(mxArrayTypes arrayType, Dimensions dm, bool complex
   // Depending on the type of arrayType, we may need to adjust
   // the types of the data vectors;
   switch (arrayType) {
-  default: throw Exception("unhandled type in getnumericarray");
   case mxINT8_CLASS:
     pr.promoteType(FM_INT8);
     pi.promoteType(FM_INT8);
@@ -397,7 +392,7 @@ Array MatIO::getClassArray(Dimensions dm) {
   Array className(getDataElement());
   if (className.dataClass() != FM_INT8)
     throw Exception("Corrupted MAT file - invalid class name");
-  StringVector classname;
+  rvstring classname;
   classname.push_back(ArrayToString(className));
   Array fieldNameLength(getDataElement());
   fieldNameLength.promoteType(FM_INT32);
@@ -408,7 +403,7 @@ Array MatIO::getClassArray(Dimensions dm) {
   int fieldNamesLen = fieldNames.getLength();
   int fieldNameCount = fieldNamesLen / fieldNameLen;
   const int8 *dp = (const int8*) fieldNames.getDataPointer();
-  StringVector names;
+  rvstring names;
   for (int i=0;i<fieldNameCount;i++) {
     for (int j=0;j<fieldNameLen;j++)
       buffer[j] = dp[i*fieldNameLen+j];
@@ -436,7 +431,7 @@ Array MatIO::getStructArray(Dimensions dm) {
   int fieldNamesLen = fieldNames.getLength();
   int fieldNameCount = fieldNamesLen / fieldNameLen;
   const int8 *dp = (const int8*) fieldNames.getDataPointer();
-  StringVector names;
+  rvstring names;
   for (int i=0;i<fieldNameCount;i++) {
     for (int j=0;j<fieldNameLen;j++)
       buffer[j] = dp[i*fieldNameLen+j];
@@ -656,11 +651,11 @@ void MatIO::Align64Bit() {
 
 void MatIO::putStructArray(const Array &x) {
   // Calculate the maximum field name length
-  StringVector fnames(x.fieldNames()); // FIXME - should we truncate to 32 byte fieldnames?
+  rvstring fnames(x.fieldNames()); // FIXME - should we truncate to 32 byte fieldnames?
   int fieldNameCount = fnames.size();
-  int maxlen = 0;
+  size_t maxlen = 0;
   for (int i=0;i<fieldNameCount;i++)
-    maxlen = max(maxlen,(int)fnames.at(i).size());
+    maxlen = max(maxlen,fnames.at(i).size());
   // Write it as an int32 
   Array fieldNameLength(Array::int32Constructor(maxlen));
   putDataElement(fieldNameLength);
@@ -668,7 +663,7 @@ void MatIO::putStructArray(const Array &x) {
   Array fieldNameText(FM_INT8,Dimensions(1,fieldNameCount*maxlen));
   int8* dp = (int8*) fieldNameText.getReadWriteDataPointer();
   for (int i=0;i<fieldNameCount;i++)
-    for (int j=0;j<(int)fnames.at(i).size();j++)
+    for (int j=0;j<fnames.at(i).size();j++)
       dp[i*maxlen+j] = fnames.at(i)[j];
   putDataElement(fieldNameText);
   int num = x.getLength();
@@ -682,7 +677,7 @@ void MatIO::putClassArray(const Array &x) {
   string className = x.className().back();
   Array classNameArray(FM_INT8,Dimensions(1,className.size()));
   int8* dp = (int8*) classNameArray.getDataPointer();
-  for (int i=0;i<(int)className.size();i++)
+  for (int i=0;i<className.size();i++)
     dp[i] = className[i];
   putDataElement(classNameArray);
   putStructArray(x);
@@ -703,7 +698,7 @@ void MatIO::putCellArray(const Array &x) {
 }
 
 void MatIO::putArrayCompressed(const Array &x, string name) {
-  int spos, fpos;
+  size_t spos, fpos;
   // Set the write count to zero
   m_writecount = 0;
   m_phantomWriteMode = false;
@@ -812,6 +807,7 @@ Array MatIO::getArray(bool &atEof, string &name, bool &match, bool &isGlobal) {
   } 
   if (DataType != miMATRIX) 
     throw Exception("Unexpected data tag when looking for an array");
+  uint32 fp(ftell(m_fp));
   Array aFlags(getDataElement());
   if ((aFlags.dataClass() != FM_UINT32) || (aFlags.getLength() != 2))
     throw Exception("Corrupted MAT file - array flags");
@@ -909,8 +905,8 @@ MatIO::~MatIO() {
 }
 
 ArrayVector MatLoadFunction(int nargout, string filename, 
-			    StringVector varnames, bool regexpmode, Interpreter *eval) {
-  StringVector fieldnames;
+			    rvstring varnames, bool regexpmode, Interpreter *eval) {
+  rvstring fieldnames;
   ArrayVector fieldvalues;
   MatIO m(filename,MatIO::readMode);
   m.getHeader();
@@ -940,7 +936,7 @@ ArrayVector MatLoadFunction(int nargout, string filename,
       Array::structConstructor(fieldnames,fieldvalues);
 }
 
-ArrayVector MatSaveFunction(string filename, StringVector names, 
+ArrayVector MatSaveFunction(string filename, rvstring names, 
 			    Interpreter *eval) {
   MatIO m(filename,MatIO::writeMode);
   Context *cntxt = eval->getContext();

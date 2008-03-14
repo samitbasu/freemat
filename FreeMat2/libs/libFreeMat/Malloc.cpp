@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+static int memoryBalance = 0;
 
 void* Malloc(int count) {
   void* ptr;

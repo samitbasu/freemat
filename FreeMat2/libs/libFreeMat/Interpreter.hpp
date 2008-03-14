@@ -60,7 +60,6 @@ public:
 
 class Interpreter;
 class UserClass;
-class JIT;
 
 typedef Array (*BinaryFunc)(Array, Array, Interpreter*);
 typedef Array (*UnaryFunc)(Array, Interpreter*);
@@ -120,17 +119,9 @@ class Interpreter : public QThread {
    */
   bool autostop;
   /**
-   * in try block flag
-   */
-  bool intryblock;
-  /**
    * jit control flag
    */
   bool jitcontrol;
-  /**
-   * jit instance for this interpreter
-   */
-  JIT *m_jit;
   /**
    * When this flag is active, autostop does nothing.
    */
@@ -142,11 +133,11 @@ class Interpreter : public QThread {
   /**
    * The command buffer
    */
-  StringVector cmd_buffer;
+  vector<string> cmd_buffer;
   /**
    * A buffer of return values from graphics calls
    */
-  QVector<ArrayVector> gfx_buffer;
+  vector<ArrayVector> gfx_buffer;
   /**
    * A flag to indicate that the gfx call failed
    */
@@ -174,11 +165,11 @@ class Interpreter : public QThread {
    * For technical reasons, the interpreter stores a mirror of the call stack
    * in this member.
    */
-  QVector<stackentry> cstack;
+  vector<stackentry> cstack;
   /**
    * A list of breakpoints
    */
-  QVector<stackentry> bpStack;
+  vector<stackentry> bpStack;
   /**
    * True if the interpreter is in single-step mode
    */
@@ -261,10 +252,6 @@ class Interpreter : public QThread {
    */
   bool m_captureState;
   /**
-   * The profile state
-   */
-  bool m_profile;
-  /**
    * The quiet level
    */
   int m_quietlevel;
@@ -319,11 +306,6 @@ public:
   inline void setCaptureState(bool t) {m_captureState = t;}
   inline string getCaptureString() {return m_capture;}
   /**
-   * Manipulate the profile state
-   */
-  inline void setProfileState(bool t) {m_profile = t;}
-  inline bool profileState() {return m_profile;}
-  /**
    * Get the result of the thread function evaluation
    */
   inline ArrayVector getThreadFuncReturn() {return m_threadFuncRets;}
@@ -353,15 +335,6 @@ public:
    */
   string getMFileName();
   string getInstructionPointerFileName();
-  inline string sampleInstructionPointer(unsigned &context) const {
-    if (!InCLI) {
-      context = ip_context & 0x0000FFFF; 
-      return ip_funcname;
-    } else {
-      context = 0;
-      return "CLI";
-    }
-  }
   /**
    * The Base Path is the one that contains .m files in the current app bundle
    */
@@ -493,23 +466,19 @@ public:
   /**
    * Step the given number of lines
    */
-  void dbstepStatement(Tree* t);
-  void dbtraceStatement(Tree* t);
+  void dbstepStatement(const tree &t);
+  void dbtraceStatement(const tree &t);
   /**
    * Set the autostop flag - this flag determines what happens when
    * an exception occurs
    */
   inline bool AutoStop() {return autostop;}
-  inline void setAutoStop(bool a) {autostop = a;}
+  inline void AutoStop(bool a) {autostop = a;}
   /**
    * Set the JITControl flag
    */
   inline bool JITControl() {return jitcontrol;}
-  inline void setJITControl(bool a) {jitcontrol = a;}
-  /**
-   * Get the JIT pointer
-   */
-  JIT* JITPointer();
+  inline void JITControl(bool a) {jitcontrol = a;}
   /**
    * Set the print limit (number of element printed prior to truncation).
    */
@@ -566,7 +535,7 @@ public:
    * lasterr string is also set to the contents of the exception.
    *
    */
-  void block(Tree *t);
+  void block(const tree &t);
   /**
    * Start a command line interface.  Statements are retrieved
    * from the console, and executed sequentially until a "return"
@@ -617,10 +586,6 @@ signals:
   /**
    * Show the current active line
    */
-  void IllegalLineOrCurrentPath(string name, int line);
-  /**
-   * Inform the editor of illegal line or file not on current path
-   */
   void ShowActiveLine();
   /**
    * Enable repainting
@@ -646,19 +611,19 @@ private:
    * Collect information about keyword usage and the relevant 
    * expressions from a function call
    */
-  void collectKeywords(Tree *q, ArrayVector &keyvals,
-		       TreeList &keyexpr, StringVector &keywords);
+  void collectKeywords(const tree &q, ArrayVector &keyvals,
+		       treeVector &keyexpr, stringVector &keywords);
   /**
    * Sort keywords into a proper call order.
    */
-  int* sortKeywords(ArrayVector &m, StringVector &keywords,
-		    StringVector arguments, ArrayVector keyvals);
+  int* sortKeywords(ArrayVector &m, stringVector &keywords,
+		    stringVector arguments, ArrayVector keyvals);
   /**
    * For values passed by reference, update the caller's variables.
    */
-  void handlePassByReference(Tree *q, StringVector arguments,
-			     ArrayVector m,StringVector keywords,
-			     TreeList keyexpr, int* argTypeMap);
+  void handlePassByReference(const tree &q, stringVector arguments,
+			     ArrayVector m,stringVector keywords,
+			     treeVector keyexpr, int* argTypeMap);
   /**
    * Create a variable in the correct scope, and return a reference to it
    */
@@ -666,19 +631,19 @@ private:
   /**
    * Perform a binary operator with the given name
    */
-  Array DoBinaryOperator(Tree *t, BinaryFunc fnc, string fname);
+  Array DoBinaryOperator(const tree &t, BinaryFunc fnc, string fname);
   /**
    * Perform a unary operator with the given name
    */
-  Array DoUnaryOperator(Tree *t, UnaryFunc fnc, string fname);
+  Array DoUnaryOperator(const tree &t, UnaryFunc fnc, string fname);
   /**
    * Handle the construction of a function pointer
    */
-  Array FunctionPointer(Tree *args);
+  Array FunctionPointer(const tree &args);
   /**
    * Dispatch a function pointer
    */
-  ArrayVector FunctionPointerDispatch(Array r, Tree *args, int narg_out);
+  ArrayVector FunctionPointerDispatch(Array r, const tree &args, int narg_out);
   /**
    * Set the context of the interpreter.  This is an integer that indicates
    * where in the source file we are.
@@ -699,7 +664,7 @@ private:
    *   |   rowDef
    *   rowDef
    */
-  Array matrixDefinition(Tree *t);
+  Array matrixDefinition(const tree &t);
   /**
    * Convert a cell defintion of the form: {expr1,expr2;expr3;expr4} into
    * a vector of row definitions.  The first row is the vector {expr1,expr2}, and
@@ -711,18 +676,18 @@ private:
    *   |   rowDef
    *   rowDef
    */
-  Array cellDefinition(Tree *t);
+  Array cellDefinition(const tree &t);
   /**
    * Evaluate the expression pointed to by the AST t into a variable.
    */
-  Array expression(Tree *t);
+  Array expression(const tree &t);
 
-  ArrayVector handleReindexing(Tree *t, const ArrayVector &p);
+  ArrayVector handleReindexing(const tree &t, const ArrayVector &p);
   
   /**
    * Evaluate the expression into a variable-array
    */
-  void multiexpr(Tree *t, ArrayVector& m, int lhsCount = 1);
+  void multiexpr(const tree &t, ArrayVector& m, int lhsCount = 1);
 
   /**
    * Evaluate a unit colon expression.  The AST input should look like:
@@ -734,7 +699,7 @@ private:
    * [expr1,expr1+1,expr1+2,...,expr1+n], where n is the largest 
    * integer such that expr1+n <= expr2.
    */
-  Array unitColon(Tree *t);
+  Array unitColon(const tree &t);
   /**
    * Evaluate a double colon expression.  The AST input should look like:
    *   :
@@ -746,7 +711,7 @@ private:
    * vector [expr1,expr1+expr2,expr1+2*expr2,...,expr1+n*expr2], where
    * n is the largest integer such that expr1+n*expr2 <= expr3.
    */
-  Array doubleColon(Tree *t);
+  Array doubleColon(const tree &t);
   /**
    * Decode references to ":" inside variable dereferences.
    */
@@ -754,7 +719,7 @@ private:
   /**
    * Handle statements that are simply expressions
    */
-  void expressionStatement(Tree *t, bool printIt);
+  void expressionStatement(const tree &t, bool printIt);
   /**
    * The RHS expression is used to represent an rvalue in an
    * assignment statement (or an implicit assignment such as 
@@ -782,15 +747,15 @@ private:
    *      either a variable or function.  
    *    - 
    */
-  ArrayVector rhsExpression(Tree *t, int lhsCount = 1);
+  ArrayVector rhsExpression(const tree &t, int lhsCount = 1);
 
-  void assign(ArrayReference r, Tree *s, Array &data);
+  void assign(ArrayReference r, const tree &s, Array &data);
 
-  void multiassign(ArrayReference r, Tree *s, ArrayVector& m);
+  void multiassign(ArrayReference r, const tree &s, ArrayVector& m);
 
-  void deref(Array &r, Tree *s);
+  void deref(Array &r, const tree &s);
 
-  Array rhs(Tree *t);
+  Array rhs(const tree &t);
   /**
    * Look up an identifier as a potential function name, using a
    * rescan if the identifier is not found on the first pass.
@@ -800,13 +765,13 @@ private:
   /**
    * Special case the single assignment statement 'A = B' for speed.
    */
-  void assignment(Tree *var, bool printIt, Array &b);
+  void assignment(const tree &var, bool printIt, Array &b);
   /**
    * Try to figure out how many outputs there should be to a multifunction
    * call.  In particular, logic is used to figure out what to do about
    * undefined variables.
    */
-  int countLeftHandSides(Tree *t);
+  int countLeftHandSides(const tree &t);
   /**
    * Evaluate a function and return the results of the function as
    * an ArrayVector.  For scripts, the body of the function is
@@ -826,7 +791,7 @@ private:
    *    - if too many arguments are passed to the function.
    *    - too many outputs are requested from the function.
    */
-  void functionExpression(Tree *t, int narg_out, bool outputOptional, ArrayVector &output);
+  void functionExpression(const tree &t, int narg_out, bool outputOptional, ArrayVector &output);
   /**
    * A multifunction call is an expression of the sort
    * [expr1,expr2,...,exprn] = func(args).  The AST is
@@ -847,7 +812,7 @@ private:
    * Throws an exception if the AST is malformed (i.e., the '[]' is
    * missing, or there are multiple rows in the left hand side.).
    */
-  void multiFunctionCall(Tree *t, bool printIt);
+  void multiFunctionCall(const tree &t, bool printIt);
   /**
    * A special function call is an expression of the form
    * >> func arg1 arg2 arg3
@@ -856,7 +821,7 @@ private:
    *       |
    *       fname->arg
    */
-  void specialFunctionCall(Tree *t, bool printIt);
+  void specialFunctionCall(const tree &t, bool printIt);
   /**
    * Handles an if statement, corresponding to an if, a number
    * of elseif blocks and an optional else statement.  The AST looks
@@ -868,7 +833,7 @@ private:
    * where each of the elseIf blocks are tested sequentially until
    * one of them succeeds.
    */
-  void ifStatement(Tree *t);
+  void ifStatement(const tree &t);
   /**
    * Handle a switch statement.  The switch statement tests
    * an expression against a number of case blocks.  If a 
@@ -888,7 +853,7 @@ private:
    * Throws an Exception if the switch expression is not
    * either a scalar or a string.
    */
-  void switchStatement(Tree *t);
+  void switchStatement(const tree &t);
   /**
    * Implements the for control statement.  The AST looks like
    *     ident->codeBlock
@@ -899,21 +864,21 @@ private:
    * on each of the values in the expression.  For each such
    * assignment, the code in the codeBlock is executed.
    */
-  void forStatement(Tree *t);
+  void forStatement(const tree &t);
   /**
    * Implements the while control statement.  The AST looks like
    *     expr->codeBlock
    * The test expression is evaluated until it fails, and for each
    * successful expression, the codeBlock is executed.
    */
-  void whileStatement(Tree *t);
+  void whileStatement(const tree &t);
   /**
    * Implements the try statement.  The AST looks like
    *     block->catchBlock
    * The code in block is executed.  If an exception occurs, then
    * the code in catchBlock is executed.
    */
-  void tryStatement(Tree *t);
+  void tryStatement(const tree &t);
   /**
    * Implements the global statement (really a global declaration).
    * The AST looks like:
@@ -925,7 +890,7 @@ private:
    * Each identifier is added to the global variable list of
    * the current context.
    */
-  void globalStatement(Tree *t);
+  void globalStatement(const tree &t);
   /**
    * Implements the persistent statement (really a persistent declaration).
    * The AST looks like:
@@ -937,7 +902,7 @@ private:
    * Each identifier is added to the persistent variable list of
    * the current context.
    */
-  void persistentStatement(Tree *t);
+  void persistentStatement(const tree &t);
   /**
    * This somewhat strange test is used by the switch statement.
    * If x is a scalar, and we are a scalar, this is an equality
@@ -955,7 +920,7 @@ private:
    * the test is returned.  Throws an exception if the AST is
    * malformed.
    */
-  bool testCaseStatement(Tree *t, Array x);
+  bool testCaseStatement(const tree &t, Array x);
   /**
    * Execute the statement described by the AST - the printIt flag
    * determines if the result of the statement should be printed to
@@ -1018,8 +983,8 @@ private:
    * the special variable "ans".
    * Throws an Exception if the statement type is not recognized.
    */
-  void processBreakpoints(Tree *t);
-  void statementType(Tree *t, bool printIt);
+  void processBreakpoints(const tree &t);
+  void statementType(const tree &t, bool printIt);
   /**
    * The statement method simply screens out the need for the
    * printIt flag.  It also retrieves the statement context
@@ -1038,12 +1003,12 @@ private:
    * The context data is supplied by the parse (indicates the
    * line number and filename if necessary).
    */
-  void statement(Tree *t);
+  void statement(const tree &t);
   /**
    * Handles the logistics of shortcut evaluation
    */
-  Array ShortCutOr(Tree *t);
-  Array ShortCutAnd(Tree *t);
+  Array ShortCutOr(const tree &t);
+  Array ShortCutAnd(const tree &t);
   /**
    * Display an array - added so user classes divert to "display" function
    */
@@ -1085,8 +1050,8 @@ private:
    */
   void procFileMex(string fname, string fullname, bool tempfunc);
 
-  friend Array IndexExpressionToStruct(Interpreter*, Tree*, Array);
-  friend ArrayVector ClassRHSExpression(Array, Tree*, Interpreter*);
+  friend Array IndexExpressionToStruct(Interpreter*, const tree&, Array);
+  friend ArrayVector ClassRHSExpression(Array, const tree&, Interpreter*);
   friend ArrayVector PCodeFunction(int, const ArrayVector&, Interpreter*);
   friend class MFunctionDef;
   friend class ImportedFunctionDef;

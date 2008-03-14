@@ -115,13 +115,13 @@ void z_sqr(double real, double imag, double *re, double *im) {
   *im = 2.0*real*imag;
 }
 
-bool contains(StringVector& list, std::string s, bool regexpmode) {
+bool contains(rvstring& list, std::string s, bool regexpmode) {
   QRegExp t;
   for (int i=0;i<list.size();i++) {
     if (regexpmode) {
       t = QRegExp(QString::fromStdString(list[i]));
       if (t.exactMatch(QString::fromStdString(s)) &&
-	  (t.matchedLength() == (int) s.size())) return true;
+	  t.matchedLength() == s.size()) return true;
     } else {
       if (list[i] == s) return true;
     }

@@ -65,6 +65,7 @@ string ComplexNumericCellEntry(const T* data, Dimensions dims, string name,
 }
 
 string SummarizeArrayCellEntry(Array dp)  {
+  char msgBuffer[MSGBUFLEN];
   if (dp.isEmpty()) 
     return ("[]");
   else {
@@ -118,7 +119,6 @@ string SummarizeArrayCellEntry(Array dp)  {
 				     "complex","[%lg+%lgi]",dp.sparse());
     }
   }
-  return string("?");
 }
  
 template <class T>
@@ -165,7 +165,7 @@ int GetNominalWidthUnsignedInteger(const T*array, int count) {
  
 template <class T>
 void ComputeScaleFactor(const T* array, int count, ArrayFormatInfo& format) {
-  T max_amplitude = 0;
+  T max_amplitude;
   if (count == 0) return;
   if (format.expformat) return;
   bool finiteElementFound = false;
@@ -193,7 +193,6 @@ void ComputeScaleFactor(const T* array, int count, ArrayFormatInfo& format) {
 
 ArrayFormatInfo ComputeArrayFormatInfo(const void *dp, int length, Class aclass) {
   switch (aclass) {
-  default: throw Exception("unexpected class for ComputeArrayFormatInfo");    
   case FM_INT8:    
     return ArrayFormatInfo(GetNominalWidthSignedInteger((const int8*)dp,length));
   case FM_UINT8:   
@@ -317,17 +316,17 @@ void emitComplex(Interpreter* io, T real, T imag, const ArrayFormatInfo &format)
   int width = format.width/2;
   if ((real != 0) || (imag != 0)) {
     if (format.expformat)
-      io->outputMessage("%*.*e",width,format.decimals,real);
+      io->outputMessage("%*.*e",width,format.decimals,real/format.scalefact);
     else
       io->outputMessage("%*.*f",width,format.decimals,real/format.scalefact);
     if (imag < 0) {
       if (format.expformat)
-	io->outputMessage(" -%*.*ei",width-1,format.decimals,-imag);
+	io->outputMessage(" -%*.*ei",width-1,format.decimals,-imag/format.scalefact);
       else
 	io->outputMessage(" -%*.*fi",width-1,format.decimals,-imag/format.scalefact);
     } else {
       if (format.expformat)
-	io->outputMessage(" +%*.*ei",width-1,format.decimals,imag);
+	io->outputMessage(" +%*.*ei",width-1,format.decimals,imag/format.scalefact);
       else
 	io->outputMessage(" +%*.*fi",width-1,format.decimals,imag/format.scalefact);
     }
@@ -338,7 +337,6 @@ void emitComplex(Interpreter* io, T real, T imag, const ArrayFormatInfo &format)
 void emitFormattedElement(Interpreter* io, const void *dp, 
 			  const ArrayFormatInfo &format, int num, Class dcls) {
   switch (dcls) {
-  default: throw Exception("unexpected class for emitFormattedElement");
   case FM_INT8:   
     emitSignedInteger(io,((const int8*) dp)[num],format);
     return;
@@ -547,8 +545,6 @@ string ArrayToPrintableString(const Array& a) {
     return string("");
   const void *dp = a.getDataPointer();
   switch (a.dataClass()) {
-  default:
-    return string("?");
   case FM_INT8: {
     const int8 *ap;
     ap = (const int8*) dp;

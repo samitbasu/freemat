@@ -78,7 +78,6 @@ KeyManager::KeyManager()  {
     history.push_back("");
   for (int i=0;i<historyList.size();i++) 
     history.push_back(historyList[i].toStdString());
-  history.push_back(std::string("% ") + QDateTime::currentDateTime().toString().toStdString());
 }
 
 Context* KeyManager::GetCompletionContext() {
@@ -95,7 +94,6 @@ int KeyManager::getTerminalWidth() {
 
 void KeyManager::ClearHistory() {
   history.clear();
-  history.push_back(std::string("% ") + QDateTime::currentDateTime().toString().toStdString());
 }
 
 void KeyManager::SetTermWidth(int w) {
@@ -172,7 +170,7 @@ void KeyManager::EraseCharacters(int pos, int cnt) {
 }
 
 void KeyManager::SetCharacter(int pos, char c) {
-  if (pos < (int)(lineData.size()))
+  if (pos < lineData.size())
     lineData[pos] = c;
   else {
     int topad = (pos-lineData.size()+1);
@@ -510,7 +508,7 @@ void KeyManager::OutputChar(char c, char pad) {
 
 void KeyManager::OutputString(string st, char pad) {
   if (st.size() == 0) return;
-  for(int i=0;i<((int)st.size())-1;i++)
+  for(unsigned int i=0;i<st.size()-1;i++)
     OutputChar(st[i],st[i+1]);
   OutputChar(st[st.size()-1],pad);
 }
@@ -659,7 +657,7 @@ void KeyManager::AddHistory(string mline) {
   prefix = "";
   prefix_len = 0;
   if (mline.size() > 0) {
-    if (history.size() > 0 && history.back() != mline)
+    if (history.back() != mline)
       history.push_back(mline);
     while (history.size() > 1000)
       history.pop_front();
@@ -669,7 +667,7 @@ void KeyManager::AddHistory(string mline) {
 }
 
 void KeyManager::HistoryFindForwards() {
-  int i;
+  unsigned int i;
   bool found;
   if (startsearch >= (history.size()-1)) {
     ResetLineBuffer();
@@ -679,12 +677,12 @@ void KeyManager::HistoryFindForwards() {
   }
   i = startsearch+1;
   found = false;
-  while (i<((int)history.size()) && !found) {
+  while (i<history.size() && !found) {
     found = (prefix_len == 0) || 
       (history[i].compare(0,prefix_len,prefix) == 0);
     if (!found) i++;
   }
-  if (!found && (i >= ((int)history.size()))) {
+  if (!found && (i >= history.size())) {
     startsearch = history.size();
     ResetLineBuffer();
     AddStringToLine(prefix);
@@ -700,7 +698,7 @@ void KeyManager::HistoryFindBackwards() {
   if (startsearch == 0) return;
   i = startsearch-1;
   found = false;
-  while (history.size() > 0 && i>=0 && !found) {
+  while (i>=0 && !found) {
     found = (history[i].compare(0,prefix_len,prefix) == 0);
     if (!found) i--;
   }
@@ -772,13 +770,13 @@ void KeyManager::Yank() {
   AddStringToLine(cutbuf);
 }
 
-void KeyManager::ListCompletions(StringVector completions) {
+void KeyManager::ListCompletions(vector<string> completions) {
   int maxlen;    /* The length of the longest matching string */
   int width;     /* The width of a column */
   int ncol;      /* The number of columns to list */
   int nrow;      /* The number of rows needed to list all of the matches */
   int row,col;   /* The row and column being written to */
-  int i;
+  unsigned int i;
   /*
    * Not enough space to list anything?
    */
@@ -819,7 +817,7 @@ void KeyManager::ListCompletions(StringVector completions) {
    */
   for(row=0; row < nrow; row++) {
     for(col=0; col < ncol; col++) {
-      int m = col*nrow + row;
+      unsigned int m = col*nrow + row;
       if(m < completions.size()) {
 	char buffer[4096];
 	sprintf(buffer, "%s%-*s%s", completions[m].c_str(),
@@ -834,17 +832,17 @@ void KeyManager::ListCompletions(StringVector completions) {
   };
 }
 
-string GetCommonPrefix(StringVector matches,
-		       string tempstring) {
-  int minlength;
-  int prefixlength;
+string GetCommonPrefix(vector<string> matches,
+			    string tempstring) {
+  unsigned int minlength;
+  unsigned int prefixlength;
   bool allmatch;
   string templ;
-  int i, j;
-  
+  unsigned int i, j;
+
   minlength = matches[0].size();
   for (i=0;i<matches.size();i++)
-    minlength = (minlength < (int)matches[i].size()) ? 
+    minlength = (minlength < matches[i].size()) ? 
       minlength : matches[i].size();
   prefixlength = minlength;
   templ = matches[0];
@@ -858,7 +856,7 @@ string GetCommonPrefix(StringVector matches,
     }
     prefixlength = (j < prefixlength) ? j : prefixlength;
   }
-  if (prefixlength <= (int) tempstring.length())
+  if (prefixlength <= tempstring.length())
     return (string(""));
   else
     return(templ.substr(tempstring.length(),prefixlength-tempstring.length()));
@@ -873,7 +871,7 @@ void KeyManager::CompleteWord() {
                           /*  total length of the line. */
   int buff_pos;           /* The buffer index at which the completion is */
                           /*  to be inserted. */
-  StringVector matches;
+  vector<string> matches;
   redisplay = 1;
   /*
    * Get the cursor position at which the completion is to be inserted.
@@ -1188,10 +1186,10 @@ static char *start_of_path(const char *string, int back_from)
   return (char *)string + i + 1;
 }
 
-StringVector KeyManager::GetCompletions(string line, 
+vector<string> KeyManager::GetCompletions(string line, 
 					  int word_end, 
 					  string &matchString) {
-  StringVector completions;
+  vector<string> completions;
   if (!context->getMutex()->tryLock()) return completions;
   QMutexLocker lock(context->getMutex());
   context->getMutex()->unlock();
@@ -1214,12 +1212,12 @@ StringVector KeyManager::GetCompletions(string line,
    */
   if (!context) return completions;
   if (start[-1] != '\'') {
-    StringVector local_completions(context->getCompletions(string(start)));
+    vector<string> local_completions(context->getCompletions(string(start)));
     for (int i=0;i<local_completions.size();i++) 
       if (local_completions[i].find("private:") == local_completions[i].npos)
 	completions.push_back(local_completions[i]);
   }
-  StringVector comp(GetCompletionList(tmp));
+  stringVector comp(GetCompletionList(tmp));
   for (int i=0;i<comp.size();i++) 
     if (comp[i].find("private:") == comp[i].npos)
       completions.push_back(comp[i]);
