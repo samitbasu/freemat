@@ -154,6 +154,13 @@ then tick it here and commit. Leave notes for the next session under each stage.
     `A(:, 1)`); elsewhere `:` builds a `Range`. `for (i = expr)` parenthesized headers are accepted.
   - `Command` carries the parsed string args directly (the interpreter will call
     `name('arg1','arg2')` in Stage 3); we don't synthesize a call node at parse time.
+  - **Number-suffix text:** the `f`/`d` single/double markers and `i`/`j` imaginary markers are
+    stripped from the literal's text payload (Stage 3 parses `text` straight to `f64`/`f32`); the
+    token/AST span deliberately still spans the suffix so diagnostics highlight the full literal.
+- **`tests/` syntax pulled from `FreeMat/tests/`:** the error-path snippets were modelled on
+  `FreeMat/tests/parse/bad*.m` (e.g. `bad18.m`'s `a(]`, dangling-operator and unterminated
+  constructs); the `switch` string-label and control-flow shapes follow `tests/flow/test_switch1.m`;
+  the `linspace.m` function-def snippet is adapted from `toolbox/array/linspace.m`.
 
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,
