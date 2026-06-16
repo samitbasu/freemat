@@ -16,6 +16,10 @@ repository = "https://github.com/samitbasu/freemat"
 [workspace.dependencies]
 ndarray = "0.17"
 num-complex = "0.4"
+# Parser diagnostics (Stage 2). The library defines `Diagnostic`s only; the
+# `fancy` feature (graphical rendering) is enabled by the consumer (CLI / tests).
+miette = "7.6"
+thiserror = "2.0"
 
 [workspace.lints.rust]
 rust_2018_idioms = "warn"

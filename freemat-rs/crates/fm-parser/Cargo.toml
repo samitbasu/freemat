@@ -9,6 +9,13 @@ rust-version.workspace = true
 repository.workspace = true
 
 [dependencies]
+miette.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# The library only defines `Diagnostic`s; tests opt into the graphical
+# (`fancy`) renderer to assert that a malformed snippet renders annotated.
+miette = { workspace = true, features = ["fancy"] }
 
 [lints]
 workspace = true
