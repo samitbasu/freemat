@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "GPL-2.0-or-later"
+authors = ["Samit Basu <basu.samit@gmail.com>"]
+rust-version = "1.96"
+repository = "https://github.com/samitbasu/freemat"
+
+# Shared dependency versions live here as stages introduce them, e.g.
+#   ndarray = "0.16"
+# Crates then opt in with `ndarray.workspace = true`.
+[workspace.dependencies]
+
+[workspace.lints.rust]
+rust_2018_idioms = "warn"
+
+[workspace.lints.clippy]
+all = "warn"

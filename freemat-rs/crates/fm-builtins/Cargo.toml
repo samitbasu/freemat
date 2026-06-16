@@ -1,0 +1,14 @@
+[package]
+name = "fm-builtins"
+description = "FreeMat-rs builtin functions ported from libCore"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
