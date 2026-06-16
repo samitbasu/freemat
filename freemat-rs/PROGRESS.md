@@ -16,6 +16,7 @@ then tick it here and commit. Leave notes for the next session under each stage.
 - [ ] **Stage 7 — `fm-graphics` + webserver + Plotly  ·  ★ Milestone 2**
 - [ ] **Stage 8 — `fm-io`: MAT files, file I/O, FFT, regex**
 - [ ] **Stage 9 — Advanced / optional**
+- [ ] **Stage 10 — Debugging & editor integration (DAP + `db*` engine; optional LSP)**
 
 ## Definition of Done (every stage)
 
@@ -45,3 +46,12 @@ then tick it here and commit. Leave notes for the next session under each stage.
 - Reference `FreeMat/libs/libFreeMat/Array.hpp`, `BasicArray.hpp`, `Complex.hpp`, `Types.hpp`.
 - Mandatory: column-major (ndarray F-order) storage, `Arc`+`Arc::make_mut` COW, and an inline
   `Scalar` variant so scalar temporaries never heap-allocate.
+
+### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
+- Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,
+  no GUI. Debug *engine* lives in `fm-interp`; new crates `fm-dap` (+ optional `fm-lsp`).
+- **Stage 3 must add the cheap enabling seams now** (not a retrofit): single statement-execution
+  chokepoint, per-scope source line/span, switchable active scope (for `dbup`/`dbdown`).
+- FreeMat reference to port later: `Interpreter.cpp` `bpStack`/`processBreakpoints`/`doDebugCycle`/
+  `dbup`/`dbdown`; `libCore/Debug.cpp`; observer model in `libXP/Editor.cpp` becomes a Rust
+  event trait the terminal and DAP both consume.

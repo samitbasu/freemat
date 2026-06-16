@@ -49,6 +49,13 @@ connects to for graphics.
 - **Port philosophy: idiomatic reimplementation.** Keep the proven design (Array model,
   hand-written lexer/parser, tree-walking interpreter, scope model, handle-graphics scene),
   rewrite in idiomatic Rust, validate against the `.m` conformance suite.
+- **Debugging & editing via your own editor (DAP/LSP).** No built-in editor, no GUI: the debug
+  *engine* lives in `fm-interp` (breakpoints, stepping, variable inspection at the paused scope —
+  FreeMat's `db*` commands, terminal-native). Visual debugging is exposed via a **Debug Adapter
+  Protocol** server so VS Code/Neovim drive breakpoints/stepping/inspection, with an optional
+  **LSP** for `.m` smarts. This mirrors FreeMat's clean engine-vs-GUI split (its Qt editor only
+  *observed* the interpreter through signals). Built in Stage 10; the cheap enabling seams go
+  into Stage 3.
 
 ## Standing rules (Definition of Done — applies to EVERY stage)
 
@@ -84,6 +91,8 @@ freemat-rs/                 (new Cargo workspace, sibling to FreeMat/)
     fm-graphics   # handle-graphics scene model + serde JSON wire protocol
     fm-io         # file I/O + MAT-file read/write + FFT/regex-backed builtins
     fm-cli        # bin `fm`: crossterm/rustyline REPL + axum webserver + websocket
+    fm-dap        # (Stage 10) Debug Adapter Protocol server for VS Code/Neovim
+    fm-lsp        # (Stage 10, optional) Language Server for .m language smarts
   web/            # static assets: index.html + Plotly.js + small websocket client (JS)
   toolbox/        # the 317 .m files, copied/symlinked from FreeMat/toolbox, reused unchanged
   tests/          # conformance harness + selected .m tests/.mat fixtures from FreeMat/tests
@@ -107,6 +116,8 @@ freemat-rs/                 (new Cargo workspace, sibling to FreeMat/)
 | RanLib PRNG | **rand** + **rand_distr** |
 | Handle graphics + RenderEngine + Qt/GL backends | `fm-graphics` scene-graph + **serde JSON** semantic protocol → **Plotly.js** in browser. No Rust-side renderer. |
 | QTTerm + InterpreterThread | `fm-cli`: `crossterm`/`rustyline` TTY REPL driving the interpreter |
+| Interpreter debug engine (`bpStack`, `processBreakpoints`, `doDebugCycle`) + `db*` commands | `fm-interp` debug engine: breakpoint registry, per-statement check, debug-cycle re-entering the REPL at the paused scope; `db*` builtins (Stage 10) |
+| Qt editor + breakpoint margins + Variables/Stack tools (Qt signals) | protocol-agnostic debug-event interface → **DAP server** (`fm-dap`) for VS Code/Neovim + optional **LSP** (`fm-lsp`); no built-in editor, bring-your-own `$EDITOR` (Stage 10) |
 | MAT-file I/O (`MatIO.cpp`) | `fm-io` (matfile format) |
 
 ### Dropped / deferred
@@ -184,6 +195,11 @@ freemat-rs/                 (new Cargo workspace, sibling to FreeMat/)
   grow-on-assign); error/exception model as `miette` diagnostics (MException-like). Builtin
   **registry** (trait/enum + registration like `addFunction`/`addSpecialFunction`). **`.m`
   loader** that parses and runs toolbox files via the same evaluator.
+- **Debug-readiness (mandatory, cheap now — enables Stage 10 without a retrofit):** route every
+  statement through a single execution chokepoint (an `exec_statement` seam where a breakpoint
+  hook can later be checked); thread the executing statement's source line/`span` into the active
+  scope (FreeMat packs it into the token id; we use the AST span); and make the Context's active
+  scope switchable (the basis for `dbup`/`dbdown`). No debugger yet — just the seams.
 - **Tests:** unit tests for scoping, indexing, control flow, broadcasting; load and run a couple
   of simple `toolbox/*.m` functions end-to-end.
 - **Acceptance:** Definition of Done; the REPL (even minimal) can evaluate expressions and call a
@@ -259,6 +275,42 @@ freemat-rs/                 (new Cargo workspace, sibling to FreeMat/)
   functions (`statrs`); optimization (`argmin` / port levmar); audio (`cpal`); interactive 3D
   plot polish; optional cranelift JIT for hot scalar loops.
 - **Acceptance:** Definition of Done per item; conformance pass-rate continues to climb.
+
+## Stage 10 — Debugging & editor integration (DAP + `db*` engine; optional LSP)
+- **Goal:** FreeMat's editor+debugger experience — set breakpoints, step, inspect/modify
+  variables, walk the call stack — driven from the user's own editor (VS Code/Neovim), plus the
+  terminal `db*` commands. No GUI toolkit, no built-in editor.
+- **Prerequisites:** Stage 6 (mature interpreter + scopes); intended after Stages 7–8. Relies on
+  the Stage 3 debug seams (chokepoint + per-scope source line + switchable active scope).
+- **Reference:** `libs/libFreeMat/Interpreter.cpp` — `bpStack`, `processBreakpoints` (~L1879),
+  `doDebugCycle` (~L1592), `addBreakpoint`/`deleteBreakpoint`, `stackTrace` (~L2620),
+  `dbup`/`dbdown` (L659-703); `libs/libCore/Debug.cpp` (`dbstop`/`dbdelete`/`dblist`);
+  `Control.cpp` (`dbauto`); `libs/libXP/Editor.cpp`, `StackTool.cpp`, `VariablesTool.cpp` (the
+  observer/event model to generalize).
+- **Build:**
+  - **Debug engine in `fm-interp`:** breakpoint registry keyed by (file/function, line); a check
+    at the Stage 3 statement chokepoint; a debug-cycle that re-enters the REPL with the paused
+    scope active (FreeMat's `keyboard` scope); step/trace traps; `dbstop if error` (autostop).
+  - **`db*` builtins/statements:** `dbstop`, `dbclear`/`dbdelete`, `dblist`, `dbstep`, `dbcont`,
+    `dbstack`, `dbup`, `dbdown`, `dbquit`, `keyboard` — matching FreeMat semantics. `edit`/`open`
+    launches `$EDITOR` (bring-your-own).
+  - **Protocol-agnostic debug-event interface:** replace FreeMat's Qt signals
+    (`ShowActiveLine`/`updateVarView`/`updateStackView`/`RefreshBPLists`) with a Rust trait /
+    channel the engine emits to. The terminal frontend prints; the DAP frontend translates.
+  - **`fm-dap` (new crate) — a DAP server:** implement `setBreakpoints`, `launch`/`attach`,
+    `stackTrace`, `scopes`, `variables`, `setVariable`, `continue`, `next`/`stepIn`/`stepOut`,
+    `evaluate` (REPL in the paused frame) — mapping DAP onto the engine. Ship a minimal VS Code
+    debugger contribution / launch config for `.m`.
+  - **`fm-lsp` (new crate, optional) — an LSP server for `.m`:** diagnostics (reuse the
+    `fm-parser` miette errors), document symbols, hover, completion, go-to-definition over the
+    function table.
+- **Tests:** engine unit tests (breakpoint hits the right line, step counts, scope switch for
+  `dbup`/`dbdown`, variable read/modify at the paused frame); a DAP integration test driving a
+  scripted session (set breakpoint → launch → hit → read variable → step → continue) over the
+  protocol; port any FreeMat `tests/` debug cases.
+- **Acceptance:** Definition of Done; from a terminal, `dbstop`/`dbstep`/`dbcont` work and the
+  debug prompt inspects the paused scope; from VS Code (or a DAP test client), a breakpoint in a
+  `.m` file pauses execution, shows the call stack and variables, and step/continue work.
 
 ---
 
