@@ -10,7 +10,7 @@ then tick it here and commit. Leave notes for the next session under each stage.
 - [x] **Stage 1 — `fm-core`: types & Array**
 - [x] **Stage 2 — `fm-parser`: lexer + parser + AST (miette)**
 - [x] **Stage 3 — `fm-interp`: evaluator, scope, registry, `.m` loader**
-- [ ] **Stage 4 — Conformance harness**
+- [x] **Stage 4 — Conformance harness**
 - [ ] **Stage 5 — `fm-linalg` + core math builtins  ·  ★ Milestone 1**
 - [ ] **Stage 6 — `fm-builtins`: remaining core functions**
 - [ ] **Stage 7 — `fm-graphics` + webserver + Plotly  ·  ★ Milestone 2**
@@ -256,6 +256,93 @@ then tick it here and commit. Leave notes for the next session under each stage.
     are Stage 6).
   - Nested functions are registered as siblings in the flat function table (simple Stage 3
     model; proper nested-scope capture is a later refinement).
+
+### Stage 4 — done (`fm-conformance`)
+- **New crate `crates/fm-conformance`** (lib + `fm-conformance` bin), no new external deps — it
+  drives `fm-interp` directly. Picked up by the `members = ["crates/*"]` glob (no root edit).
+- **FreeMat's pass/fail convention (reproduced):** FreeMat runs each test in *test mode* (`-t`,
+  `src/main.cpp`) which seeds the process exit code to **1 = fail**. A test is a function file
+  `test_NAME.m` = `function test_val = test_NAME` (one output; the var name varies). The CMake
+  wrapper calls `wrap_test('test_NAME')` — run the function in `try`/`catch`, only flip the exit
+  code to 0 on success — or `~test_NAME` in `suite/`. A test **passes** iff the function runs
+  without raising **and** returns an all-nonzero (true) value. The `test()`/`testeq()` helpers
+  (`toolbox/array/test.m`, `tests/flow/testeq.m`) just reduce to a scalar logical; they do **not**
+  throw, so the truthiness of the returned value is what matters.
+  Our harness reproduces this in `run_test_file`: spin up a fresh `Interpreter` per test (FreeMat's
+  process-per-test isolation), `load_file` every `.m` in the test's directory + a shared
+  `_helpers/` dir (so the test fn and its `.m` helpers all register), then
+  `call_function(stem, &[], 1, …)` and classify via `fm_interp::value::truth`:
+  `Pass` (true) / `Fail` (false/empty/wrong) / `Error` (interpreter raised — missing builtin or
+  unsupported feature, **or** a caught panic). An `Error` is **never** counted as a pass — the
+  pass-rate is honest. Interpreter panics are caught with `catch_unwind` and a silenced panic hook
+  so one tree-walker bug can't abort the run.
+- **Self-contained corpus:** the targeted `.m` tests are copied into
+  `crates/fm-conformance/data/tests/<dir>/` (+ `_helpers/test.m`, `_helpers/testeq.m`). The harness
+  reads only from there — it does **not** touch `../FreeMat` at test time (asserted by
+  `corpus_is_self_contained`). 632 `.m` files copied; `test_files_in` runs only the `test_*.m`
+  stems (helpers are loaded but not invoked as tests), giving **603** runnable test functions.
+- **Two-tier reporting:**
+  - **Curated must-pass subset (gates `cargo test`)** — `tests/curated.rs::curated_subset_passes`
+    asserts **50** named, currently-passing tests across array / flow / functions / operators /
+    elementary / typecast / suite / variables (assignment, if/switch, continue, error, ranges,
+    nargin, persistents, struct/cell subsetting, matrix concat, uint64 round-trip). Plus
+    `full_suite_pass_count_does_not_regress` asserts the aggregate pass count ≥ a floor of **62**
+    (raise the floor as later stages improve it). These run in normal `cargo test`.
+  - **Non-gating reporter** — the `fm-conformance` **binary** (`cargo run -p fm-conformance`) and an
+    `#[ignore]`d `tests/curated.rs::full_suite_report` print totals + a per-dir pass/fail/error
+    breakdown. Many tests fail today (expected); this never breaks the build.
+  - Run the reporter: `cargo run -p fm-conformance` (whole covered corpus),
+    `cargo run -p fm-conformance -- flow` (one dir), add `--failures` / `--passes` to list tests, or
+    `cargo test -p fm-conformance -- --ignored --nocapture full_suite_report`.
+- **Current full-suite pass-rate: 62 / 603 = 10.3%.** Per covered directory (total / pass / fail /
+  error):
+
+  | dir | total | pass | fail | error |
+  |---|---:|---:|---:|---:|
+  | array | 68 | 7 | 6 | 55 |
+  | binary | 3 | 0 | 0 | 3 |
+  | constants | 1 | 0 | 0 | 1 |
+  | elementary | 7 | 1 | 0 | 6 |
+  | flow | 22 | 12 | 2 | 8 |
+  | freemat | 11 | 0 | 0 | 11 |
+  | functions | 9 | 2 | 2 | 5 |
+  | inspection | 20 | 0 | 0 | 20 |
+  | io | 6 | 0 | 0 | 6 |
+  | operators | 66 | 1 | 0 | 65 |
+  | random | 1 | 0 | 0 | 1 |
+  | signal | 1 | 0 | 0 | 1 |
+  | string | 3 | 0 | 0 | 3 |
+  | suite | 337 | 32 | 10 | 295 |
+  | typecast | 5 | 1 | 0 | 4 |
+  | variables | 43 | 6 | 1 | 36 |
+  | **TOTAL** | **603** | **62** | **21** | **520** |
+
+  The 520 `Error`s are dominated by **missing builtins** (honest "unsupported", not inflated):
+  `all` (80 — used by the `test()` helper, so landing it alone flips many), `rand`/`randn`/`sprandn`
+  (134), `sparse`/`sparse_test_mat` (82), `typeof` (26), `struct` (20), `repmat`/`diag`/`strcmp`/
+  `qr`/`eval`/`save`/… — all Stage 5/6/8 surface.
+- **Covered vs deferred directories.** *Covered (run here):* array, binary, constants, elementary,
+  flow, freemat, functions, inspection, io, operators, random, signal, string, suite, typecast,
+  variables. *Deferred (recorded, not run, don't fail the build):* `reference` & `matcompat`
+  (367+ `.mat` fixtures — need Stage 8 `fm-io`), `transforms`/`curvefit`/`signal`-wb (`.mat`
+  reference + linalg/fft — Stage 5/8), `sparse` (no sparse type — Stage 9), `class` (user OOP),
+  `handle`/`glwin`/`vtk*` (graphics — Stage 7 / dropped), `jit`/`itk` (dropped per plan), `parse`
+  (negative parse tests — opposite convention), `debug` (Stage 10), `thread`/`os`/`external`/`num`/
+  `mathfunctions` (empty or native-only). The `wb_test(...)` whitebox cases inside otherwise-covered
+  dirs are skipped automatically — they don't follow the `test_*.m` naming and need `.mat`
+  references.
+- **Interpreter bugs found (documented for later, NOT fixed here per stage constraints):**
+  1. **Struct-array concatenation `[a,b]` panics** in `fm-core/src/array.rs:75`
+     ("element count must match dims") — `suite/test_struct1`, `suite/test_struct2` (and the
+     `variables/` copies). The struct-array `hcat`/`vcat` path builds a struct array with mismatched
+     element/dim counts. Address in the Stage 6 struct/cell ops work.
+  2. **Element-deletion assignment `x(i) = []` unimplemented** — reports
+     "assignment size mismatch: 0 elements into 1 positions" instead of deleting the indexed
+     element/row/col. Tests: `suite/test_assign19` (`g(1) = []`), `suite/test_subset19`,
+     `suite/test_struct3` (+ `array/`, `variables/` copies). This is the empty-RHS delete case of
+     LHS indexing in `fm-interp/src/index.rs` (scatter); slot it into the Stage 6 indexing work.
+  - Neither blocks the harness (both surface as honest `Error`s); they will flip to `Pass` once the
+    relevant stage lands.
 
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,

@@ -1,0 +1,21 @@
+[package]
+name = "fm-conformance"
+description = "FreeMat-rs conformance harness — runs FreeMat's own .m tests against the interpreter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+fm-core = { version = "0.0.0", path = "../fm-core" }
+fm-interp = { version = "0.0.0", path = "../fm-interp" }
+fm-parser = { version = "0.0.0", path = "../fm-parser" }
+
+[[bin]]
+name = "fm-conformance"
+path = "src/main.rs"
+
+[lints]
+workspace = true

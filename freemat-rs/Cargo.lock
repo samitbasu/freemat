@@ -78,6 +78,15 @@ name = "fm-cli"
 version = "0.0.0"
 
 [[package]]
+name = "fm-conformance"
+version = "0.0.0"
+dependencies = [
+ "fm-core",
+ "fm-interp",
+ "fm-parser",
+]
+
+[[package]]
 name = "fm-core"
 version = "0.0.0"
 dependencies = [
