@@ -92,6 +92,13 @@ version = "0.0.0"
 [[package]]
 name = "fm-interp"
 version = "0.0.0"
+dependencies = [
+ "fm-core",
+ "fm-parser",
+ "miette",
+ "ndarray",
+ "thiserror",
+]
 
 [[package]]
 name = "fm-io"

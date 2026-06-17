@@ -1,0 +1,103 @@
+//! Variable scoping: local / global / persistent, multi-return, nargin/nargout.
+
+mod common;
+use common::run_f64;
+
+use fm_interp::Interpreter;
+
+/// Run source and read a top-level variable as `f64`.
+fn run(src: &str, var: &str) -> f64 {
+    run_f64(src, var)
+}
+
+#[test]
+fn locals_are_isolated_per_call() {
+    let mut i = Interpreter::new();
+    // Define a function that sets a local `t`; the caller's `t` is untouched.
+    i.define_source("function y = f(x)\n  t = 100;\n  y = x + t;\n")
+        .unwrap();
+    i.run("t = 1; z = f(5);").unwrap();
+    assert_eq!(i.context.lookup("t").unwrap().as_f64(), Some(1.0));
+    assert_eq!(i.context.lookup("z").unwrap().as_f64(), Some(105.0));
+}
+
+#[test]
+fn global_shared_across_scopes() {
+    let mut i = Interpreter::new();
+    i.define_source("function setg(v)\n  global G\n  G = v;\n")
+        .unwrap();
+    i.run("global G\n G = 0; setg(42);").unwrap();
+    assert_eq!(i.context.lookup("G").unwrap().as_f64(), Some(42.0));
+}
+
+#[test]
+fn persistent_retains_across_calls() {
+    let mut i = Interpreter::new();
+    i.define_source(
+        "function y = counter()\n  persistent n\n  if isempty(n), n = 0; end\n  n = n + 1;\n  y = n;\n",
+    )
+    .unwrap();
+    i.run("a = counter(); b = counter(); c = counter();")
+        .unwrap();
+    assert_eq!(i.context.lookup("a").unwrap().as_f64(), Some(1.0));
+    assert_eq!(i.context.lookup("b").unwrap().as_f64(), Some(2.0));
+    assert_eq!(i.context.lookup("c").unwrap().as_f64(), Some(3.0));
+}
+
+#[test]
+fn multi_return_assignment() {
+    let mut i = Interpreter::new();
+    i.define_source("function [a, b] = swap(x, y)\n  a = y;\n  b = x;\n")
+        .unwrap();
+    i.run("[p, q] = swap(1, 2);").unwrap();
+    assert_eq!(i.context.lookup("p").unwrap().as_f64(), Some(2.0));
+    assert_eq!(i.context.lookup("q").unwrap().as_f64(), Some(1.0));
+}
+
+#[test]
+fn size_multi_return() {
+    assert_eq!(run("A = [1 2 3;4 5 6]; [r, c] = size(A);", "r"), 2.0);
+    assert_eq!(run("A = [1 2 3;4 5 6]; [r, c] = size(A);", "c"), 3.0);
+}
+
+#[test]
+fn nargin_reported() {
+    let mut i = Interpreter::new();
+    i.define_source("function y = f(a, b, c)\n  y = nargin;\n")
+        .unwrap();
+    i.run("n = f(1, 2);").unwrap();
+    assert_eq!(i.context.lookup("n").unwrap().as_f64(), Some(2.0));
+}
+
+#[test]
+fn recursive_function() {
+    let mut i = Interpreter::new();
+    i.define_source(
+        "function y = fact(n)\n  if n <= 1\n    y = 1;\n  else\n    y = n * fact(n - 1);\n  end\n",
+    )
+    .unwrap();
+    i.run("f = fact(5);").unwrap();
+    assert_eq!(i.context.lookup("f").unwrap().as_f64(), Some(120.0));
+}
+
+#[test]
+fn fewer_outputs_requested() {
+    // Requesting one output from a two-output function returns just the first.
+    let mut i = Interpreter::new();
+    i.define_source("function [a, b] = two()\n  a = 1;\n  b = 2;\n")
+        .unwrap();
+    i.run("x = two();").unwrap();
+    assert_eq!(i.context.lookup("x").unwrap().as_f64(), Some(1.0));
+}
+
+#[test]
+fn debug_seam_active_scope_switchable() {
+    // The active-scope switch (basis for dbup/dbdown) is exercised directly.
+    let mut i = Interpreter::new();
+    i.run("x = 1;").unwrap();
+    assert_eq!(i.context.active_index(), 0);
+    i.context.push_scope("frame");
+    assert_eq!(i.context.active_index(), 1);
+    i.context.set_active(0);
+    assert_eq!(i.context.active_index(), 0);
+}

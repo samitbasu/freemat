@@ -1,0 +1,516 @@
+//! Indexing: paren `()`, brace `{}`, and field `.f` reads and writes, including
+//! linear & subscript indices, logical masks, the `:` magic colon, `end`, and
+//! **grow-on-assign** semantics.
+//!
+//! Everything reduces to column-major linear positions. A resolved subscript is
+//! a list of 0-based linear element positions ([`IndexPlan`]); reads gather,
+//! writes scatter (growing the target if a position is out of bounds).
+
+use fm_core::{Array, C64, DataClass, ScalarValue, StructArray};
+
+use crate::error::{Flow, InterpError, Signal};
+use crate::value::{to_f64_vec, to_index};
+
+/// A resolved index along one or more dimensions, as a flat list of 0-based
+/// column-major linear positions into the (possibly grown) target, plus the
+/// shape the *result* should take.
+pub struct IndexPlan {
+    /// Linear (column-major) positions to gather/scatter, in result order.
+    pub linear: Vec<usize>,
+    /// The shape of the result of a *read* with this plan.
+    pub result_dims: Vec<usize>,
+    /// The dims the *target* must have to hold every position (grow target to
+    /// at least this on assignment).
+    pub needed_dims: Vec<usize>,
+}
+
+/// A single index argument, already evaluated to a value (or the magic colon).
+pub enum IndexArg {
+    /// `:` — every element along this dimension.
+    Colon,
+    /// A value used as subscripts (numeric → 1-based; logical → mask).
+    Value(Array),
+}
+
+/// Build column-major strides for `dims`.
+fn strides(dims: &[usize]) -> Vec<usize> {
+    let mut s = vec![1usize; dims.len().max(1)];
+    for i in 1..dims.len() {
+        s[i] = s[i - 1] * dims[i - 1];
+    }
+    s
+}
+
+/// Convert a per-dimension subscript value into 0-based positions along that
+/// dimension; `dim_len` is the current length of the dimension (for `:` /
+/// logical). Returns the chosen positions and the max position + 1 (for growth).
+fn resolve_dim(arg: &IndexArg, dim_len: usize) -> Flow<Vec<usize>> {
+    match arg {
+        IndexArg::Colon => Ok((0..dim_len).collect()),
+        IndexArg::Value(v) => {
+            if v.class() == DataClass::Bool {
+                // Logical mask along this dimension.
+                let mask = to_f64_vec(v);
+                let mut out = Vec::new();
+                for (i, &m) in mask.iter().enumerate() {
+                    if m != 0.0 {
+                        out.push(i);
+                    }
+                }
+                Ok(out)
+            } else {
+                to_f64_vec(v).into_iter().map(to_index).collect()
+            }
+        }
+    }
+}
+
+/// Resolve a list of index arguments against a target of shape `dims` into an
+/// [`IndexPlan`]. Handles linear (1 arg) and subscript (N args) indexing.
+pub fn plan_index(dims: &[usize], args: &[IndexArg]) -> Flow<IndexPlan> {
+    if args.is_empty() {
+        return Err(Signal::Error(InterpError::msg("empty index")));
+    }
+    let total: usize = dims.iter().product();
+
+    if args.len() == 1 {
+        return plan_linear(dims, total, &args[0]);
+    }
+    plan_subscript(dims, args)
+}
+
+/// Linear (single-argument) indexing.
+fn plan_linear(dims: &[usize], total: usize, arg: &IndexArg) -> Flow<IndexPlan> {
+    match arg {
+        IndexArg::Colon => {
+            // `A(:)` → column vector of all elements.
+            let linear: Vec<usize> = (0..total).collect();
+            Ok(IndexPlan {
+                result_dims: vec![total, 1],
+                needed_dims: dims.to_vec(),
+                linear,
+            })
+        }
+        IndexArg::Value(v) => {
+            if v.class() == DataClass::Bool {
+                let mask = to_f64_vec(v);
+                let linear: Vec<usize> = mask
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, &m)| (m != 0.0).then_some(i))
+                    .collect();
+                let n = linear.len();
+                // Logical linear indexing returns a column vector (row stays row
+                // if the source is a row vector — MATLAB orients to the source).
+                let result_dims = if dims.len() == 2 && dims[0] == 1 {
+                    vec![1, n]
+                } else {
+                    vec![n, 1]
+                };
+                Ok(IndexPlan {
+                    needed_dims: dims.to_vec(),
+                    linear,
+                    result_dims,
+                })
+            } else {
+                let idx = to_f64_vec(v);
+                let linear: Vec<usize> = idx
+                    .iter()
+                    .map(|&x| to_index(x))
+                    .collect::<Flow<Vec<usize>>>()?;
+                let max = linear.iter().copied().max().map_or(0, |m| m + 1);
+                // Result shape follows the index's shape, except a vector source
+                // indexed by a vector keeps the source orientation.
+                let result_dims = linear_result_dims(dims, v);
+                let needed_dims = if max > total {
+                    grow_linear_dims(dims, max)
+                } else {
+                    dims.to_vec()
+                };
+                Ok(IndexPlan {
+                    linear,
+                    result_dims,
+                    needed_dims,
+                })
+            }
+        }
+    }
+}
+
+/// Result shape for numeric linear indexing of `dims` by index value `v`.
+fn linear_result_dims(dims: &[usize], v: &Array) -> Vec<usize> {
+    let vd = v.dims();
+    let is_row_src = dims.len() == 2 && dims[0] == 1;
+    let is_col_src = dims.len() == 2 && dims[1] == 1;
+    let idx_is_vec = vd.len() == 2 && (vd[0] == 1 || vd[1] == 1);
+    if (is_row_src || is_col_src) && idx_is_vec {
+        // Vector source indexed by a vector → orient like the source.
+        let n: usize = vd.iter().product();
+        if is_row_src { vec![1, n] } else { vec![n, 1] }
+    } else {
+        // Otherwise the result takes the index's shape.
+        vd
+    }
+}
+
+/// Grow a shape so a linear position `max-1` fits (only vectors grow linearly).
+fn grow_linear_dims(dims: &[usize], needed: usize) -> Vec<usize> {
+    if dims.len() == 2 && dims[0] <= 1 {
+        vec![1, needed]
+    } else if dims.len() == 2 && dims[1] == 1 {
+        vec![needed, 1]
+    } else {
+        // Growing a non-vector by linear index is disallowed in MATLAB; we keep
+        // dims and let the caller error if a position is out of range.
+        dims.to_vec()
+    }
+}
+
+/// Subscript (N-argument) indexing.
+fn plan_subscript(dims: &[usize], args: &[IndexArg]) -> Flow<IndexPlan> {
+    let n = args.len();
+    // Effective target dims padded/merged to `n` axes.
+    let mut eff = vec![1usize; n];
+    for (i, slot) in eff.iter_mut().enumerate() {
+        if i + 1 == n {
+            // Last subscript collapses the remaining dimensions.
+            *slot = dims.iter().skip(i).product::<usize>();
+            if dims.len() <= i {
+                *slot = 1;
+            }
+        } else {
+            *slot = dims.get(i).copied().unwrap_or(1);
+        }
+    }
+
+    // Resolve each dimension's positions.
+    let mut per_dim: Vec<Vec<usize>> = Vec::with_capacity(n);
+    for (i, arg) in args.iter().enumerate() {
+        per_dim.push(resolve_dim(arg, eff[i])?);
+    }
+
+    // Needed extent per dim (for growth) = max(existing, max-position+1).
+    let mut needed = eff.clone();
+    for (i, positions) in per_dim.iter().enumerate() {
+        let m = positions.iter().copied().max().map_or(0, |p| p + 1);
+        needed[i] = needed[i].max(m);
+    }
+
+    // Generate linear positions in column-major (first index fastest) order.
+    let result_dims: Vec<usize> = per_dim.iter().map(Vec::len).collect();
+    let nstr = strides(&needed);
+    let mut linear = Vec::with_capacity(result_dims.iter().product());
+    let total_out: usize = result_dims.iter().product();
+    let out_str = strides(&result_dims);
+    for out_lin in 0..total_out {
+        let mut pos = 0usize;
+        let mut rem = out_lin;
+        for d in (0..n).rev() {
+            let coord = rem / out_str[d];
+            rem %= out_str[d];
+            pos += per_dim[d][coord] * nstr[d];
+        }
+        linear.push(pos);
+    }
+
+    // The full needed shape, accounting for the original trailing dims.
+    let needed_dims = merge_needed(dims, &needed, n);
+    Ok(IndexPlan {
+        linear,
+        result_dims: squeeze_result(result_dims),
+        needed_dims,
+    })
+}
+
+/// Build the target's needed dims from a subscript's per-axis extents.
+fn merge_needed(orig: &[usize], needed: &[usize], n: usize) -> Vec<usize> {
+    if n == orig.len() {
+        return needed.to_vec();
+    }
+    // When fewer subscripts than dims, the last subscript indexes the flattened
+    // tail; growth there is uncommon — keep the original tail dims if unchanged.
+    let mut out = needed.to_vec();
+    while out.len() < 2 {
+        out.push(1);
+    }
+    out
+}
+
+/// Drop trailing singleton dims beyond rank 2 (MATLAB keeps ≥2 dims).
+fn squeeze_result(mut d: Vec<usize>) -> Vec<usize> {
+    while d.len() > 2 && *d.last().unwrap() == 1 {
+        d.pop();
+    }
+    while d.len() < 2 {
+        d.push(1);
+    }
+    d
+}
+
+/// Read elements of `base` at the positions in `plan` (paren-index read).
+pub fn gather(base: &Array, plan: &IndexPlan) -> Flow<Array> {
+    let total = base.numel();
+    for &p in &plan.linear {
+        if p >= total {
+            return Err(Signal::Error(InterpError::msg(format!(
+                "index {} out of bounds (numel = {total})",
+                p + 1
+            ))));
+        }
+    }
+    Ok(gather_unchecked(base, &plan.linear, &plan.result_dims))
+}
+
+/// Gather without bounds-checking (callers pre-validate). All reads are in
+/// column-major (memory) order so linear positions line up.
+fn gather_unchecked(base: &Array, linear: &[usize], result_dims: &[usize]) -> Array {
+    macro_rules! gather_dense {
+        ($d:expr, $build:path) => {{
+            let flat = crate::value::mem_order($d);
+            let data: Vec<_> = linear.iter().map(|&i| flat[i].clone()).collect();
+            $build(result_dims, data)
+        }};
+    }
+    match base {
+        Array::Scalar(_) => base.clone(),
+        Array::Double(d) => gather_dense!(d, Array::double_matrix),
+        Array::Float(d) => gather_dense!(d, Array::single_matrix),
+        Array::Bool(d) => gather_dense!(d, Array::bool_matrix),
+        Array::Int32(d) => gather_dense!(d, Array::int32_matrix),
+        Array::Complex64(d) => gather_dense!(d, Array::complex64_matrix),
+        Array::Char(d) => {
+            let flat = crate::value::mem_order(d);
+            let data: Vec<char> = linear.iter().map(|&i| flat[i]).collect();
+            crate::value::char_matrix(result_dims, data)
+        }
+        Array::Cell(d) => {
+            let flat = crate::value::mem_order(d);
+            let data: Vec<Array> = linear.iter().map(|&i| flat[i].clone()).collect();
+            Array::cell(result_dims, data)
+        }
+        // Other integer/complex32 classes: route through f64 (loses nothing for
+        // integers; complex32 handled via the dedicated arm above for c64).
+        _ => {
+            let flat = to_f64_vec(base);
+            let data: Vec<f64> = linear.iter().map(|&i| flat[i]).collect();
+            crate::value::build_real(base.class(), result_dims, data)
+        }
+    }
+}
+
+/// Cell-content (brace) read: returns the gathered cells' *contents* as a list.
+pub fn gather_cell_contents(base: &Array, plan: &IndexPlan) -> Flow<Vec<Array>> {
+    let cells = base.as_cell().ok_or_else(|| {
+        Signal::Error(InterpError::msg(format!(
+            "'{{}}' indexing requires a cell array, got {}",
+            base.class_name()
+        )))
+    })?;
+    let flat: Vec<Array> = crate::value::mem_order(cells);
+    let total = flat.len();
+    let mut out = Vec::with_capacity(plan.linear.len());
+    for &p in &plan.linear {
+        if p >= total {
+            return Err(Signal::Error(InterpError::msg(format!(
+                "index {} out of bounds (numel = {total})",
+                p + 1
+            ))));
+        }
+        out.push(flat[p].clone());
+    }
+    Ok(out)
+}
+
+/// Scatter `rhs` into `base` at `plan`'s positions, growing `base` to
+/// `plan.needed_dims` if necessary. Returns the updated array.
+pub fn scatter(base: &Array, plan: &IndexPlan, rhs: &Array) -> Flow<Array> {
+    // Decide the result class: keep base's class unless base is empty (then take
+    // rhs's class — assigning into `[]` adopts the rhs type).
+    let class = if base.numel() == 0 && !matches!(base, Array::Scalar(_)) {
+        rhs.class()
+    } else {
+        promote_assign(base.class(), rhs.class())?
+    };
+
+    // Cell-array paren-assignment stays a cell.
+    if class == DataClass::Cell || base.class() == DataClass::Cell {
+        return scatter_cell(base, plan, rhs);
+    }
+
+    let needed: usize = plan.needed_dims.iter().product();
+    let needed_dims = if plan.needed_dims.iter().product::<usize>() >= base.numel() {
+        plan.needed_dims.clone()
+    } else {
+        base.dims()
+    };
+
+    // RHS values, broadcast: scalar fills, else must match index count.
+    let rhs_vals = to_f64_vec(rhs);
+    let count = plan.linear.len();
+    let take = |i: usize| -> Flow<f64> {
+        if rhs_vals.len() == 1 {
+            Ok(rhs_vals[0])
+        } else if rhs_vals.len() == count {
+            Ok(rhs_vals[i])
+        } else {
+            Err(Signal::Error(InterpError::msg(format!(
+                "assignment size mismatch: {} elements into {count} positions",
+                rhs_vals.len()
+            ))))
+        }
+    };
+
+    if class == DataClass::Char {
+        let mut flat: Vec<char> = match base {
+            Array::Char(d) => crate::value::mem_order(d),
+            Array::Scalar(ScalarValue::Char(c)) => vec![*c],
+            _ => vec!['\u{0}'; base.numel()],
+        };
+        flat.resize(needed.max(flat.len()), '\u{0}');
+        for (i, &p) in plan.linear.iter().enumerate() {
+            flat[p] = char::from_u32(take(i)? as u32).unwrap_or('\u{fffd}');
+        }
+        return Ok(crate::value::char_matrix(&needed_dims, flat));
+    }
+
+    if class == DataClass::Double && (base.is_complex() || rhs.is_complex()) {
+        let mut flat = crate::value::to_c64_vec(base);
+        flat.resize(needed.max(flat.len()), C64::new(0.0, 0.0));
+        let rc = crate::value::to_c64_vec(rhs);
+        for (i, &p) in plan.linear.iter().enumerate() {
+            let val = if rc.len() == 1 { rc[0] } else { rc[i] };
+            flat[p] = val;
+        }
+        return Ok(crate::value::build_complex(&needed_dims, flat));
+    }
+
+    let mut flat = to_f64_vec(base);
+    flat.resize(needed.max(flat.len()), 0.0);
+    for (i, &p) in plan.linear.iter().enumerate() {
+        flat[p] = take(i)?;
+    }
+    Ok(crate::value::build_real(class, &needed_dims, flat))
+}
+
+/// Scatter into / grow a cell array via paren-assignment (`c(i) = {..}`), where
+/// `rhs` is itself a cell whose contents are placed at the positions.
+fn scatter_cell(base: &Array, plan: &IndexPlan, rhs: &Array) -> Flow<Array> {
+    let needed: usize = plan.needed_dims.iter().product();
+    let mut flat: Vec<Array> = match base {
+        Array::Cell(d) => crate::value::mem_order(d),
+        _ if base.numel() == 0 => Vec::new(),
+        _ => {
+            return Err(Signal::Error(InterpError::msg(
+                "cannot paren-assign a cell into a non-cell",
+            )));
+        }
+    };
+    flat.resize(needed.max(flat.len()), Array::empty());
+    let rhs_cells: Vec<Array> = match rhs.as_cell() {
+        Some(c) => crate::value::mem_order(c),
+        None => {
+            return Err(Signal::Error(InterpError::msg(
+                "right-hand side of cell paren-assignment must be a cell array",
+            )));
+        }
+    };
+    for (i, &p) in plan.linear.iter().enumerate() {
+        let v = if rhs_cells.len() == 1 {
+            rhs_cells[0].clone()
+        } else {
+            rhs_cells[i].clone()
+        };
+        flat[p] = v;
+    }
+    Ok(Array::cell(&plan.needed_dims, flat))
+}
+
+/// Scatter cell *contents* via brace-assignment (`c{i} = val`): grows the cell
+/// and places each `rhs` value directly into the cell slot.
+pub fn scatter_cell_contents(base: &Array, plan: &IndexPlan, rhs: Array) -> Flow<Array> {
+    let needed: usize = plan.needed_dims.iter().product();
+    let mut flat: Vec<Array> = match base {
+        Array::Cell(d) => crate::value::mem_order(d),
+        _ if base.numel() == 0 => Vec::new(),
+        _ => {
+            return Err(Signal::Error(InterpError::msg(format!(
+                "'{{}}' assignment requires a cell array, got {}",
+                base.class_name()
+            ))));
+        }
+    };
+    flat.resize(needed.max(flat.len()), Array::empty());
+    // Single rhs into possibly many positions (brace-assign one value).
+    for &p in &plan.linear {
+        flat[p] = rhs.clone();
+    }
+    let dims = if plan.needed_dims.iter().product::<usize>() >= flat.len() {
+        plan.needed_dims.clone()
+    } else {
+        vec![flat.len(), 1]
+    };
+    Ok(Array::cell(&dims, flat))
+}
+
+/// Promote class on assignment: empty base adopts rhs; otherwise keep base's
+/// class (MATLAB keeps the target's class when assigning into it).
+fn promote_assign(base: DataClass, rhs: DataClass) -> Flow<DataClass> {
+    if base.is_reference() && base != rhs {
+        return Err(Signal::Error(InterpError::msg(format!(
+            "cannot assign {} into {}",
+            rhs.name(),
+            base.name()
+        ))));
+    }
+    Ok(base)
+}
+
+// ---- Field access on structs ------------------------------------------------
+
+/// Read field `name` from a scalar struct value.
+pub fn field_read(base: &Array, name: &str) -> Flow<Array> {
+    match base {
+        Array::Struct(s) => s.scalar_field(name).cloned().ok_or_else(|| {
+            Signal::Error(InterpError::msg(format!(
+                "reference to non-existent field '{name}'"
+            )))
+        }),
+        _ => Err(Signal::Error(InterpError::msg(format!(
+            "cannot access field '{name}' of a {} value",
+            base.class_name()
+        )))),
+    }
+}
+
+/// Assign `value` to field `name` of `base`, creating the struct/field if
+/// needed (grow-on-assign for fields).
+pub fn field_write(base: &Array, name: &str, value: Array) -> Flow<Array> {
+    match base {
+        Array::Struct(s) => {
+            let mut fields: Vec<(String, Array)> = s
+                .field_names()
+                .iter()
+                .filter(|n| **n != name)
+                .map(|n| {
+                    (
+                        (*n).to_string(),
+                        s.scalar_field(n).cloned().unwrap_or_else(Array::empty),
+                    )
+                })
+                .collect();
+            fields.push((name.to_string(), value));
+            Ok(Array::struct_array(StructArray::scalar(fields)))
+        }
+        _ if base.numel() == 0 && !base.class().is_reference() => {
+            // Assigning a field into `[]` creates a new scalar struct.
+            Ok(Array::struct_array(StructArray::scalar([(
+                name.to_string(),
+                value,
+            )])))
+        }
+        _ => Err(Signal::Error(InterpError::msg(format!(
+            "cannot set field '{name}' on a {} value",
+            base.class_name()
+        )))),
+    }
+}

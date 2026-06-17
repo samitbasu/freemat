@@ -9,7 +9,7 @@ then tick it here and commit. Leave notes for the next session under each stage.
 - [x] **Stage 0 — Workspace scaffold & conventions**
 - [x] **Stage 1 — `fm-core`: types & Array**
 - [x] **Stage 2 — `fm-parser`: lexer + parser + AST (miette)**
-- [ ] **Stage 3 — `fm-interp`: evaluator, scope, registry, `.m` loader**
+- [x] **Stage 3 — `fm-interp`: evaluator, scope, registry, `.m` loader**
 - [ ] **Stage 4 — Conformance harness**
 - [ ] **Stage 5 — `fm-linalg` + core math builtins  ·  ★ Milestone 1**
 - [ ] **Stage 6 — `fm-builtins`: remaining core functions**
@@ -161,6 +161,101 @@ then tick it here and commit. Leave notes for the next session under each stage.
   `FreeMat/tests/parse/bad*.m` (e.g. `bad18.m`'s `a(]`, dangling-operator and unterminated
   constructs); the `switch` string-label and control-flow shapes follow `tests/flow/test_switch1.m`;
   the `linspace.m` function-def snippet is adapted from `toolbox/array/linspace.m`.
+
+### Stage 3 — done (`fm-interp`)
+- **Deps:** reuses `fm-core` + `fm-parser` (path deps) and `ndarray` (0.17, for the
+  column-major rebuild/cast helpers), `miette` (7.6) + `thiserror` (2.0) for the runtime
+  diagnostic. A dev-dep enables miette's `fancy` feature for error rendering. All workspace deps
+  already pinned in the root `Cargo.toml`; nothing new added there.
+- **Module layout (`crates/fm-interp/src/`):**
+  - `error.rs` — `InterpError` (`miette::Diagnostic`, MException-like: message + optional MATLAB
+    `identifier` + `#[source_code]`/`#[label]` span) and the control-flow `Signal` enum
+    (`Break`/`Continue`/`Return`/`Error`) threaded through `Flow<T> = Result<T, Signal>`. No
+    panics for control flow.
+  - `value.rs` — flat-data bridge: `to_f64_vec`/`to_c64_vec` read any class in **column-major
+    memory order** (see the ndarray gotcha below); `build_real`/`build_complex`/`char_matrix`
+    rebuild typed arrays (saturating integer casts); `truth` (MATLAB all-nonzero condition),
+    `to_index` (1-based→0-based).
+  - `ops.rs` — operator dispatch: element-wise `+ - .* ./ .\ .^`, relational, `& |`, unary
+    `+ - ~`, with **scalar↔array and singleton-dimension broadcasting** + `fm_core::promote`
+    type promotion (relational/logical always yield `logical`); naive column-major `*` matmul;
+    scalar `^`/`/`; matrix solve/`\`/matrix-power return a clear "not yet (Stage 5)" error.
+  - `index.rs` — indexing engine over column-major linear positions: `plan_index` (linear +
+    N-D subscript, `:`, logical masks), `gather`/`gather_cell_contents` (reads), `scatter`/
+    `scatter_cell`/`scatter_cell_contents` (writes with **grow-on-assign**), `field_read`/
+    `field_write` (struct fields, grow-from-`[]`).
+  - `scope.rs` — `Scope`: locals + global/persistent **name** declarations + the **current
+    statement span/line** (debug seam).
+  - `context.rs` — `Context`: scope stack + call stack, shared `globals` table, per-function
+    `persistents` table (keyed `function\0name`), and a **switchable active scope**
+    (`set_active`/`active_index`) for future `dbup`/`dbdown`; `lookup`/`assign` honour the top
+    scope's global/persistent declarations; `stack_trace` for `dbstack`.
+  - `function.rs` — `Function` enum (`Builtin { fn(&mut Interpreter, &[Array], nargout) }` vs
+    `Interpreted { Arc<FunctionDef>, Arc<String> src }`) + `FunctionTable` with
+    `add_builtin`/`add_interpreted` (the `addFunction`/`addSpecialFunction` analogue — every
+    builtin gets the interpreter, so "special" needs nothing extra).
+  - `interp.rs` — the evaluator (`Interpreter`): expression eval (`eval`/`eval_multi`),
+    statement execution, control flow, assignment + LHS indexing + multi-return, function calls,
+    matrix/cell literals, ranges, transpose, concatenation (`hcat`/`vcat`/cell concat).
+  - `builtins.rs` — the minimal builtin set + type-cast builtins.
+  - `loader.rs` — `load_file`/`define_source`: parse a `.m` via `fm_parser` and register its
+    functions through the same evaluator.
+- **Debug-readiness seams (where they live):**
+  1. **Single statement chokepoint** — `Interpreter::exec_statement` (`interp.rs`). *Every*
+     statement (top-level, loop body, function body) routes through it; a comment marks the exact
+     spot where Stage 10 inserts `self.check_breakpoint(stmt)?`.
+  2. **Per-scope current line/span** — `exec_statement` calls `Context::set_current_span`, which
+     writes `Scope::current_span`/`current_line` on the executing (top) scope before running it.
+     `Context::stack_trace()` reads these for `dbstack`.
+  3. **Switchable active scope** — `Context::{active, set_active, active_index, active_mut}`
+     (`context.rs`): the inspected scope is decoupled from the executing scope, the basis for
+     `dbup`/`dbdown`. Exercised by `scoping.rs::debug_seam_active_scope_switchable`.
+- **Operator / indexing / control-flow coverage:**
+  - Operators: all element-wise arithmetic + relational + logical + unary, broadcasting
+    (scalar + singleton-dim), promotion (double-dominant, integer-keeps-class, single), complex
+    lane (`+ - .* ./ .^`, `*`, `==`), naive matmul, transpose `'`/`.'`.
+  - Indexing: linear & subscript reads, `:` magic colon, `end` (incl. inside ranges/arith),
+    logical masks (linear + per-dim), ranges; assignment in place, grow-on-assign (vector + N-D),
+    grow-from-nothing, logical-mask assign; cell `{}` read/write + grow; struct `.f` and dynamic
+    `.(expr)` read/write + grow-from-`[]`.
+  - Control flow: `for` (iterates **columns**, MATLAB semantics), `while`, `if/elseif/else`,
+    `switch/case/otherwise` (numeric, string, cell-of-alternatives), `try/catch` (binds the
+    message to `lasterr`), `break`/`continue`/`return`, short-circuit `&&`/`||`.
+  - Functions: positional inputs, `varargin`/`varargout`, multi-return `[a,b]=f(...)`, `nargin`/
+    `nargout`, recursion, `ans` echo. Built-in constants `pi e Inf NaN eps i j true false`.
+- **Builtins added (minimal, per the plan):** `disp`/`display`, `error` (incl. `id:comp` form),
+  `size` (incl. `size(x,dim)` and multi-return), `numel`, `length`, `ndims`, `isempty`, `prod`,
+  `sum`, `class`, `zeros`, `ones`, `isa`, `ischar`, `isnumeric`, `iscell`, `isreal`, `mod`,
+  `rem`, `abs`, `floor`, `ceil`, `round`, `num2str`, and the type casts `double single logical
+  char int8..uint64`. The bulk is deferred to Stage 5/6.
+- **`.m` end-to-end:** `tests/toolbox.rs` loads and runs the real `toolbox/array/isvector.m`
+  (exercises `size`, `prod`, paren-index, `==`, `*`, `&&`, `||`) and `toolbox/array/isscalar.m`
+  (`numel`, `==`) unchanged through the loader + evaluator.
+- **Tests (50 integration + 1 doctest):** `operators.rs` (13), `indexing.rs` (14),
+  `control_flow.rs` (12), `scoping.rs` (9 — local/global/persistent, multi-return, nargin,
+  recursion, active-scope switch), `toolbox.rs` (2). Stage-0 `scaffold_builds` placeholder
+  removed. `cargo test --workspace` green; `clippy --workspace --all-targets -D warnings` clean;
+  `fmt --all --check` passes.
+- **Critical decision — column-major reads:** `fm-core` stores dense buffers F-order, but
+  ndarray's `.iter()` walks **logical (row-major)** order. All flat reads therefore go through
+  `value::mem_order` (= `as_slice_memory_order`, with a `.t().iter()` fallback) so linear/COW
+  index positions line up with the column-major model. This was the one real footgun; not a
+  `fm-core` bug, just an ndarray API subtlety (documented here so the next session doesn't trip).
+- **Deferrals / decisions (MATLAB-compatible choices made where ambiguous):**
+  - **Stage 5:** matrix `\`/`/` solve, matrix `^`, and faer-backed `*` — `*` is a naive
+    column-major matmul for now; solves error with an explicit "(Stage 5)" message.
+  - **Function handles / anonymous functions** (`@f`, `@(x)...`) parse but error at eval — they
+    arrive with the closure/dispatch work in Stage 5/6.
+  - `try/catch` binds the error message to `lasterr`; binding a full **MException object** to the
+    catch identifier waits for Stage 6 (the `InterpError.identifier` field is already carried).
+  - `~` as a multi-LHS placeholder: the **parser** doesn't yet treat `~` as a discard token
+    (`[~, y] = f()` fails to parse). The evaluator already discards an `Ident("~")` target, so
+    this lights up for free once the parser supports it — left as a parser TODO (did not modify
+    `fm-parser` per the stage constraints).
+  - `prod`/`sum` implement the vector + 2-D column-reduction cases needed now (full N-D reductions
+    are Stage 6).
+  - Nested functions are registered as siblings in the flat function table (simple Stage 3
+    model; proper nested-scope capture is a later refinement).
 
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,
