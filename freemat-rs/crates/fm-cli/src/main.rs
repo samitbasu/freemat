@@ -5,7 +5,9 @@
 //! line, prints results MATLAB-style (a trailing `;` suppresses the echo), and
 //! renders runtime errors with `miette`'s graphical (`fancy`) reporter.
 //!
-//! Graphics (the `axum` webserver + Plotly bridge) arrive in Stage 7.
+//! On startup it also launches the embedded `axum` graphics webserver (see
+//! [`fm_cli::server`]) and installs it as the interpreter's graphics sink, so
+//! plotting commands render live in a browser over a websocket.
 
 use std::io::Write;
 
@@ -19,6 +21,22 @@ fn main() -> std::process::ExitCode {
 
     let mut interp = Interpreter::new();
     fm_builtins::register_standard_library(&mut interp);
+
+    // Start the embedded graphics webserver and install it as the graphics sink
+    // so plotting commands render in the browser. A failure here is non-fatal —
+    // the REPL still works, graphics just won't display.
+    match fm_cli::start(0) {
+        Ok(handle) => {
+            let url = handle.url();
+            println!("Graphics server: {url}");
+            // Best-effort auto-open; ignore failures (headless / no browser).
+            let _ = webbrowser::open(&url);
+            interp.set_graphics_sink(Box::new(handle));
+        }
+        Err(e) => {
+            eprintln!("graphics server unavailable ({e}); plotting disabled");
+        }
+    }
 
     let mut rl = match DefaultEditor::new() {
         Ok(rl) => rl,

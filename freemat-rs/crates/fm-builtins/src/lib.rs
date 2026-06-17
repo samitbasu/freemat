@@ -17,6 +17,7 @@ mod array_manip;
 mod cellstruct;
 mod constructors;
 mod elementary;
+mod graphics;
 mod inspection;
 mod interp_ops;
 mod linalg;
@@ -51,6 +52,8 @@ pub fn register_into(table: &mut FunctionTable) {
     setops::register(table);
     cellstruct::register(table);
     interp_ops::register(table);
+    graphics::register(table);
+    graphics::register_log_plots(table);
 }
 
 #[cfg(test)]

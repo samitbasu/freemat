@@ -461,3 +461,91 @@ fn num2str_and_str2double() {
     assert_eq!(str_of("r = num2str(42);", "r"), "42");
     assert_eq!(eval_scalar("str2double('3.5')"), 3.5);
 }
+
+// ---- graphics (Stage 7) -----------------------------------------------------
+
+#[test]
+fn plot_builds_a_line_series() {
+    use fm_graphics::Series;
+    let mut i = interp();
+    i.run("x = 0:.1:10; plot(x, sin(x));").unwrap();
+    let fig = i.graphics.scene.figure(1).expect("figure 1 exists");
+    let ax = &fig.axes[0];
+    assert_eq!(ax.series.len(), 1);
+    let Series::Line(l) = &ax.series[0] else {
+        panic!("expected a line series");
+    };
+    assert_eq!(l.x.len(), 101);
+    assert_eq!(l.y.len(), 101);
+    assert!((l.x[0]).abs() < 1e-12);
+    assert!((l.x[100] - 10.0).abs() < 1e-12);
+    assert!((l.y[0] - 0.0_f64.sin()).abs() < 1e-12);
+    assert_eq!(l.line_style, "-");
+    assert_eq!(l.color, "rgb(0,0,255)");
+}
+
+#[test]
+fn second_plot_replaces_without_hold() {
+    let mut i = interp();
+    i.run("plot(1:3, [1 2 3]);").unwrap();
+    i.run("plot(1:3, [3 2 1]);").unwrap();
+    let ax = &i.graphics.scene.figure(1).unwrap().axes[0];
+    assert_eq!(ax.series.len(), 1); // replaced, not appended
+}
+
+#[test]
+fn hold_on_appends_series() {
+    let mut i = interp();
+    i.run("plot(1:3, [1 2 3]); hold on; plot(1:3, [3 2 1]);")
+        .unwrap();
+    let ax = &i.graphics.scene.figure(1).unwrap().axes[0];
+    assert_eq!(ax.series.len(), 2);
+}
+
+#[test]
+fn title_labels_grid_and_linespec() {
+    let mut i = interp();
+    i.run("plot(1:3, [1 2 3], 'r--o'); title('T'); xlabel('X'); ylabel('Y'); grid on;")
+        .unwrap();
+    let ax = &i.graphics.scene.figure(1).unwrap().axes[0];
+    assert_eq!(ax.title, "T");
+    assert_eq!(ax.xlabel, "X");
+    assert_eq!(ax.ylabel, "Y");
+    assert!(ax.grid);
+    let fm_graphics::Series::Line(l) = &ax.series[0] else {
+        panic!();
+    };
+    assert_eq!(l.color, "rgb(255,0,0)");
+    assert_eq!(l.line_style, "--");
+    assert_eq!(l.marker, "o");
+}
+
+#[test]
+fn figure_selects_new_figure() {
+    let mut i = interp();
+    i.run("plot(1:3, [1 2 3]); figure; plot(1:3, [3 2 1]);")
+        .unwrap();
+    assert_eq!(i.graphics.scene.figures.len(), 2);
+}
+
+#[test]
+fn drawnow_flushes_through_sink() {
+    use fm_graphics::{GraphicsSink, Scene};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct Capture(Arc<Mutex<Option<Scene>>>);
+    impl GraphicsSink for Capture {
+        fn publish(&self, scene: &Scene) {
+            *self.0.lock().unwrap() = Some(scene.clone());
+        }
+    }
+
+    let captured = Arc::new(Mutex::new(None));
+    let mut i = interp();
+    i.set_graphics_sink(Box::new(Capture(captured.clone())));
+    i.run("plot(1:3, [1 2 3]);").unwrap(); // implicit draw flushes
+    let scene = captured.lock().unwrap().clone().expect("scene published");
+    assert_eq!(scene.figures.len(), 1);
+    assert_eq!(scene.figures[0].axes[0].series.len(), 1);
+}

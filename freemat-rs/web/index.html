@@ -1,13 +1,160 @@
 <!doctype html>
-<!-- FreeMat-rs graphics frontend. Placeholder (Stage 0).
-     Stage 7 fills this in: load Plotly.js, open a websocket to the embedded
-     fm-cli server, and render the serialized scene-graph as Plotly figures. -->
+<!-- FreeMat-rs graphics frontend (Stage 7).
+     Loads Plotly.js from a CDN, opens a websocket back to the embedded fm-cli
+     server, and renders each received Figure as a Plotly plot, updating in
+     place on every scene message. Plain JS, no build step, no deps but Plotly.
+     NOTE: the Plotly CDN <script> needs internet access. To run offline, vendor
+     plotly.min.js next to this file and point the <script src> at it. -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <title>FreeMat-rs graphics</title>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0; background: #fafafa; }
+      header { padding: 8px 16px; background: #2b3a55; color: #fff; font-size: 14px; }
+      #status { float: right; opacity: 0.8; }
+      .figure { margin: 12px; border: 1px solid #ddd; background: #fff; border-radius: 4px; }
+      .figure > .plot { width: 100%; height: 420px; }
+      .empty { padding: 24px; color: #888; }
+    </style>
   </head>
   <body>
-    <p>FreeMat-rs graphics frontend — not wired up yet (arrives in Stage 7).</p>
+    <header>
+      FreeMat-rs graphics
+      <span id="status">connecting…</span>
+    </header>
+    <div id="figures"><div class="empty" id="placeholder">No figures yet — run <code>plot(...)</code> in the REPL.</div></div>
+
+    <script>
+      "use strict";
+
+      // Map FreeMat line styles to Plotly dash patterns.
+      const DASH = { "-": "solid", "--": "dash", ":": "dot", "-.": "dashdot" };
+      // Map FreeMat marker letters to Plotly marker symbols.
+      const MARKERS = {
+        "o": "circle", "+": "cross", "*": "star", ".": "circle",
+        "x": "x", "s": "square", "d": "diamond", "^": "triangle-up",
+        "v": "triangle-down", ">": "triangle-right", "<": "triangle-left",
+        "p": "pentagon", "h": "hexagon",
+      };
+
+      function lineToTrace(s, idx) {
+        let mode = "lines";
+        const hasLine = s.line_style && s.line_style.length > 0;
+        const hasMarker = s.marker && s.marker.length > 0;
+        if (hasLine && hasMarker) mode = "lines+markers";
+        else if (hasMarker && !hasLine) mode = "markers";
+        const trace = {
+          type: "scatter", mode, x: s.x, y: s.y,
+          name: s.name || ("series " + (idx + 1)),
+          line: { dash: DASH[s.line_style] || "solid" },
+        };
+        if (s.color) trace.line.color = s.color;
+        if (hasMarker) {
+          trace.marker = { symbol: MARKERS[s.marker] || "circle" };
+          if (s.color) trace.marker.color = s.color;
+        }
+        return trace;
+      }
+
+      function surfaceToTrace(s) {
+        return {
+          type: "surface", z: s.z,
+          x: s.x && s.x.length ? s.x : undefined,
+          y: s.y && s.y.length ? s.y : undefined,
+          colorscale: s.colormap || "Viridis",
+        };
+      }
+
+      function imageToTrace(s) {
+        return { type: "heatmap", z: s.data, colorscale: s.colormap || "Viridis" };
+      }
+
+      function axesToData(ax) {
+        const data = [];
+        (ax.series || []).forEach((s, i) => {
+          if (s.kind === "line") data.push(lineToTrace(s, i));
+          else if (s.kind === "surface") data.push(surfaceToTrace(s));
+          else if (s.kind === "image") data.push(imageToTrace(s));
+        });
+        return data;
+      }
+
+      function axesToLayout(ax) {
+        const layout = {
+          title: ax.title || "",
+          xaxis: { title: ax.xlabel || "", showgrid: !!ax.grid },
+          yaxis: { title: ax.ylabel || "", showgrid: !!ax.grid },
+          showlegend: !!(ax.legend && ax.legend.visible),
+          margin: { l: 50, r: 20, t: 40, b: 40 },
+        };
+        if (ax.xscale === "log") layout.xaxis.type = "log";
+        if (ax.yscale === "log") layout.yaxis.type = "log";
+        if (ax.limits) {
+          layout.xaxis.range = [ax.limits.xmin, ax.limits.xmax];
+          layout.yaxis.range = [ax.limits.ymin, ax.limits.ymax];
+        }
+        if (ax.equal) layout.yaxis.scaleanchor = "x";
+        if (ax.legend && ax.legend.names && ax.legend.names.length) {
+          // Apply explicit legend names to the data traces post-render.
+          layout._legendNames = ax.legend.names;
+        }
+        return layout;
+      }
+
+      function renderScene(scene) {
+        const container = document.getElementById("figures");
+        const ph = document.getElementById("placeholder");
+        if (ph && scene.figures && scene.figures.length) ph.remove();
+
+        const seen = new Set();
+        (scene.figures || []).forEach((fig) => {
+          seen.add("fig-" + fig.id);
+          let el = document.getElementById("fig-" + fig.id);
+          if (!el) {
+            el = document.createElement("div");
+            el.className = "figure";
+            el.id = "fig-" + fig.id;
+            const header = document.createElement("div");
+            header.style.cssText = "padding:4px 10px;font-size:12px;color:#555;border-bottom:1px solid #eee";
+            header.textContent = "Figure " + fig.id;
+            const plot = document.createElement("div");
+            plot.className = "plot";
+            plot.id = "plot-" + fig.id;
+            el.appendChild(header);
+            el.appendChild(plot);
+            container.appendChild(el);
+          }
+          // Milestone 2 uses a single axes per figure; render the first.
+          const ax = (fig.axes && fig.axes[0]) || { series: [] };
+          const data = axesToData(ax);
+          const layout = axesToLayout(ax);
+          const names = layout._legendNames; delete layout._legendNames;
+          if (names) data.forEach((t, i) => { if (names[i]) t.name = names[i]; });
+          Plotly.react("plot-" + fig.id, data, layout, { responsive: true });
+        });
+
+        // Remove figures that no longer exist (e.g. after clf-all).
+        Array.from(container.querySelectorAll(".figure")).forEach((el) => {
+          if (!seen.has(el.id)) el.remove();
+        });
+      }
+
+      function connect() {
+        const proto = location.protocol === "https:" ? "wss" : "ws";
+        const ws = new WebSocket(proto + "://" + location.host + "/ws");
+        const status = document.getElementById("status");
+        ws.onopen = () => { status.textContent = "connected"; };
+        ws.onclose = () => { status.textContent = "disconnected — retrying…"; setTimeout(connect, 1000); };
+        ws.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg.type === "scene") renderScene(msg.scene);
+          } catch (e) { console.error("bad scene message", e); }
+        };
+      }
+      connect();
+    </script>
   </body>
 </html>

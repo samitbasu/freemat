@@ -13,7 +13,7 @@ then tick it here and commit. Leave notes for the next session under each stage.
 - [x] **Stage 4 — Conformance harness**
 - [x] **Stage 5 — `fm-linalg` + core math builtins  ·  ★ Milestone 1**
 - [x] **Stage 6 — `fm-builtins`: remaining core functions**
-- [ ] **Stage 7 — `fm-graphics` + webserver + Plotly  ·  ★ Milestone 2**
+- [x] **Stage 7 — `fm-graphics` + webserver + Plotly  ·  ★ Milestone 2**
 - [ ] **Stage 8 — `fm-io`: MAT files, file I/O, FFT, regex**
 - [ ] **Stage 9 — Advanced / optional**
 - [ ] **Stage 10 — Debugging & editor integration (DAP + `db*` engine; optional LSP)**
@@ -551,6 +551,108 @@ then tick it here and commit. Leave notes for the next session under each stage.
     empty assignment as unset — `inspection/test_isset1` consequently still fails; left as-is.
   - `permute`/`reshape`/`circshift`/`flip` materialise via a column-major position permutation,
     dispatching on element type (numeric/char/complex/cell) so they work for all dense classes.
+
+### Stage 7 — done (`fm-graphics` scene-graph + webserver + Plotly · ★ Milestone 2)
+
+- **Deps added** (pinned in root `[workspace.dependencies]`): `serde = "1"` (+ derive),
+  `serde_json = "1"`, `tokio = "1"`, `axum = "0.8"` (`ws` feature), `futures-util = "0.3"`,
+  `webbrowser = "1"`, and `tokio-tungstenite = "0.24"` (websocket *client*, fm-cli dev-dep only —
+  drives the Milestone-2 test). `fm-graphics` opts into serde/serde_json; `fm-interp` and
+  `fm-builtins` gain a path dep on `fm-graphics`; `fm-cli` opts into tokio/axum/futures-util/
+  webbrowser (+ the dev-deps).
+
+- **`fm-graphics` — the retained, renderer-agnostic scene graph + JSON wire protocol**
+  (`crates/fm-graphics/src/`):
+  - `scene.rs` — the semantic model: `Scene { figures: Vec<Figure> }` → `Figure { id, axes }` →
+    `Axes { series, title, xlabel/ylabel/zlabel, limits, xscale/yscale, grid, legend, hold,
+    equal }` → `Series` enum (`Line(LineSeries{x,y,line_style,marker,color,name})` /
+    `Surface(SurfaceSeries{z,x,y,colormap,wireframe})` / `Image(ImageSeries{data,colormap})`).
+    All `serde::{Serialize,Deserialize}` (round-trippable) with `skip_serializing_if` on
+    defaulted fields so the wire payload stays lean. `Series`/`Scale` use `#[serde(tag=...)]` so
+    the frontend dispatches on `"kind"`/string. `Scene::to_message()` wraps the scene in a tagged
+    `WireMessage::Scene` envelope → `{"type":"scene","scene":{...}}` (the only message type so
+    far; serialize-only because it borrows `&Scene`). `default_color(i)` reproduces FreeMat's
+    `HandleAxis.cpp` default color order (blue/green/red/cyan/magenta/yellow/gray) for cycling.
+  - `linespec.rs` — MATLAB linespec parser (`"r--o"` → color `rgb(...)` + line style + marker),
+    matching `toolbox/graph` `islinespec`; `valid` flag lets `plot` reject non-linespec strings.
+  - `lib.rs` — re-exports + the **`GraphicsSink` trait** (`fn publish(&self, &Scene)`, `Send +
+    Sync`, dyn-compatible) the interpreter pushes through without depending on axum/tokio.
+  - 7 unit tests: line→Plotly-shaped JSON, scene JSON round-trip, defaulted-field omission,
+    figure lookup/insert, linespec parsing (incl. `-.` vs `-` vs `--`), color cycling.
+
+- **Interpreter graphics state** (`fm-interp/src/graphics.rs`, `GraphicsState`): the retained
+  `Scene` + `current_figure` id + a `dirty` flag + an optional `Box<dyn GraphicsSink>`. Added a
+  `graphics: GraphicsState` field to `Interpreter` and `set_graphics_sink(...)`. **The sink is
+  optional** — library/conformance tests update the scene but never publish, so nothing pulls in
+  the webserver. `Interpreter::run` does an **implicit draw**: after a top-level unit, if
+  `dirty`, it `flush()`es the scene through the sink (a trailing `;` suppresses value echo, NOT
+  the plot — MATLAB semantics). `drawnow` flushes explicitly.
+
+- **Graphics builtins** (`fm-builtins/src/graphics.rs`), all building the scene directly:
+  `figure` (new/select by number), `plot` (x/y groups, implicit `1:n` x, trailing linespec,
+  `newplot` clear-unless-hold, color cycling), `line` (always-add), `title`, `xlabel`/`ylabel`/
+  `zlabel`, `legend` (names + on/off), `hold` (on/off/toggle), `axis` (`[xmin xmax ymin ymax]` /
+  `equal` / `normal`/`auto` / accepted-noop `tight`/`square`), `grid` (on/off/toggle), `clf`,
+  `gcf`/`gca` (return the figure handle; single-axes model), `drawnow`, `surf`/`mesh`
+  (Z or X,Y,Z; wireframe flag), `image`/`imagesc`, and `semilogx`/`semilogy`/`loglog` (set log
+  scale then delegate to `plot`). 7 new integration tests (line series shape/x/y/color/style,
+  replace-without-hold, hold-on-append, title/label/grid/linespec, new-figure, sink flush).
+  - **Deferred handle-graphics fidelity (pragmatic Milestone-2 scope):** no FreeMat
+    handle-property `set`/`get` system, no real handle objects (`gcf`/`gca` return the figure
+    *number* as a stand-in handle), one axes per figure (no `subplot`/multiple axes), no
+    `ishandle`/`findobj`/`copyobj`, no property-value pairs on `plot` beyond a linespec, no
+    `colorbar`/`colormap` selection, no text/annotation objects, no `print`/export. The
+    `toolbox/graph/*.m` files (which lean on the property system) are **not** wired in; `plot`
+    etc. are native builtins. These are recorded here and revisited in Stage 9 (3-D polish).
+
+- **Webserver + websocket** (`fm-cli/src/server.rs`, exposed via a new `fm-cli` `lib.rs`):
+  - `start(port)` binds a **std** `TcpListener` synchronously (so the real port is known when
+    `port == 0`, and so it can be called from inside another tokio runtime — the test does),
+    then spawns a background OS thread running a **multi-threaded tokio runtime** with an `axum`
+    app: `GET /` serves `web/index.html` (via `include_str!`, so the binary is self-contained)
+    and `GET /ws` upgrades a websocket. Returns a `ServerHandle { tx, latest, addr }`.
+  - **REPL ⇄ server coexistence:** the REPL is the blocking `rustyline` loop on the main thread;
+    the server runs on its own runtime/thread, so neither blocks the other. They communicate via
+    a `tokio::sync::broadcast::Sender<String>` (serialized scene JSON) plus a shared
+    `Arc<Mutex<Scene>>` (the latest snapshot). `ServerHandle` **implements `GraphicsSink`**: on
+    `publish` it stores the snapshot and broadcasts the JSON (non-blocking; ignores "no
+    subscribers"). On a new websocket connection the handler first sends the current snapshot
+    (so a freshly-opened tab shows existing figures), then forwards every broadcast update.
+  - `fm-cli/src/main.rs` starts the server on `127.0.0.1:0`, prints
+    `Graphics server: http://127.0.0.1:<port>`, best-effort `webbrowser::open`s it, and installs
+    the handle as the interpreter's graphics sink. A server-start failure is non-fatal (REPL
+    still works; plotting just won't display).
+
+- **Frontend** (`web/index.html`): plain JS, no build step. Loads **Plotly.js via CDN**
+  (`cdn.plot.ly/plotly-2.35.2.min.js` — needs internet; a comment documents vendoring
+  `plotly.min.js` next to the file to run offline). Opens a websocket to `/ws` (auto-reconnect on
+  close), parses each `{"type":"scene",...}` message, and renders **one Plotly plot per
+  `Figure`**, mapping line/surface/image series → scatter/surface/heatmap traces and axes
+  fields → layout (title, axis labels, grid, log scale, limits, legend, `axis equal`). Uses
+  `Plotly.react` so updates redraw **in place**; removes figures that vanish from the scene.
+
+- **Milestone 2 — automated proof** (`fm-cli/tests/milestone2.rs`,
+  `plot_streams_expected_scene_over_websocket`): starts the server on an OS port, installs it as
+  the interpreter's sink, connects a `tokio-tungstenite` websocket client (the browser
+  stand-in), asserts the on-connect snapshot is an empty scene, runs `x = 0:.1:10;` then
+  `plot(x, sin(x));`, and asserts the client receives a `scene` message whose figure-1 axes has a
+  **line trace** with `x.len()==101`, `x[0]==0`, `x[100]==10`, `y[0]==sin(0)`, `y[10]==sin(1)`,
+  `color=="rgb(0,0,255)"`, `line_style=="-"`. Then `plot(x, cos(x));` and asserts the **live
+  update** carries `cos` data. This exercises the exact `/ws` path a real browser uses.
+  - **Manual check:** `cargo run -p fm-cli`, note the printed `Graphics server:` URL (a browser
+    tab auto-opens if a browser is available — needs internet for the Plotly CDN). At the `-->`
+    prompt: `x = 0:.1:10;` then `plot(x, sin(x))` — a blue sine curve appears in the browser.
+    Run `plot(x, cos(x))` — the same figure updates live to a cosine. `hold on; plot(x, sin(x))`
+    overlays a second (green) curve; `title('demo'); xlabel('x'); grid on` annotate it;
+    `figure; plot(1:10, (1:10).^2)` opens a second Plotly figure in the page.
+
+- **Conformance: unchanged at 258/603 (42.8%).** Stage 7 adds no `.m` graphics tests to the gate
+  (graphics tests stay deferred per the plan); the graphics builtins are additive and don't touch
+  the non-graphics surface. The pass-floor guard (`curated.rs::PASS_FLOOR = 246`) is untouched.
+
+- **Verification:** `cargo build --workspace` ✓; `cargo clippy --workspace --all-targets -D
+  warnings` clean ✓; `cargo fmt --all --check` ✓; `cargo test --workspace` green ✓ (incl. the
+  7 fm-graphics, 7 new fm-builtins graphics, and the Milestone-2 websocket integration tests).
 
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,

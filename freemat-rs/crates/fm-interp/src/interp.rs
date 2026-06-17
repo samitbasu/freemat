@@ -21,6 +21,7 @@ use fm_parser::{Span, parse_program};
 use crate::context::Context;
 use crate::error::{Flow, InterpError, Signal};
 use crate::function::{Function, FunctionTable};
+use crate::graphics::GraphicsState;
 use crate::index::{self, IndexArg, IndexPlan};
 use crate::ops;
 use crate::value::{self, truth};
@@ -39,6 +40,8 @@ pub struct Interpreter {
     nargin_stack: Vec<usize>,
     /// `nargout` for the executing function frame.
     nargout_stack: Vec<usize>,
+    /// Retained graphics scene + current figure + optional broadcast sink.
+    pub graphics: GraphicsState,
 }
 
 impl Default for Interpreter {
@@ -58,9 +61,17 @@ impl Interpreter {
             output: String::new(),
             nargin_stack: vec![0],
             nargout_stack: vec![0],
+            graphics: GraphicsState::default(),
         };
         crate::builtins::register_defaults(&mut interp.functions);
         interp
+    }
+
+    /// Install a graphics sink (the webserver) so plotting commands broadcast
+    /// scene updates. Without one, graphics builtins still update the retained
+    /// scene but don't publish.
+    pub fn set_graphics_sink(&mut self, sink: Box<dyn fm_graphics::GraphicsSink>) {
+        self.graphics.sink = Some(sink);
     }
 
     /// Take the accumulated output (echoed values + `disp`), clearing it.
@@ -82,13 +93,20 @@ impl Interpreter {
     /// Returns the runtime [`InterpError`] if execution raises one.
     pub fn run(&mut self, src: &str) -> Result<(), InterpError> {
         let program = parse_program(src).map_err(|e| InterpError::msg(e.to_string()))?;
-        match program {
+        let result = match program {
             Program::Script(stmts) => self.run_block(&stmts, src).map_err(unwrap_error),
             Program::Functions(defs) => {
                 self.load_functions(defs, src);
                 Ok(())
             }
+        };
+        // Implicit draw: after a top-level unit, flush any scene changes through
+        // the sink (mirrors MATLAB drawing the figure once the command returns;
+        // a trailing `;` suppresses value echo, NOT the plot).
+        if self.graphics.dirty {
+            self.graphics.flush();
         }
+        result
     }
 
     /// Run a list of statements (a script / REPL body) at the top level.
