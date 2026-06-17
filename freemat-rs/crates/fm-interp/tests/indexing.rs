@@ -118,3 +118,58 @@ fn struct_field_read_write() {
 fn dynamic_field() {
     assert_eq!(eval_f64("s.x = 42; f = 'x'; s.(f)"), 42.0);
 }
+
+// ---- Stage 6 bug fixes ------------------------------------------------------
+
+#[test]
+fn element_deletion_vector() {
+    // x(i) = [] removes the indexed element, keeping the row orientation.
+    assert_eq!(
+        run_vec("x = [1 2 3 4]; x(2) = []; x", "x"),
+        vec![1.0, 3.0, 4.0]
+    );
+}
+
+#[test]
+fn element_deletion_logical() {
+    assert_eq!(
+        run_vec("x = [10 20 30 40]; x([true false true false]) = []; x", "x"),
+        vec![20.0, 40.0]
+    );
+}
+
+#[test]
+fn row_deletion() {
+    // Deleting a whole row via x(i,:) = [].
+    let v = run_var("x = [1 2; 3 4; 5 6]; x(2, :) = []; x", "x");
+    assert_eq!(v.dims(), vec![2, 2]);
+    assert_eq!(
+        run_vec("x = [1 2; 3 4; 5 6]; x(2, :) = []; x", "x"),
+        vec![1.0, 5.0, 2.0, 6.0]
+    );
+}
+
+#[test]
+fn column_deletion() {
+    let v = run_var("x = [1 2 3; 4 5 6]; x(:, 2) = []; x", "x");
+    assert_eq!(v.dims(), vec![2, 2]);
+}
+
+#[test]
+fn struct_array_concat_horizontal() {
+    // The struct-array concatenation bug fix.
+    assert_eq!(
+        eval_f64("a.foo = 1; a.goo = 2; b.goo = 5; b.foo = 4; c = [a, b]; c(2).foo"),
+        4.0
+    );
+    assert_eq!(
+        eval_f64("a.foo = 1; a.goo = 2; b.goo = 5; b.foo = 4; c = [a, b]; c(1).goo"),
+        2.0
+    );
+}
+
+#[test]
+fn struct_array_grow_assign() {
+    // g(3).foo = 3 grows a struct array; g(1) = [] deletes an element.
+    assert_eq!(eval_f64("g(3).foo = 3; g(1) = []; g(2).foo"), 3.0);
+}

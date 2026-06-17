@@ -40,6 +40,25 @@ impl StructArray {
         }
     }
 
+    /// Build a struct array directly from `dims` plus `(name, column-major
+    /// element vector)` pairs. Each element vector must have length `numel`.
+    #[must_use]
+    pub fn from_fields(dims: Vec<usize>, fields: Vec<(String, Vec<Array>)>) -> Self {
+        StructArray { dims, fields }
+    }
+
+    /// The ordered list of field names as owned strings.
+    #[must_use]
+    pub fn field_name_strings(&self) -> Vec<String> {
+        self.fields.iter().map(|(n, _)| n.clone()).collect()
+    }
+
+    /// Borrow the `(name, element-vector)` field pairs.
+    #[must_use]
+    pub fn field_pairs(&self) -> &[(String, Vec<Array>)] {
+        &self.fields
+    }
+
     /// The struct array dimensions.
     #[must_use]
     pub fn dims(&self) -> &[usize] {

@@ -413,6 +413,8 @@ dependencies = [
  "fm-core",
  "fm-interp",
  "fm-linalg",
+ "fm-parser",
+ "ndarray",
  "rand 0.9.4",
  "rand_distr",
 ]

@@ -12,7 +12,7 @@ then tick it here and commit. Leave notes for the next session under each stage.
 - [x] **Stage 3 — `fm-interp`: evaluator, scope, registry, `.m` loader**
 - [x] **Stage 4 — Conformance harness**
 - [x] **Stage 5 — `fm-linalg` + core math builtins  ·  ★ Milestone 1**
-- [ ] **Stage 6 — `fm-builtins`: remaining core functions**
+- [x] **Stage 6 — `fm-builtins`: remaining core functions**
 - [ ] **Stage 7 — `fm-graphics` + webserver + Plotly  ·  ★ Milestone 2**
 - [ ] **Stage 8 — `fm-io`: MAT files, file I/O, FFT, regex**
 - [ ] **Stage 9 — Advanced / optional**
@@ -446,6 +446,111 @@ then tick it here and commit. Leave notes for the next session under each stage.
     singleton broadcasting for these stays in the operator path; Stage 6 can widen if needed).
   - The two documented `fm-core` bugs (struct-array concat, `x(i)=[]` delete) are **Stage 6** and
     were worked around, not fixed (they still surface as honest `Error`s).
+
+### Stage 6 — done (`fm-builtins` core surface + the two documented bug fixes)
+
+- **Deps added:** `fm-builtins` now also depends on `fm-parser` (for `eval`/`feval` parsing)
+  and `ndarray` (column-major cell/char flattening helper). No new external crates.
+
+- **Builtins added (grouped), in new `fm-builtins` modules:**
+  - **`array_manip.rs` — array manipulation:** `reshape` (incl. a single `[]` placeholder
+    dimension, inferred), `sort` (stable, ascending/`'descend'`, `[s,idx]`, first-non-singleton
+    dim), `unique` (sorted+dedup; cell-of-strings path), `permute`/`ipermute` (N-D), `squeeze`,
+    `fliplr`/`flipud`/`flip`/`rot90`, `circshift`, `sub2ind`/`ind2sub`, and `cat`/`horzcat`/
+    `vertcat` (reuse the matrix-literal concat via the new `Interpreter::concat_values`).
+    (`cumsum`/`cumprod` already lived in `reductions`; `repmat`/`diag` already existed —
+    `repmat` was generalised to tile cells/char/complex, not just `double`, via a permutation.)
+  - **`strings.rs` — string functions:** `strncmp`/`strncmpi`, `upper`/`lower` (`toupper`/
+    `tolower`), `strtrim`, `deblank`, `blanks`, `strrep`, `strfind`, `strsplit`/`strjoin`,
+    `str2num`/`str2double`, `mat2str`, a rewritten `num2str`, and **`sprintf`/`printf`** — a
+    hand-written `printf` formatter covering `%d/%i/%u/%f/%e/%g/%s/%c/%x/%X/%o` with
+    flags/width/precision, `\n`/`\t` escapes, C-style `e+NN` exponent normalisation, and MATLAB
+    **argument recycling** (the format repeats over the flattened argument list).
+  - **`setops.rs` — set operations:** `union`, `intersect`, `setdiff`, `ismember` (logical mask
+    + optional location output), each with a numeric path and a cell-of-strings path; `unique`
+    is shared from `array_manip`.
+  - **`cellstruct.rs` — cell/struct ops:** `cell`, `struct` (scalar + cell-valued → struct
+    array), `fieldnames`, `isfield`, `rmfield`, `getfield`/`setfield`, `orderfields`, `cell2mat`,
+    `num2cell`, `struct2cell`/`cell2struct`, and the interpreter-aware `cellfun`/`structfun`
+    (they re-enter `Interpreter::call_function` per element; `UniformOutput` packs scalars).
+  - **`interp_ops.rs` — interpreter-aware:** `eval`/`evalin` (run a string in the current scope;
+    `eval('expr')` with `nargout≥1` returns the expression's values, so `[U,S,V]=eval('svd(a)')`
+    works), `feval`/`builtin`, `exist`, `isset`, `clear` (incl. `clear('all')`), `assignin`.
+  - A `cell_mem_order` helper in `util.rs` flattens cell arrays in **column-major (memory)
+    order** — `ndarray`'s `.iter()` is row-major, the documented footgun.
+
+- **Bug fix 1 — struct-array concatenation `[a,b]` (was panicking in `fm-core/array.rs`).**
+  Root cause: `hcat`/`vcat` had no struct path, so two structs fell through to the numeric lane
+  (`result_class`→`Double`, `to_f64_vec`→empty), building a `[rows,cols]` real array with zero
+  data → `from_shape_vec` panic. Fix: a new `concat_structs` in `fm-interp/interp.rs` that
+  **unions field names** (first operand's order, then any new ones; missing fields filled with
+  `[]`, matching FreeMat's "different fields when valid") and lays out elements column-major.
+  `fm-core::StructArray` gained `from_fields`/`field_name_strings`/`field_pairs` to support it.
+  Flips `suite/test_struct1`,`test_struct2` (and `variables/` copies).
+- **Bug fix 2 — element-deletion `x(i) = []` (was "size mismatch", unimplemented).** Fix in
+  `fm-interp/index.rs`: `scatter` now detects an empty non-cell/non-struct RHS and routes to a
+  new `scatter_delete` that removes the indexed linear positions (keeping source orientation),
+  or — for `x(i,:)` / `x(:,j)` — drops whole rows/columns. This needed a `deleted_axis` field on
+  `IndexPlan` (set in `plan_subscript` when exactly one of two axes is non-colon). Also added
+  struct-array **gather** (`s(idx)` → sub-struct array) and **`scatter_struct`** (`s(i)=struct`
+  grow/overwrite with field union), so `g(3).foo=3; g(1)=[]` and `c(1)=a; c(2)=a; c(1).hoo=6`
+  work. Flips `suite/test_assign19`,`test_subset19`,`test_struct3` (+ `array/`,`variables/`
+  copies); also removed a separate interpreter panic in `array/test_assign9` (cell `repmat`).
+
+- **`~` discard placeholder (item 3): not needed.** The parser already accepts `~` (it lexes as
+  an identifier `"~"` and the evaluator's multi-assign already skips an `Ident("~")` target); no
+  parser change was required, so `fm-parser` was left untouched.
+
+- **Conformance: 198/603 (32.8%) → 258/603 (42.8%), Δ +60 from Stage 5 / +59 from the 33.0%
+  baseline (+9.8 pp).** Per-dir (total / pass / fail / error), with the Stage-5 pass in parens:
+
+  | dir | total | pass | (was) | fail | error |
+  |---|---:|---:|---:|---:|---:|
+  | array | 68 | 32 | (23) | 9 | 27 |
+  | binary | 3 | 0 | (0) | 0 | 3 |
+  | constants | 1 | 0 | (0) | 0 | 1 |
+  | elementary | 7 | 6 | (5) | 0 | 1 |
+  | flow | 22 | 20 | (20) | 2 | 0 |
+  | freemat | 11 | 4 | (0) | 4 | 3 |
+  | functions | 9 | 5 | (5) | 3 | 1 |
+  | inspection | 20 | 15 | (9) | 3 | 2 |
+  | io | 6 | 0 | (0) | 0 | 6 |
+  | operators | 66 | 9 | (9) | 1 | 56 |
+  | random | 1 | 0 | (0) | 0 | 1 |
+  | signal | 1 | 0 | (0) | 0 | 1 |
+  | string | 3 | 1 | (0) | 0 | 2 |
+  | suite | 337 | 134 | (104) | 37 | 166 |
+  | typecast | 5 | 2 | (2) | 0 | 3 |
+  | variables | 43 | 30 | (21) | 8 | 5 |
+  | **TOTAL** | **603** | **258** | **(198)** | **67** | **278** |
+
+  Remaining `Error`s are dominated by **sparse** (`sparse`/`sprandn`/`sparse_test_mat`, ~170,
+  Stage 9) — that alone is most of the `operators`/`array`/`suite` error count. Other notable
+  gaps: `save`/`load`/`fopen`/`sscanf` (Stage 8 `fm-io`), `bitand`/`bitor`/`bitxor` (binary),
+  `conv2`/`imwrite` (signal/io), and function-handle `@f` evaluation (deferred).
+
+- **Pass-floor guard raised 195 → 246** (`curated.rs::PASS_FLOOR`; live is 258, margin absorbs
+  the PRNG-dependent `rand`/`randn` tests and `eval2`'s `rand` matrix). The curated must-pass list
+  gained the two bug-fix tests (`struct1/2/3`, `assign19`, `subset19`) plus `reshape1/2`, `sort`,
+  `cell1`, `permute1/2`, `fieldnames1`, `isfield1`, `getfield1`, `eval1/2`, `feval1`.
+
+- **Tests added:** 24 new `fm-builtins` integration tests (reshape/sort/unique/flip/circshift/
+  cat/sub2ind/strings/sprintf/setops/struct/cell/cellfun/eval/deletion) and 6 new `fm-interp`
+  indexing tests (vector/logical/row/column deletion, struct-array concat, struct grow+delete).
+
+- **Decisions / deferrals (MATLAB-compatible choices where ambiguous):**
+  - `struct` with differing fields across concatenation **unions** field names (FreeMat allows
+    this), rather than erroring as stock MATLAB does.
+  - `sprintf %g` uses Rust's shortest `f64` formatting (not C's exact `%g` precision rules);
+    close enough for the corpus, revisit if a test needs strict `%g`.
+  - `evalin('caller', …)` and `builtin('abs', …)` resolve in/against the **current** scope/table
+    (no separate caller frame or builtin-vs-user shadowing yet) — so `freemat/test_evalin*` and
+    `test_builtin1` still fail; full scope-aware `evalin` is deferred.
+  - `cellfun`/`structfun` only implement the common single-output, UniformOutput cases.
+  - `isset('a')` after `a=[]` returns true here (we track the binding), but FreeMat treats an
+    empty assignment as unset — `inspection/test_isset1` consequently still fails; left as-is.
+  - `permute`/`reshape`/`circshift`/`flip` materialise via a column-major position permutation,
+    dispatching on element type (numeric/char/complex/cell) so they work for all dense classes.
 
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,

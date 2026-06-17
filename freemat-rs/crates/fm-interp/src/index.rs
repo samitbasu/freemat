@@ -11,6 +11,12 @@ use fm_core::{Array, C64, DataClass, ScalarValue, StructArray};
 use crate::error::{Flow, InterpError, Signal};
 use crate::value::{to_f64_vec, to_index};
 
+/// Whether `rhs` is the empty `[]` value that triggers element deletion in a
+/// paren-assignment `x(idx) = []`.
+fn is_deletion(rhs: &Array) -> bool {
+    rhs.numel() == 0 && !matches!(rhs, Array::Cell(_) | Array::Struct(_))
+}
+
 /// A resolved index along one or more dimensions, as a flat list of 0-based
 /// column-major linear positions into the (possibly grown) target, plus the
 /// shape the *result* should take.
@@ -22,6 +28,10 @@ pub struct IndexPlan {
     /// The dims the *target* must have to hold every position (grow target to
     /// at least this on assignment).
     pub needed_dims: Vec<usize>,
+    /// For a 2-D subscript with exactly one non-colon axis (`x(i, :)` /
+    /// `x(:, j)`), the axis (0 = rows, 1 = cols) the index selects. Used by
+    /// `x(i,:) = []` row/column deletion to know which dimension to collapse.
+    pub deleted_axis: Option<usize>,
 }
 
 /// A single index argument, already evaluated to a value (or the magic colon).
@@ -89,6 +99,7 @@ fn plan_linear(dims: &[usize], total: usize, arg: &IndexArg) -> Flow<IndexPlan> 
                 result_dims: vec![total, 1],
                 needed_dims: dims.to_vec(),
                 linear,
+                deleted_axis: None,
             })
         }
         IndexArg::Value(v) => {
@@ -111,6 +122,7 @@ fn plan_linear(dims: &[usize], total: usize, arg: &IndexArg) -> Flow<IndexPlan> 
                     needed_dims: dims.to_vec(),
                     linear,
                     result_dims,
+                    deleted_axis: None,
                 })
             } else {
                 let idx = to_f64_vec(v);
@@ -131,6 +143,7 @@ fn plan_linear(dims: &[usize], total: usize, arg: &IndexArg) -> Flow<IndexPlan> 
                     linear,
                     result_dims,
                     needed_dims,
+                    deleted_axis: None,
                 })
             }
         }
@@ -215,10 +228,22 @@ fn plan_subscript(dims: &[usize], args: &[IndexArg]) -> Flow<IndexPlan> {
 
     // The full needed shape, accounting for the original trailing dims.
     let needed_dims = merge_needed(dims, &needed, n);
+    // Detect the single selected axis for `x(i,:)` / `x(:,j)` deletion.
+    let deleted_axis = if n == 2 {
+        let colons: Vec<bool> = args.iter().map(|a| matches!(a, IndexArg::Colon)).collect();
+        match (colons[0], colons[1]) {
+            (false, true) => Some(0),
+            (true, false) => Some(1),
+            _ => None,
+        }
+    } else {
+        None
+    };
     Ok(IndexPlan {
         linear,
         result_dims: squeeze_result(result_dims),
         needed_dims,
+        deleted_axis,
     })
 }
 
@@ -288,6 +313,18 @@ fn gather_unchecked(base: &Array, linear: &[usize], result_dims: &[usize]) -> Ar
             let data: Vec<Array> = linear.iter().map(|&i| flat[i].clone()).collect();
             Array::cell(result_dims, data)
         }
+        Array::Struct(s) => {
+            // Gather a sub-struct-array: same fields, elements at `linear`.
+            let fields: Vec<(String, Vec<Array>)> = s
+                .field_pairs()
+                .iter()
+                .map(|(name, vals)| {
+                    let picked: Vec<Array> = linear.iter().map(|&i| vals[i].clone()).collect();
+                    (name.clone(), picked)
+                })
+                .collect();
+            Array::struct_array(StructArray::from_fields(result_dims.to_vec(), fields))
+        }
         // Other integer/complex32 classes: route through f64 (loses nothing for
         // integers; complex32 handled via the dedicated arm above for c64).
         _ => {
@@ -324,6 +361,16 @@ pub fn gather_cell_contents(base: &Array, plan: &IndexPlan) -> Flow<Vec<Array>> 
 /// Scatter `rhs` into `base` at `plan`'s positions, growing `base` to
 /// `plan.needed_dims` if necessary. Returns the updated array.
 pub fn scatter(base: &Array, plan: &IndexPlan, rhs: &Array) -> Flow<Array> {
+    // Element deletion: `x(idx) = []` removes the indexed elements.
+    if is_deletion(rhs) && base.numel() > 0 {
+        return scatter_delete(base, plan);
+    }
+
+    // Struct-array paren-assignment: `s(i) = structValue` (grow / overwrite).
+    if matches!(base, Array::Struct(_)) || matches!(rhs, Array::Struct(_)) {
+        return scatter_struct(base, plan, rhs);
+    }
+
     // Decide the result class: keep base's class unless base is empty (then take
     // rhs's class — assigning into `[]` adopts the rhs type).
     let class = if base.numel() == 0 && !matches!(base, Array::Scalar(_)) {
@@ -450,6 +497,129 @@ pub fn scatter_cell_contents(base: &Array, plan: &IndexPlan, rhs: Array) -> Flow
         vec![flat.len(), 1]
     };
     Ok(Array::cell(&dims, flat))
+}
+
+/// Delete the positions in `plan` from `base` (`x(idx) = []`).
+///
+/// Linear deletion from a vector keeps the source orientation; row/column
+/// deletion via `x(i, :)` / `x(:, j)` removes whole rows/columns. Deleting a
+/// proper sub-block of a matrix (neither a full row nor column set) is an error
+/// in MATLAB.
+fn scatter_delete(base: &Array, plan: &IndexPlan) -> Flow<Array> {
+    use std::collections::BTreeSet;
+    let dims = base.dims();
+    let total = base.numel();
+    let remove: BTreeSet<usize> = plan.linear.iter().copied().collect();
+    for &p in &remove {
+        if p >= total {
+            return Err(Signal::Error(InterpError::msg(format!(
+                "index {} out of bounds (numel = {total})",
+                p + 1
+            ))));
+        }
+    }
+
+    // Determine the kept linear positions and the resulting shape.
+    let (keep, new_dims) = if plan.deleted_axis == Some(0) && dims.len() == 2 {
+        // Row deletion: remove the chosen rows, keep all columns.
+        let (r, c) = (dims[0], dims[1]);
+        let drop_rows: BTreeSet<usize> = remove.iter().map(|&p| p % r).collect();
+        let kept_rows: Vec<usize> = (0..r).filter(|i| !drop_rows.contains(i)).collect();
+        let mut keep = Vec::with_capacity(kept_rows.len() * c);
+        for j in 0..c {
+            for &i in &kept_rows {
+                keep.push(i + j * r);
+            }
+        }
+        (keep, vec![kept_rows.len(), c])
+    } else if plan.deleted_axis == Some(1) && dims.len() == 2 {
+        // Column deletion: remove the chosen columns, keep all rows.
+        let (r, c) = (dims[0], dims[1]);
+        let drop_cols: BTreeSet<usize> = remove.iter().map(|&p| p / r).collect();
+        let kept_cols: Vec<usize> = (0..c).filter(|j| !drop_cols.contains(j)).collect();
+        let mut keep = Vec::with_capacity(r * kept_cols.len());
+        for &j in &kept_cols {
+            for i in 0..r {
+                keep.push(i + j * r);
+            }
+        }
+        (keep, vec![r, kept_cols.len()])
+    } else {
+        // Linear deletion → a vector. Keep source orientation when it is a row.
+        let keep: Vec<usize> = (0..total).filter(|p| !remove.contains(p)).collect();
+        let n = keep.len();
+        let new_dims = if dims.len() == 2 && dims[0] == 1 {
+            vec![1, n]
+        } else {
+            vec![n, 1]
+        };
+        (keep, new_dims)
+    };
+
+    Ok(gather_unchecked(base, &keep, &new_dims))
+}
+
+/// Scatter a struct value into a struct array (`s(i) = structValue`), growing
+/// the array and unioning field names as needed.
+fn scatter_struct(base: &Array, plan: &IndexPlan, rhs: &Array) -> Flow<Array> {
+    let rhs_struct = rhs.as_struct().ok_or_else(|| {
+        Signal::Error(InterpError::msg(format!(
+            "cannot assign a {} value into a struct array",
+            rhs.class_name()
+        )))
+    })?;
+    if !base.class().is_reference() && base.numel() == 0 {
+        // Growing into `[]` — start from an empty struct.
+    } else if !matches!(base, Array::Struct(_)) {
+        return Err(Signal::Error(InterpError::msg(format!(
+            "cannot assign a struct into a {} value",
+            base.class_name()
+        ))));
+    }
+
+    let needed: usize = plan.needed_dims.iter().product();
+    // Field name union, base order first then any new rhs fields.
+    let mut names: Vec<String> = match base {
+        Array::Struct(s) => s.field_name_strings(),
+        _ => Vec::new(),
+    };
+    for n in rhs_struct.field_name_strings() {
+        if !names.contains(&n) {
+            names.push(n);
+        }
+    }
+
+    // Build each field's element vector grown to `needed`, default empty.
+    let mut fields: Vec<(String, Vec<Array>)> = names
+        .iter()
+        .map(|name| {
+            let mut col: Vec<Array> = match base {
+                Array::Struct(s) => s.field(name).map(<[Array]>::to_vec).unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            col.resize(needed.max(col.len()), Array::empty());
+            (name.clone(), col)
+        })
+        .collect();
+
+    // rhs broadcasts: a scalar struct fills every target position.
+    let rhs_count = rhs_struct.numel();
+    for (i, &p) in plan.linear.iter().enumerate() {
+        let src = if rhs_count == 1 { 0 } else { i };
+        for (name, col) in &mut fields {
+            let v = rhs_struct
+                .field(name)
+                .and_then(|vals| vals.get(src))
+                .cloned()
+                .unwrap_or_else(Array::empty);
+            col[p] = v;
+        }
+    }
+
+    Ok(Array::struct_array(StructArray::from_fields(
+        plan.needed_dims.clone(),
+        fields,
+    )))
 }
 
 /// Promote class on assignment: empty base adopts rhs; otherwise keep base's

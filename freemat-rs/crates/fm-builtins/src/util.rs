@@ -9,6 +9,11 @@ pub(crate) fn err<T>(msg: impl Into<String>) -> Flow<T> {
     Err(Signal::Error(InterpError::msg(msg)))
 }
 
+/// Build a bare error [`Signal`] from a message (for use with `ok_or_else`).
+pub(crate) fn err_signal(msg: impl Into<String>) -> Signal {
+    Signal::Error(InterpError::msg(msg))
+}
+
 /// Require at least `n` arguments.
 pub(crate) fn need(args: &[Array], n: usize, name: &str) -> Flow<()> {
     if args.len() < n {
@@ -54,6 +59,24 @@ pub(crate) fn map_complexifying(a: &Array, cf: impl Fn(C64) -> C64) -> Array {
     let dims = a.dims();
     let data = to_c64_vec(a).into_iter().map(cf).collect();
     build_complex(&dims, data)
+}
+
+/// Flatten a cell array's elements in **column-major (memory) order**.
+///
+/// `ndarray`'s `.iter()` walks logical (row-major) order; the rest of the
+/// codebase stores column-major, so cell helpers must read memory order to keep
+/// linear positions consistent.
+pub(crate) fn cell_mem_order(a: &Array) -> Vec<Array> {
+    match a.as_cell() {
+        Some(d) => {
+            if let Some(s) = d.as_slice_memory_order() {
+                s.to_vec()
+            } else {
+                d.t().iter().cloned().collect()
+            }
+        }
+        None => Vec::new(),
+    }
 }
 
 /// Read a single scalar `f64` from `args[i]`, erroring if absent or non-scalar.

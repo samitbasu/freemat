@@ -13,13 +13,18 @@
 
 use fm_interp::{FunctionTable, Interpreter};
 
+mod array_manip;
+mod cellstruct;
 mod constructors;
 mod elementary;
 mod inspection;
+mod interp_ops;
 mod linalg;
 mod logical;
 mod random;
 mod reductions;
+mod setops;
+mod strings;
 mod trig;
 mod util;
 
@@ -41,6 +46,11 @@ pub fn register_into(table: &mut FunctionTable) {
     random::register(table);
     linalg::register(table);
     inspection::register(table);
+    array_manip::register(table);
+    strings::register(table);
+    setops::register(table);
+    cellstruct::register(table);
+    interp_ops::register(table);
 }
 
 #[cfg(test)]

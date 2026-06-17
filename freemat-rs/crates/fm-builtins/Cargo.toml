@@ -12,6 +12,8 @@ repository.workspace = true
 fm-core = { version = "0.0.0", path = "../fm-core" }
 fm-interp = { version = "0.0.0", path = "../fm-interp" }
 fm-linalg = { version = "0.0.0", path = "../fm-linalg" }
+fm-parser = { version = "0.0.0", path = "../fm-parser" }
+ndarray.workspace = true
 rand.workspace = true
 rand_distr.workspace = true
 

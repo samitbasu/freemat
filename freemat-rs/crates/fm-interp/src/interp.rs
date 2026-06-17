@@ -691,6 +691,18 @@ impl Interpreter {
         Ok(out)
     }
 
+    /// Concatenate already-evaluated `values` along `dim` (1 = vertical,
+    /// 2 = horizontal). Exposed for the `cat`/`horzcat`/`vertcat` builtins so
+    /// they reuse the same promotion / struct / cell / char concatenation rules
+    /// as the `[ ]` matrix-literal path.
+    ///
+    /// # Errors
+    /// Returns a runtime error if the operands' shapes are incompatible.
+    pub fn concat_values(&self, dim: usize, values: &[Array]) -> Flow<Array> {
+        let refs: Vec<Array> = values.to_vec();
+        if dim == 1 { vcat(&refs) } else { hcat(&refs) }
+    }
+
     // ---- Matrix / cell literals ---------------------------------------------
 
     fn eval_matrix(&mut self, rows: &[Vec<Expr>], src: &str) -> Flow<Array> {
@@ -962,6 +974,7 @@ fn columns_of(v: &Array) -> Vec<Array> {
             result_dims: vec![rows, 1],
             needed_dims: dims.clone(),
             linear: positions,
+            deleted_axis: None,
         };
         out.push(index::gather(v, &plan).unwrap_or_else(|_| v.clone()));
     }
@@ -1009,6 +1022,7 @@ fn transpose(v: &Array, conjugate: bool) -> Flow<Array> {
         result_dims: vec![c, r],
         needed_dims: vec![c, r],
         linear,
+        deleted_axis: None,
     };
     let mut out = index::gather(v, &plan)?;
     if conjugate && out.is_complex() {
@@ -1051,6 +1065,9 @@ fn hcat(elems: &[Array]) -> Flow<Array> {
     let any_cell = non_empty.iter().any(|e| matches!(e, Array::Cell(_)));
     if any_cell {
         return concat_cells(&non_empty, true);
+    }
+    if non_empty.iter().any(|e| matches!(e, Array::Struct(_))) {
+        return concat_structs(&non_empty, true);
     }
     let complex = non_empty.iter().any(|e| e.is_complex());
     let total_cols: usize = non_empty.iter().map(|e| e.dims()[1]).sum();
@@ -1109,6 +1126,9 @@ fn vcat(rows: &[Array]) -> Flow<Array> {
     }
     if non_empty.iter().any(|e| matches!(e, Array::Cell(_))) {
         return concat_cells(&non_empty, false);
+    }
+    if non_empty.iter().any(|e| matches!(e, Array::Struct(_))) {
+        return concat_structs(&non_empty, false);
     }
     let total_rows: usize = non_empty.iter().map(|e| e.dims()[0]).sum();
     let complex = non_empty.iter().any(|e| e.is_complex());
@@ -1177,6 +1197,88 @@ fn concat_cells(elems: &[&Array], horizontal: bool) -> Flow<Array> {
         }
         Ok(Array::cell(&[total_rows, cols], data))
     }
+}
+
+/// Concatenate struct arrays (`[a, b]` / `[a; b]`). Every element must be a
+/// struct with the **same set** of field names (order may differ — MATLAB
+/// reorders the second operand to match the first). Fields are taken from the
+/// first block's order.
+fn concat_structs(elems: &[&Array], horizontal: bool) -> Flow<Array> {
+    let mut structs = Vec::with_capacity(elems.len());
+    for e in elems {
+        let s = e.as_struct().ok_or_else(|| {
+            Signal::Error(InterpError::msg(
+                "cannot concatenate a struct with a non-struct value",
+            ))
+        })?;
+        structs.push(s);
+    }
+    // Field-name union: first block's order, then any new names from the rest.
+    // FreeMat permits concatenating structs with differing fields, filling the
+    // missing ones with empty (`[]`).
+    let mut names: Vec<String> = structs[0].field_name_strings();
+    for s in &structs {
+        for n in s.field_name_strings() {
+            if !names.contains(&n) {
+                names.push(n);
+            }
+        }
+    }
+
+    let blocks: Vec<(Vec<usize>, &&fm_core::StructArray)> =
+        structs.iter().map(|s| (s.dims().to_vec(), s)).collect();
+
+    let (out_dims, order): (Vec<usize>, Vec<(usize, usize)>) = if horizontal {
+        let rows = blocks[0].0[0];
+        let total_cols: usize = blocks.iter().map(|(d, _)| d[1]).sum();
+        // Column-major element order over the concatenated [rows, total_cols].
+        let mut order = Vec::with_capacity(rows * total_cols);
+        for (bi, (d, _)) in blocks.iter().enumerate() {
+            let bc = d[1];
+            for j in 0..bc {
+                for i in 0..rows {
+                    order.push((bi, i + j * rows));
+                }
+            }
+        }
+        (vec![rows, total_cols], order)
+    } else {
+        let cols = blocks[0].0[1];
+        let total_rows: usize = blocks.iter().map(|(d, _)| d[0]).sum();
+        let mut order = vec![(0usize, 0usize); total_rows * cols];
+        let mut row_off = 0;
+        for (bi, (d, _)) in blocks.iter().enumerate() {
+            let br = d[0];
+            for j in 0..cols {
+                for i in 0..br {
+                    order[(row_off + i) + j * total_rows] = (bi, i + j * br);
+                }
+            }
+            row_off += br;
+        }
+        (vec![total_rows, cols], order)
+    };
+
+    let fields: Vec<(String, Vec<Array>)> = names
+        .iter()
+        .map(|name| {
+            let col: Vec<Array> = order
+                .iter()
+                .map(|&(bi, ei)| {
+                    structs[bi]
+                        .field(name)
+                        .and_then(|v| v.get(ei))
+                        .cloned()
+                        .unwrap_or_else(Array::empty)
+                })
+                .collect();
+            (name.clone(), col)
+        })
+        .collect();
+
+    Ok(Array::struct_array(fm_core::StructArray::from_fields(
+        out_dims, fields,
+    )))
 }
 
 /// The common result class for a concatenation (double-dominant; char only when

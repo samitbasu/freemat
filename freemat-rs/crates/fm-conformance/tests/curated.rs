@@ -52,6 +52,28 @@ const CURATED: &[&str] = &[
     "array/test_isfloat1",
     "array/test_isinteger1",
     "array/test_ones1",
+    // Stage-6 — array manipulation builtins
+    "array/test_reshape1",
+    "array/test_reshape2",
+    "array/test_sort",
+    "array/test_cell1",
+    "array/test_permute1",
+    "array/test_permute2",
+    // Stage-6 — bug fixes: struct-array concat + element deletion
+    "suite/test_struct1",
+    "suite/test_struct2",
+    "suite/test_struct3",
+    "suite/test_assign19",
+    "suite/test_subset19",
+    "array/test_assign19",
+    // Stage-6 — cell/struct + inspection builtins
+    "inspection/test_fieldnames1",
+    "inspection/test_isfield1",
+    "elementary/test_getfield1",
+    // Stage-6 — eval / feval
+    "freemat/test_eval1",
+    "freemat/test_eval2",
+    "freemat/test_feval1",
     // typecast — uint64 round trip
     "typecast/test_uint64_1",
     // suite — assignment, control flow, subsetting, matrix concat, persistents
@@ -116,9 +138,9 @@ fn curated_subset_passes() {
 /// Guard against silent regressions in the *aggregate* pass count: the full
 /// covered corpus must keep passing at least this many tests. Raise the floor
 /// as later stages improve the number (the binary prints the live total).
-/// Stage 5 raised the live total to 198/603 (32.8%); the floor allows a small
-/// margin for PRNG-dependent tests.
-const PASS_FLOOR: usize = 195;
+/// Stage 5 raised the live total to 198/603 (32.8%); Stage 6 to 250/603
+/// (41.5%). The floor allows a small margin for PRNG-dependent tests.
+const PASS_FLOOR: usize = 246;
 
 #[test]
 fn full_suite_pass_count_does_not_regress() {

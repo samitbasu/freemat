@@ -117,21 +117,50 @@ fn b_repmat(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>>
         let k = scalar_arg(args, 1, "repmat")?.round().max(0.0) as usize;
         (k, k)
     };
-    let src = to_f64_vec(a);
     let (om, on) = (m * p, n * q);
-    let mut data = vec![0.0; om * on];
+    // Build the column-major source-position permutation for the tiled output,
+    // then materialise it for the value's actual element type (numeric, char,
+    // complex, or cell).
+    let mut perm = vec![0usize; om * on];
     for tj in 0..q {
         for ti in 0..p {
             for j in 0..n {
                 for i in 0..m {
                     let oi = ti * m + i;
                     let oj = tj * n + j;
-                    data[oi + oj * om] = src[i + j * m];
+                    perm[oi + oj * om] = i + j * m;
                 }
             }
         }
     }
-    Ok(vec![build_real(DataClass::Double, &[om, on], data)])
+    Ok(vec![tile_by(a, &[om, on], &perm)])
+}
+
+/// Materialise a permutation `perm` (column-major source positions) over `a` as
+/// a new array of shape `dims`, dispatching on the element type.
+fn tile_by(a: &Array, dims: &[usize], perm: &[usize]) -> Array {
+    match a {
+        Array::Cell(_) => {
+            let flat: Vec<Array> = crate::util::cell_mem_order(a);
+            let data: Vec<Array> = perm.iter().map(|&p| flat[p].clone()).collect();
+            Array::cell(dims, data)
+        }
+        Array::Char(_) | Array::Scalar(fm_core::ScalarValue::Char(_)) => {
+            let flat: Vec<char> = a.as_string().unwrap_or_default().chars().collect();
+            let data: Vec<char> = perm.iter().map(|&p| flat[p]).collect();
+            fm_interp::value::char_matrix(dims, data)
+        }
+        _ if a.is_complex() => {
+            let flat = fm_interp::value::to_c64_vec(a);
+            let data = perm.iter().map(|&p| flat[p]).collect();
+            fm_interp::value::build_complex(dims, data)
+        }
+        _ => {
+            let flat = to_f64_vec(a);
+            let data: Vec<f64> = perm.iter().map(|&p| flat[p]).collect();
+            build_real(a.class(), dims, data)
+        }
+    }
 }
 
 /// `diag(v)` builds a diagonal matrix from a vector; `diag(M)` extracts the
