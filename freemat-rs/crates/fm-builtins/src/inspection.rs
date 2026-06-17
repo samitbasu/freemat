@@ -1,0 +1,190 @@
+//! Inspection / type / string helpers: `typeof`, `float`, `complex`,
+//! `dcomplex`, `feps`, `strcmp`, `strcmpi`, `iscellstr`, `issame`, plus the
+//! `is*` predicates `isvector`/`isscalar`/`ismatrix`/`isrow`/`iscolumn`/
+//! `iscomplex`/`isfloat`/`isinteger`/`islogical`.
+
+use fm_core::{Array, C64, DataClass};
+use fm_interp::error::Flow;
+use fm_interp::value::{build_complex, to_c64_vec, to_f64_vec};
+use fm_interp::{FunctionTable, Interpreter};
+
+use crate::util::need;
+
+pub(crate) fn register(table: &mut FunctionTable) {
+    table.add_builtin("typeof", b_typeof);
+    table.add_builtin("float", |_i, a, _n| cast_single(a));
+    table.add_builtin("complex", b_complex);
+    table.add_builtin("dcomplex", b_dcomplex);
+    table.add_builtin("feps", |_i, _a, _n| Ok(vec![Array::single(f32::EPSILON)]));
+    table.add_builtin("realmax", |_i, _a, _n| Ok(vec![Array::double(f64::MAX)]));
+    table.add_builtin("realmin", |_i, _a, _n| {
+        Ok(vec![Array::double(f64::MIN_POSITIVE)])
+    });
+    table.add_builtin("strcmp", |_i, a, _n| strcmp(a, false));
+    table.add_builtin("strcmpi", |_i, a, _n| strcmp(a, true));
+    table.add_builtin("iscellstr", b_iscellstr);
+    table.add_builtin("issame", b_issame);
+    table.add_builtin("iscomplex", |_i, a, _n| {
+        pred(a, "iscomplex", Array::is_complex)
+    });
+    table.add_builtin("isfloat", |_i, a, _n| {
+        pred(a, "isfloat", |x| x.class().is_float())
+    });
+    table.add_builtin("isinteger", |_i, a, _n| {
+        pred(a, "isinteger", |x| x.class().is_integer())
+    });
+    table.add_builtin("islogical", |_i, a, _n| {
+        pred(a, "islogical", |x| x.class() == DataClass::Bool)
+    });
+    table.add_builtin("isvector", |_i, a, _n| pred(a, "isvector", is_vector));
+    table.add_builtin("isscalar", |_i, a, _n| {
+        pred(a, "isscalar", |x| x.numel() == 1)
+    });
+    table.add_builtin("ismatrix", |_i, a, _n| {
+        pred(a, "ismatrix", |x| x.dims().len() <= 2)
+    });
+    table.add_builtin("isrow", |_i, a, _n| {
+        pred(a, "isrow", |x| {
+            let d = x.dims();
+            d.len() == 2 && d[0] == 1
+        })
+    });
+    table.add_builtin("iscolumn", |_i, a, _n| {
+        pred(a, "iscolumn", |x| {
+            let d = x.dims();
+            d.len() == 2 && d[1] == 1
+        })
+    });
+    table.add_builtin("isstruct", |_i, a, _n| {
+        pred(a, "isstruct", |x| x.class() == DataClass::Struct)
+    });
+}
+
+/// A one-argument logical predicate over an [`Array`].
+fn pred(args: &[Array], name: &str, f: impl Fn(&Array) -> bool) -> Flow<Vec<Array>> {
+    need(args, 1, name)?;
+    Ok(vec![Array::bool(f(&args[0]))])
+}
+
+/// FreeMat's `typeof`: the class name, with complex distinguished as `complex`
+/// (single) / `dcomplex` (double).
+fn b_typeof(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "typeof")?;
+    let a = &args[0];
+    // FreeMat distinguishes complex via the class name: complex single is
+    // `complex`, complex double is `dcomplex`. fm-core folds complex into the
+    // Float/Double classes, so detect it from `is_complex` + the width.
+    let name = if a.is_complex() {
+        match a.class() {
+            DataClass::Float => "complex",
+            _ => "dcomplex",
+        }
+    } else {
+        a.class().name()
+    };
+    Ok(vec![Array::char_string(name)])
+}
+
+fn cast_single(args: &[Array]) -> Flow<Vec<Array>> {
+    need(args, 1, "float")?;
+    let dims = args[0].dims();
+    let data = to_f64_vec(&args[0]);
+    Ok(vec![fm_interp::value::build_real(
+        DataClass::Float,
+        &dims,
+        data,
+    )])
+}
+
+/// `complex(re, im)` — build a complex `single` array (FreeMat: `complex`).
+fn b_complex(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    make_complex(args, true)
+}
+
+/// `dcomplex(re, im)` — build a complex `double` array.
+fn b_dcomplex(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    make_complex(args, false)
+}
+
+fn make_complex(args: &[Array], _single: bool) -> Flow<Vec<Array>> {
+    need(args, 1, "complex")?;
+    let re = to_f64_vec(&args[0]);
+    let im = if args.len() >= 2 {
+        to_f64_vec(&args[1])
+    } else {
+        vec![0.0; re.len()]
+    };
+    let n = re.len().max(im.len());
+    let dims = if re.len() >= im.len() {
+        args[0].dims()
+    } else {
+        args[1].dims()
+    };
+    let data: Vec<C64> = (0..n)
+        .map(|i| {
+            let r = if re.len() == 1 { re[0] } else { re[i] };
+            let m = if im.len() == 1 { im[0] } else { im[i] };
+            C64::new(r, m)
+        })
+        .collect();
+    // Force a complex result even when the imaginary part is zero (FreeMat's
+    // `complex` always yields a complex array), so re-narrow only if it matters.
+    if data.iter().all(|c| c.im == 0.0) && n == 1 {
+        return Ok(vec![Array::complex64(data[0])]);
+    }
+    Ok(vec![build_complex(&dims, data)])
+}
+
+/// `strcmp(a, b)` — string equality (case-insensitive for `strcmpi`).
+fn strcmp(args: &[Array], ci: bool) -> Flow<Vec<Array>> {
+    need(args, 2, "strcmp")?;
+    let a = args[0].as_string();
+    let b = args[1].as_string();
+    let eq = match (a, b) {
+        (Some(x), Some(y)) => {
+            if ci {
+                x.to_lowercase() == y.to_lowercase()
+            } else {
+                x == y
+            }
+        }
+        _ => false,
+    };
+    Ok(vec![Array::bool(eq)])
+}
+
+fn b_iscellstr(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "iscellstr")?;
+    let ok = match args[0].as_cell() {
+        Some(cells) => cells.iter().all(Array::is_char),
+        None => false,
+    };
+    Ok(vec![Array::bool(ok)])
+}
+
+/// `issame(a, b)` — true iff same class, size, and (numeric) values, or equal
+/// strings. Used widely by the conformance corpus.
+fn b_issame(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 2, "issame")?;
+    let a = &args[0];
+    let b = &args[1];
+    if a.class() != b.class() || a.dims() != b.dims() {
+        return Ok(vec![Array::bool(false)]);
+    }
+    if a.is_char() {
+        return Ok(vec![Array::bool(a.as_string() == b.as_string())]);
+    }
+    if a.is_complex() || b.is_complex() {
+        let x = to_c64_vec(a);
+        let y = to_c64_vec(b);
+        return Ok(vec![Array::bool(x == y)]);
+    }
+    let x = to_f64_vec(a);
+    let y = to_f64_vec(b);
+    Ok(vec![Array::bool(x == y)])
+}
+
+fn is_vector(a: &Array) -> bool {
+    let d = a.dims();
+    d.len() == 2 && (d[0] == 1 || d[1] == 1)
+}

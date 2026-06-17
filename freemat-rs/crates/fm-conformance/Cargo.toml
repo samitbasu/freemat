@@ -12,6 +12,7 @@ repository.workspace = true
 fm-core = { version = "0.0.0", path = "../fm-core" }
 fm-interp = { version = "0.0.0", path = "../fm-interp" }
 fm-parser = { version = "0.0.0", path = "../fm-parser" }
+fm-builtins = { version = "0.0.0", path = "../fm-builtins" }
 
 [[bin]]
 name = "fm-conformance"

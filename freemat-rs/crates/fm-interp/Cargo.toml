@@ -11,6 +11,7 @@ repository.workspace = true
 [dependencies]
 fm-core = { version = "0.0.0", path = "../fm-core" }
 fm-parser = { version = "0.0.0", path = "../fm-parser" }
+fm-linalg = { version = "0.0.0", path = "../fm-linalg" }
 ndarray.workspace = true
 miette.workspace = true
 thiserror.workspace = true

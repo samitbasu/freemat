@@ -9,6 +9,10 @@ rust-version.workspace = true
 repository.workspace = true
 
 [dependencies]
+fm-core = { version = "0.0.0", path = "../fm-core" }
+faer.workspace = true
+ndarray.workspace = true
+num-complex.workspace = true
 
 [lints]
 workspace = true

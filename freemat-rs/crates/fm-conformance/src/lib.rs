@@ -120,8 +120,10 @@ pub fn run_test_file(path: &Path) -> (Outcome, String) {
     let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
 
     // A fresh interpreter per test (matches FreeMat's process-per-test
-    // isolation and avoids cross-test state leakage).
+    // isolation and avoids cross-test state leakage), with the full Stage-5
+    // standard library registered on top of the minimal defaults.
     let mut interp = Interpreter::new();
+    fm_builtins::register_standard_library(&mut interp);
 
     // Define shared helpers first, then every sibling `.m` (so the test fn and
     // its in-directory helpers are all registered).

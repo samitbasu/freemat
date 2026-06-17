@@ -1,12 +1,586 @@
-//! `fm-linalg` — FreeMat-rs linear algebra over `faer`.
+//! `fm-linalg` — FreeMat-rs linear algebra over [`faer`] (v0.24).
 //!
-//! Scaffold only (Stage 0). The faer-backed decompositions (lu/qr/svd/eig/chol)
-//! and solvers arrive in Stage 5.
+//! This crate is the numeric engine behind matrix `*`, `\`, `/`, `^`, and the
+//! `inv`/`det`/`lu`/`qr`/`svd`/`eig`/`chol`/`norm`/`rank`/`pinv` builtins. It
+//! operates on [`fm_core::Array`] values and bridges to faer with a near
+//! zero-copy boundary: `fm-core` stores dense buffers **column-major (F-order)**,
+//! exactly faer's layout, so [`MatRef::from_column_major_slice`] consumes the
+//! buffer directly.
+//!
+//! # Real vs complex
+//! Every routine reads its input through [`MatData`], which captures the input
+//! as a column-major `c64` buffer and remembers whether the original was complex
+//! (so real-valued results narrow back to a real [`Array`]).
+//!
+//! # faer 0.24 entry points used
+//! - matmul: the `MatRef * MatRef` operator (`&a * &b`).
+//! - solve: [`faer::linalg::solvers::Solve::solve_in_place`] on `partial_piv_lu`.
+//! - `inv`/`det`: solve against identity / `MatRef::determinant`.
+//! - `lu`: `MatRef::partial_piv_lu`, `qr`: `MatRef::qr`,
+//!   `svd`: [`faer::linalg::solvers::Svd::new`],
+//!   `eig`: [`faer::linalg::solvers::Eigen`], `chol`: [`Llt::new`].
+//! - norms: `MatRef::norm_l2` / `norm_l1` / `norm_max`.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn scaffold_builds() {
-        assert_eq!(2 + 2, 4);
+use faer::linalg::solvers::{Eigen, Llt, Solve, SolveLstsq, Svd};
+use faer::{Mat, MatRef, Side, c64};
+use fm_core::{Array, C64};
+
+mod error;
+pub use error::LinalgError;
+
+/// A linalg result.
+pub type Result<T> = std::result::Result<T, LinalgError>;
+
+/// An input matrix captured for faer: a column-major `c64` buffer plus its 2-D
+/// shape. `complex` records whether the original was complex so real-valued
+/// results can narrow back to a real [`Array`].
+struct MatData {
+    rows: usize,
+    cols: usize,
+    data: Vec<c64>,
+    complex: bool,
+}
+
+impl MatData {
+    /// Read an [`Array`] into a column-major `c64` buffer plus its 2-D shape.
+    fn from_array(a: &Array) -> Result<Self> {
+        let dims = a.dims();
+        if dims.len() != 2 {
+            return Err(LinalgError::new("argument must be a 2-D matrix"));
+        }
+        let (rows, cols) = (dims[0], dims[1]);
+        let complex = a.is_complex();
+        let data: Vec<c64> = if complex {
+            to_c64(a)
+        } else {
+            to_f64(a).into_iter().map(|r| c64::new(r, 0.0)).collect()
+        };
+        Ok(MatData {
+            rows,
+            cols,
+            data,
+            complex,
+        })
+    }
+
+    /// A faer view over the column-major buffer.
+    fn view(&self) -> MatRef<'_, c64> {
+        MatRef::from_column_major_slice(&self.data, self.rows, self.cols)
     }
 }
+
+// ---- fm-core flat readers (the column-major mem-order bridge) ----------------
+//
+// `fm-interp::value` owns the canonical readers, but `fm-linalg` must not depend
+// on `fm-interp` (that would create a cycle: interp -> linalg -> interp). We
+// reimplement the small column-major readers here over `fm-core` directly.
+
+fn mem_order<T: Clone>(d: &ndarray::ArrayD<T>) -> Vec<T> {
+    if let Some(s) = d.as_slice_memory_order() {
+        s.to_vec()
+    } else {
+        d.t().iter().cloned().collect()
+    }
+}
+
+fn to_f64(a: &Array) -> Vec<f64> {
+    match a {
+        Array::Scalar(s) => vec![s.as_f64()],
+        Array::Bool(d) => mem_order(d)
+            .iter()
+            .map(|&v| f64::from(u8::from(v)))
+            .collect(),
+        Array::Int8(d) => mem_order(d).iter().map(|&v| f64::from(v)).collect(),
+        Array::UInt8(d) => mem_order(d).iter().map(|&v| f64::from(v)).collect(),
+        Array::Int16(d) => mem_order(d).iter().map(|&v| f64::from(v)).collect(),
+        Array::UInt16(d) => mem_order(d).iter().map(|&v| f64::from(v)).collect(),
+        Array::Int32(d) => mem_order(d).iter().map(|&v| f64::from(v)).collect(),
+        Array::UInt32(d) => mem_order(d).iter().map(|&v| f64::from(v)).collect(),
+        Array::Int64(d) => mem_order(d).iter().map(|&v| v as f64).collect(),
+        Array::UInt64(d) => mem_order(d).iter().map(|&v| v as f64).collect(),
+        Array::Float(d) => mem_order(d).iter().map(|&v| f64::from(v)).collect(),
+        Array::Double(d) => mem_order(d),
+        Array::Complex32(d) => mem_order(d).iter().map(|v| f64::from(v.re)).collect(),
+        Array::Complex64(d) => mem_order(d).iter().map(|v| v.re).collect(),
+        Array::Char(d) => mem_order(d)
+            .iter()
+            .map(|&c| f64::from(u32::from(c)))
+            .collect(),
+        Array::Cell(_) | Array::Struct(_) => Vec::new(),
+    }
+}
+
+fn to_c64(a: &Array) -> Vec<c64> {
+    use fm_core::ScalarValue;
+    match a {
+        Array::Scalar(ScalarValue::Complex64(c)) => vec![*c],
+        Array::Scalar(ScalarValue::Complex32(c)) => {
+            vec![c64::new(f64::from(c.re), f64::from(c.im))]
+        }
+        Array::Complex64(d) => mem_order(d),
+        Array::Complex32(d) => mem_order(d)
+            .iter()
+            .map(|v| c64::new(f64::from(v.re), f64::from(v.im)))
+            .collect(),
+        _ => to_f64(a).into_iter().map(|r| c64::new(r, 0.0)).collect(),
+    }
+}
+
+// ---- Result builders ---------------------------------------------------------
+
+/// Build an [`Array`] from a column-major `c64` buffer, narrowing to real
+/// `double` when every imaginary part vanishes.
+fn build_from_c64(rows: usize, cols: usize, data: Vec<c64>) -> Array {
+    if data.iter().all(|c| c.im == 0.0) {
+        let real: Vec<f64> = data.iter().map(|c| c.re).collect();
+        return build_real(rows, cols, real);
+    }
+    let data: Vec<C64> = data.into_iter().map(|c| C64::new(c.re, c.im)).collect();
+    if rows * cols == 1 {
+        return Array::complex64(data[0]);
+    }
+    Array::complex64_matrix(&[rows, cols], data)
+}
+
+/// Build a real `double` [`Array`] (scalar-collapsing 1x1).
+fn build_real(rows: usize, cols: usize, data: Vec<f64>) -> Array {
+    if rows * cols == 1 {
+        return Array::double(data[0]);
+    }
+    Array::double_matrix(&[rows, cols], data)
+}
+
+/// Collect a faer `MatRef<c64>` into a column-major `Vec<c64>`.
+fn mat_to_vec(m: MatRef<'_, c64>) -> Vec<c64> {
+    let (r, c) = (m.nrows(), m.ncols());
+    let mut out = Vec::with_capacity(r * c);
+    for j in 0..c {
+        for i in 0..r {
+            out.push(m[(i, j)]);
+        }
+    }
+    out
+}
+
+/// Build the result [`Array`], honoring whether complex output is allowed.
+fn finish(rows: usize, cols: usize, data: Vec<c64>, complex: bool) -> Array {
+    if complex {
+        build_from_c64(rows, cols, data)
+    } else {
+        build_real(rows, cols, data.iter().map(|c| c.re).collect())
+    }
+}
+
+/// Convert a faer `MatRef<c64>` to an [`Array`] (narrowing real when possible).
+fn mat_arr(m: MatRef<'_, c64>, complex: bool) -> Array {
+    let (r, c) = (m.nrows(), m.ncols());
+    let data = mat_to_vec(m);
+    finish(r, c, data, complex)
+}
+
+// ---- Public operations -------------------------------------------------------
+
+/// Matrix multiply `a * b` (faer-backed). Scalar operands are *not* handled here
+/// — the interpreter routes scalar `*` to element-wise multiply.
+///
+/// # Errors
+/// Returns [`LinalgError`] if the operands are not 2-D or inner dims disagree.
+pub fn mtimes(a: &Array, b: &Array) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    let bm = MatData::from_array(b)?;
+    if am.cols != bm.rows {
+        return Err(LinalgError::new(format!(
+            "inner matrix dimensions must agree ({}x{} * {}x{})",
+            am.rows, am.cols, bm.rows, bm.cols
+        )));
+    }
+    let prod = am.view() * bm.view();
+    let data = mat_to_vec(prod.as_ref());
+    let complex = am.complex || bm.complex;
+    Ok(finish(am.rows, bm.cols, data, complex))
+}
+
+/// Solve `A x = b` (the `\` operator). Square systems use LU; non-square use a
+/// least-squares (QR) solve.
+///
+/// # Errors
+/// Returns [`LinalgError`] on dimension mismatch or a singular/failed solve.
+pub fn mldivide(a: &Array, b: &Array) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    let bm = MatData::from_array(b)?;
+    if am.rows != bm.rows {
+        return Err(LinalgError::new(format!(
+            "dimensions disagree in \\ ({}x{} \\ {}x{})",
+            am.rows, am.cols, bm.rows, bm.cols
+        )));
+    }
+    let complex = am.complex || bm.complex;
+    if am.rows == am.cols {
+        let mut rhs = Mat::<c64>::from_fn(bm.rows, bm.cols, |i, j| bm.data[i + j * bm.rows]);
+        let lu = am.view().partial_piv_lu();
+        lu.solve_in_place(rhs.as_mut());
+        let data = mat_to_vec(rhs.as_ref());
+        Ok(finish(am.cols, bm.cols, data, complex))
+    } else {
+        let qr = am.view().qr();
+        let mut rhs = Mat::<c64>::from_fn(bm.rows, bm.cols, |i, j| bm.data[i + j * bm.rows]);
+        qr.solve_lstsq_in_place(rhs.as_mut());
+        // The solution occupies the first `am.cols` rows.
+        let mut data = Vec::with_capacity(am.cols * bm.cols);
+        for j in 0..bm.cols {
+            for i in 0..am.cols {
+                data.push(rhs[(i, j)]);
+            }
+        }
+        Ok(finish(am.cols, bm.cols, data, complex))
+    }
+}
+
+/// Solve `x A = b` (the `/` operator): `x = (A' \ b')'`.
+///
+/// # Errors
+/// Returns [`LinalgError`] on dimension mismatch or a failed solve.
+pub fn mrdivide(a: &Array, b: &Array) -> Result<Array> {
+    // x A = b  <=>  A^T x^T = b^T.
+    let at = transpose(a)?;
+    let bt = transpose(b)?;
+    let xt = mldivide(&at, &bt)?;
+    transpose(&xt)
+}
+
+/// Plain (non-conjugate) transpose of a 2-D array, via the captured buffer.
+fn transpose(a: &Array) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    let mut data = Vec::with_capacity(am.rows * am.cols);
+    for i in 0..am.rows {
+        for j in 0..am.cols {
+            data.push(am.data[i + j * am.rows]);
+        }
+    }
+    Ok(finish(am.cols, am.rows, data, am.complex))
+}
+
+/// Matrix power `A ^ p` for integer `p` (the interpreter handles scalar `^`).
+///
+/// # Errors
+/// Returns [`LinalgError`] if `A` is not square or `p` is non-integer.
+pub fn mpower(a: &Array, p: f64) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    if am.rows != am.cols {
+        return Err(LinalgError::new("matrix for ^ must be square"));
+    }
+    if p.fract() != 0.0 {
+        return Err(LinalgError::new(
+            "non-integer matrix powers are not yet supported",
+        ));
+    }
+    let n = am.rows;
+    let pi = p as i64;
+    let mut acc = Mat::<c64>::identity(n, n);
+    let base = if pi < 0 {
+        let inverted = inv(a)?;
+        MatData::from_array(&inverted)?
+    } else {
+        MatData::from_array(a)?
+    };
+    let exp = pi.unsigned_abs();
+    let base_view = base.view();
+    for _ in 0..exp {
+        acc = &acc * base_view;
+    }
+    let data = mat_to_vec(acc.as_ref());
+    Ok(finish(n, n, data, am.complex || base.complex))
+}
+
+/// Matrix inverse `inv(A)` — solve `A X = I`.
+///
+/// # Errors
+/// Returns [`LinalgError`] if `A` is not square.
+pub fn inv(a: &Array) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    if am.rows != am.cols {
+        return Err(LinalgError::new("matrix to invert must be square"));
+    }
+    let n = am.rows;
+    let mut rhs = Mat::<c64>::identity(n, n);
+    let lu = am.view().partial_piv_lu();
+    lu.solve_in_place(rhs.as_mut());
+    let data = mat_to_vec(rhs.as_ref());
+    Ok(finish(n, n, data, am.complex))
+}
+
+/// Determinant `det(A)`.
+///
+/// # Errors
+/// Returns [`LinalgError`] if `A` is not square.
+pub fn det(a: &Array) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    if am.rows != am.cols {
+        return Err(LinalgError::new("matrix for det must be square"));
+    }
+    let d = am.view().determinant();
+    Ok(finish(1, 1, vec![d], am.complex))
+}
+
+/// LU factorization. With 2 outputs returns `[L, U]` (where `L` already has the
+/// row permutation applied so `L*U == A`); with 3, `[L, U, P]` (so `P*A == L*U`).
+///
+/// # Errors
+/// Returns [`LinalgError`] if the input is not a 2-D matrix.
+pub fn lu(a: &Array, nargout: usize) -> Result<Vec<Array>> {
+    let am = MatData::from_array(a)?;
+    let factor = am.view().partial_piv_lu();
+    let l = factor.L().to_owned();
+    let u = factor.U().to_owned();
+    let perm = factor.P();
+    let n = am.rows;
+    let complex = am.complex;
+
+    let l_arr = mat_arr(l.as_ref(), complex);
+    let u_arr = mat_arr(u.as_ref(), complex);
+    let (lr, lcw) = (l.nrows(), l.ncols());
+    let perm_fwd = perm.arrays().0;
+
+    if nargout >= 3 {
+        // Permutation matrix P (so P*A = L*U): P[row, perm_fwd[row]] = 1.
+        let mut p = vec![0.0f64; n * n];
+        for (row, &src) in perm_fwd.iter().enumerate() {
+            p[row + src * n] = 1.0;
+        }
+        Ok(vec![l_arr, u_arr, Array::double_matrix(&[n, n], p)])
+    } else if nargout == 2 {
+        // Fold the permutation into L: PL = P^T * L.
+        let lc = mat_to_vec(l.as_ref());
+        let mut pl = vec![c64::new(0.0, 0.0); lr * lcw];
+        for (dst_row, &src_row) in perm_fwd.iter().enumerate() {
+            for j in 0..lcw {
+                pl[src_row + j * lr] = lc[dst_row + j * lr];
+            }
+        }
+        Ok(vec![finish(lr, lcw, pl, complex), u_arr])
+    } else {
+        Ok(vec![u_arr])
+    }
+}
+
+/// QR factorization. Returns `[Q, R]` (full Q) for 2 outputs, else `R`.
+///
+/// # Errors
+/// Returns [`LinalgError`] if the input is not a 2-D matrix.
+pub fn qr(a: &Array, nargout: usize) -> Result<Vec<Array>> {
+    let am = MatData::from_array(a)?;
+    let (m, n) = (am.rows, am.cols);
+    let factor = am.view().qr();
+    let q = factor.compute_Q();
+    let r = factor.R();
+    let complex = am.complex;
+    // MATLAB's `qr` returns a full `m x n` upper-triangular R; faer's `R()` may
+    // be `min(m,n) x n`. Pad with zero rows so `Q*R == A` holds with full Q.
+    let rr = r.nrows();
+    let mut rdata = vec![c64::new(0.0, 0.0); m * n];
+    for j in 0..n {
+        for i in 0..rr {
+            rdata[i + j * m] = r[(i, j)];
+        }
+    }
+    let r_arr = finish(m, n, rdata, complex);
+    if nargout >= 2 {
+        Ok(vec![mat_arr(q.as_ref(), complex), r_arr])
+    } else {
+        Ok(vec![r_arr])
+    }
+}
+
+/// Singular value decomposition. With <2 outputs returns the column vector of
+/// singular values; with >=2 returns `[U, S, V]` (S diagonal).
+///
+/// # Errors
+/// Returns [`LinalgError`] if the SVD fails to converge.
+pub fn svd(a: &Array, nargout: usize) -> Result<Vec<Array>> {
+    let am = MatData::from_array(a)?;
+    let decomp: Svd<c64> = Svd::new(am.view()).map_err(|_| LinalgError::new("svd failed"))?;
+    let s = decomp.S();
+    let k = s.dim();
+    let sv: Vec<f64> = (0..k).map(|i| s[i].re).collect();
+    if nargout < 2 {
+        if sv.len() == 1 {
+            return Ok(vec![Array::double(sv[0])]);
+        }
+        return Ok(vec![Array::double_matrix(&[k, 1], sv)]);
+    }
+    let u = decomp.U();
+    let v = decomp.V();
+    let (m, n) = (am.rows, am.cols);
+    let mut sdata = vec![0.0f64; m * n];
+    for (i, &val) in sv.iter().enumerate() {
+        sdata[i + i * m] = val;
+    }
+    let complex = am.complex;
+    Ok(vec![
+        mat_arr(u, complex),
+        Array::double_matrix(&[m, n], sdata),
+        mat_arr(v, complex),
+    ])
+}
+
+/// Eigenvalues / eigenvectors. With <2 outputs returns the column vector of
+/// eigenvalues; with >=2 returns `[V, D]` (eigenvectors in `V`, eigenvalues on
+/// the diagonal of `D`).
+///
+/// # Errors
+/// Returns [`LinalgError`] if `A` is not square or the EVD fails.
+pub fn eig(a: &Array, nargout: usize) -> Result<Vec<Array>> {
+    let am = MatData::from_array(a)?;
+    if am.rows != am.cols {
+        return Err(LinalgError::new("matrix for eig must be square"));
+    }
+    let n = am.rows;
+    let decomp: Eigen<f64> = if am.complex {
+        Eigen::new(am.view()).map_err(|_| LinalgError::new("eig failed"))?
+    } else {
+        let real: Vec<f64> = am.data.iter().map(|c| c.re).collect();
+        let view = MatRef::<f64>::from_column_major_slice(&real, n, n);
+        Eigen::new_from_real(view).map_err(|_| LinalgError::new("eig failed"))?
+    };
+    let s = decomp.S();
+    let evals: Vec<c64> = (0..n).map(|i| s[i]).collect();
+    if nargout < 2 {
+        return Ok(vec![build_from_c64(n, 1, evals)]);
+    }
+    let u = decomp.U();
+    let mut vdata = Vec::with_capacity(n * n);
+    for j in 0..n {
+        for i in 0..n {
+            vdata.push(u[(i, j)]);
+        }
+    }
+    let v_arr = build_from_c64(n, n, vdata);
+    let mut ddata = vec![c64::new(0.0, 0.0); n * n];
+    for (i, &e) in evals.iter().enumerate() {
+        ddata[i + i * n] = e;
+    }
+    let d_arr = build_from_c64(n, n, ddata);
+    Ok(vec![v_arr, d_arr])
+}
+
+/// Cholesky factorization (upper triangular `R` with `R'*R == A`).
+///
+/// # Errors
+/// Returns [`LinalgError`] if `A` is not square or not positive definite.
+pub fn chol(a: &Array) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    if am.rows != am.cols {
+        return Err(LinalgError::new("matrix for chol must be square"));
+    }
+    let llt: Llt<c64> = Llt::new(am.view(), Side::Lower)
+        .map_err(|_| LinalgError::new("matrix must be positive definite"))?;
+    let l = llt.L();
+    let n = am.rows;
+    let mut rdata = Vec::with_capacity(n * n);
+    // R = L', so R[i,j] = conj(L[j,i]).
+    for j in 0..n {
+        for i in 0..n {
+            let v = l[(j, i)];
+            rdata.push(c64::new(v.re, -v.im));
+        }
+    }
+    Ok(finish(n, n, rdata, am.complex))
+}
+
+/// Which norm to compute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NormKind {
+    /// 2-norm (default): spectral for matrices, Euclidean for vectors.
+    Two,
+    /// 1-norm: max absolute column sum (matrix) / sum of abs (vector).
+    One,
+    /// Infinity norm: max absolute row sum (matrix) / max abs (vector).
+    Inf,
+    /// Frobenius norm.
+    Fro,
+}
+
+/// Norm of a matrix or vector.
+///
+/// # Errors
+/// Returns [`LinalgError`] if the input is not a 2-D matrix or an SVD fails.
+pub fn norm(a: &Array, p: NormKind) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    let is_vector = am.rows == 1 || am.cols == 1;
+    let view = am.view();
+    let val = match p {
+        NormKind::Two => {
+            if is_vector {
+                view.norm_l2()
+            } else {
+                let decomp: Svd<c64> =
+                    Svd::new(view).map_err(|_| LinalgError::new("norm: svd failed"))?;
+                let s = decomp.S();
+                (0..s.dim()).map(|i| s[i].re).fold(0.0, f64::max)
+            }
+        }
+        NormKind::One => {
+            if is_vector {
+                view.norm_l1()
+            } else {
+                let mut best = 0.0f64;
+                for j in 0..am.cols {
+                    let mut s = 0.0;
+                    for i in 0..am.rows {
+                        s += am.data[i + j * am.rows].norm();
+                    }
+                    best = best.max(s);
+                }
+                best
+            }
+        }
+        NormKind::Inf => {
+            if is_vector {
+                view.norm_max()
+            } else {
+                let mut best = 0.0f64;
+                for i in 0..am.rows {
+                    let mut s = 0.0;
+                    for j in 0..am.cols {
+                        s += am.data[i + j * am.rows].norm();
+                    }
+                    best = best.max(s);
+                }
+                best
+            }
+        }
+        NormKind::Fro => view.norm_l2(),
+    };
+    Ok(Array::double(val))
+}
+
+/// Numerical rank from the singular values (tolerance `max(m,n)*eps*sigma_max`).
+///
+/// # Errors
+/// Returns [`LinalgError`] if the SVD fails.
+pub fn rank(a: &Array) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    let decomp: Svd<c64> = Svd::new(am.view()).map_err(|_| LinalgError::new("rank: svd failed"))?;
+    let s = decomp.S();
+    let k = s.dim();
+    let sv: Vec<f64> = (0..k).map(|i| s[i].re).collect();
+    let smax = sv.iter().cloned().fold(0.0, f64::max);
+    let tol = (am.rows.max(am.cols) as f64) * f64::EPSILON * smax;
+    let r = sv.iter().filter(|&&x| x > tol).count();
+    Ok(Array::double(r as f64))
+}
+
+/// Moore-Penrose pseudoinverse via SVD.
+///
+/// # Errors
+/// Returns [`LinalgError`] if the SVD fails.
+pub fn pinv(a: &Array) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    let decomp: Svd<c64> = Svd::new(am.view()).map_err(|_| LinalgError::new("pinv: svd failed"))?;
+    let pseudo = decomp.pseudoinverse();
+    let data = mat_to_vec(pseudo.as_ref());
+    Ok(finish(am.cols, am.rows, data, am.complex))
+}
+
+#[cfg(test)]
+mod tests;

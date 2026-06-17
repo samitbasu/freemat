@@ -9,8 +9,9 @@
 //! **Broadcasting** here is MATLAB's classic rule plus scalar expansion: scalar
 //! ⊗ array and array ⊗ array of equal shape are supported, as is the common
 //! singleton-dimension broadcast (a dimension of length 1 stretches to match).
-//! Heavy matrix `*` / `\` / `/` are Stage 5 (faer); `*`/`/`/`\` on non-scalars
-//! get a straightforward implementation (`*` naive matmul) or a clear deferral.
+//! Heavy matrix `*` / `\` / `/` / `^` route through [`fm_linalg`] (faer): matrix
+//! multiply, LU / least-squares solves, and integer matrix powers. Scalar and
+//! element-wise forms stay in this module.
 
 use fm_core::{Array, C64, DataClass, ScalarValue, promote};
 use fm_parser::ast::{BinaryOp, UnaryOp};
@@ -294,58 +295,27 @@ fn logical(lhs: &Array, rhs: &Array, f: impl Fn(bool, bool) -> bool) -> Flow<Arr
     Ok(make_logical(&out, data))
 }
 
-/// Matrix / scalar `*`. Scalar operand → element-wise; otherwise naive matmul.
+/// Wrap a [`fm_linalg::LinalgError`] as an interpreter error.
+fn linalg_err(e: fm_linalg::LinalgError) -> Signal {
+    Signal::Error(InterpError::msg(e.message))
+}
+
+/// Matrix / scalar `*`. A scalar operand → element-wise; otherwise faer matmul.
 fn mul(lhs: &Array, rhs: &Array) -> Flow<Array> {
     if lhs.is_scalar() || rhs.is_scalar() {
         return elementwise_arith(lhs, rhs, |a, b| a * b, |a, b| a * b);
     }
     check_numeric(lhs, rhs)?;
-    let ld = lhs.dims();
-    let rd = rhs.dims();
-    if ld.len() != 2 || rd.len() != 2 {
+    if lhs.dims().len() != 2 || rhs.dims().len() != 2 {
         return Err(Signal::Error(InterpError::msg(
             "matrix multiply requires 2-D operands",
         )));
     }
-    let (m, k) = (ld[0], ld[1]);
-    let (k2, p) = (rd[0], rd[1]);
-    if k != k2 {
-        return Err(Signal::Error(InterpError::msg(format!(
-            "inner matrix dimensions must agree ({}x{} * {}x{})",
-            m, k, k2, p
-        ))));
-    }
-    // Naive O(m*k*p) column-major matmul (faer-backed fast path is Stage 5).
-    if lhs.is_complex() || rhs.is_complex() {
-        let a = to_c64_vec(lhs);
-        let b = to_c64_vec(rhs);
-        let mut out = vec![C64::new(0.0, 0.0); m * p];
-        for j in 0..p {
-            for l in 0..k {
-                let bjl = b[l + j * k2];
-                for i in 0..m {
-                    out[i + j * m] += a[i + l * m] * bjl;
-                }
-            }
-        }
-        return Ok(build_complex(&[m, p], out));
-    }
-    let a = to_f64_vec(lhs);
-    let b = to_f64_vec(rhs);
-    let mut out = vec![0.0f64; m * p];
-    for j in 0..p {
-        for l in 0..k {
-            let bjl = b[l + j * k2];
-            for i in 0..m {
-                out[i + j * m] += a[i + l * m] * bjl;
-            }
-        }
-    }
-    Ok(build_real(DataClass::Double, &[m, p], out))
+    fm_linalg::mtimes(lhs, rhs).map_err(linalg_err)
 }
 
 /// `/` (right) and `\` (left) division. Scalar cases are element-wise; the
-/// general matrix solve is deferred to Stage 5 (faer).
+/// general matrix solve goes through faer (LU / least-squares).
 fn div(lhs: &Array, rhs: &Array, left: bool) -> Flow<Array> {
     let (a, b) = if left { (rhs, lhs) } else { (lhs, rhs) };
     // `A / s` or `s \ A`: divide by a scalar element-wise.
@@ -355,18 +325,29 @@ fn div(lhs: &Array, rhs: &Array, left: bool) -> Flow<Array> {
     if lhs.is_scalar() && rhs.is_scalar() {
         return elementwise_arith(a, b, |x, y| x / y, |x, y| x / y);
     }
-    Err(Signal::Error(InterpError::msg(
-        "matrix solve (\\ and / with matrix divisor) is not yet implemented (Stage 5)",
-    )))
+    check_numeric(lhs, rhs)?;
+    // `A \ B` solves `A x = B`; `B / A` solves `x A = B`.
+    if left {
+        fm_linalg::mldivide(lhs, rhs).map_err(linalg_err)
+    } else {
+        fm_linalg::mrdivide(rhs, lhs).map_err(linalg_err)
+    }
 }
 
-/// `^` matrix power. Scalar^scalar uses element-wise pow; matrix power deferred.
+/// `^` matrix power. Scalar^scalar uses element-wise pow; matrix power via faer.
 fn pow(lhs: &Array, rhs: &Array) -> Flow<Array> {
     if lhs.is_scalar() && rhs.is_scalar() {
         return elementwise_pow(lhs, rhs);
     }
+    // `A ^ p` with `A` a matrix and `p` a scalar.
+    if rhs.is_scalar() {
+        let p = rhs.as_f64().ok_or_else(|| {
+            Signal::Error(InterpError::msg("matrix power exponent must be a scalar"))
+        })?;
+        return fm_linalg::mpower(lhs, p).map_err(linalg_err);
+    }
     Err(Signal::Error(InterpError::msg(
-        "matrix power (^ on a non-scalar) is not yet implemented (Stage 5)",
+        "matrix power with a non-scalar exponent is not supported",
     )))
 }
 

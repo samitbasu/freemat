@@ -11,7 +11,7 @@ then tick it here and commit. Leave notes for the next session under each stage.
 - [x] **Stage 2 — `fm-parser`: lexer + parser + AST (miette)**
 - [x] **Stage 3 — `fm-interp`: evaluator, scope, registry, `.m` loader**
 - [x] **Stage 4 — Conformance harness**
-- [ ] **Stage 5 — `fm-linalg` + core math builtins  ·  ★ Milestone 1**
+- [x] **Stage 5 — `fm-linalg` + core math builtins  ·  ★ Milestone 1**
 - [ ] **Stage 6 — `fm-builtins`: remaining core functions**
 - [ ] **Stage 7 — `fm-graphics` + webserver + Plotly  ·  ★ Milestone 2**
 - [ ] **Stage 8 — `fm-io`: MAT files, file I/O, FFT, regex**
@@ -343,6 +343,109 @@ then tick it here and commit. Leave notes for the next session under each stage.
      LHS indexing in `fm-interp/src/index.rs` (scatter); slot it into the Stage 6 indexing work.
   - Neither blocks the harness (both surface as honest `Error`s); they will flip to `Pass` once the
     relevant stage lands.
+
+### Stage 5 — done (`fm-linalg` + first builtins tranche + REPL · ★ Milestone 1)
+
+- **Deps added (all pinned in root `[workspace.dependencies]`):** `faer = "0.24"`
+  (0.24.0), `rand = "0.9"` (0.9.x), `rand_distr = "0.5"`, `rustyline = "15"`. `fm-linalg`
+  opts into `faer`/`ndarray`/`num-complex`; `fm-builtins` into `fm-core`/`fm-interp`/`fm-linalg`/
+  `rand`/`rand_distr`; `fm-cli` into `fm-interp`/`fm-builtins`/`rustyline`/`miette` (`fancy`).
+
+- **`fm-linalg` (already on disk from the prior session; this session added the missing
+  `src/tests.rs`, fixed `qr`, kept the rest).** Operates on `fm_core::Array` via a `MatData`
+  capture that reads any class into a **column-major `c64`** buffer (records `complex` so real
+  results narrow back). Public surface: `mtimes`, `mldivide` (`\`), `mrdivide` (`/`), `mpower`
+  (`A^p`, integer p, neg via `inv`), `inv`, `det`, `lu(nargout)` (`[L,U]` folds P into L so
+  `L*U==A`; `[L,U,P]` gives `P*A==L*U`), `qr(nargout)` (full `m×m` Q + full `m×n` R — **fix:** pad
+  faer's `min(m,n)×n` R with zero rows), `svd(nargout)` (`s` / `[U,S,V]`), `eig(nargout)`
+  (`new_from_real` for real input so real-symmetric stays real; `[V,D]` for 2 outputs), `chol`
+  (upper `R`, `R'*R==A`), `norm(NormKind::{Two,One,Inf,Fro})`, `rank`, `pinv`. **faer 0.24 entry
+  points:** `MatRef::from_column_major_slice`, `&a * &b` matmul, `partial_piv_lu().solve_in_place`,
+  `qr().{compute_Q, R, solve_lstsq_in_place}`, `Svd::new` + `.pseudoinverse()`, `Eigen::new` /
+  `Eigen::new_from_real`, `Llt::new(_, Side::Lower)`, `MatRef::{determinant, norm_l2, norm_l1,
+  norm_max}`. 18 unit tests vs known matrices, all green.
+
+- **Operator rewiring (`fm-interp/src/ops.rs`; added `fm-interp → fm-linalg` dep, no cycle):**
+  `mul` routes non-scalar `*` to `fm_linalg::mtimes`; `div` routes matrix `\`/`/` to
+  `mldivide`/`mrdivide`; `pow` routes matrix `A^p` to `mpower`. Scalar and element-wise
+  (`.* ./ .\ .^`) forms stay in `ops.rs`. The naive column-major matmul and the "(Stage 5)"
+  deferral errors are gone. The Stage-3 `matrix_solve_deferred_to_stage5` test was rewritten to
+  assert the real solve.
+
+- **`fm-builtins` (filled in; was a Stage-0 scaffold).** Exposes
+  `register_standard_library(&mut Interpreter)` (and `register_into(&mut FunctionTable)`), layered
+  on top of the interpreter's minimal Stage-3 defaults. Modules + builtins added:
+  - **elementary:** `sqrt`/`log`/`log2`/`log10` (negative-real → complex), `exp`, `log1p`/`expm1`,
+    `power` (`.^`), `sign`, `fix`, `conj`/`real`/`imag`/`angle`/`arg`, `hypot`, `gcd`/`lcm`,
+    `factorial`, `isnan`/`isinf`/`isfinite`, `deg2rad`/`rad2deg`.
+  - **trig:** `sin`/`cos`/`tan`/`asin`/`acos`/`atan`, `sinh`…`atanh`, `sec`/`csc`/`cot`, `atan2`.
+  - **reductions** (first-non-singleton dim, or explicit `dim`): `sum`/`prod`/`mean`/`cumsum`/
+    `cumprod`/`median`/`var`/`std`; `min`/`max` return `[val, idx]` (and the `min(a,b)` two-arg
+    element-wise form).
+  - **logical:** `all`/`any` (**the high-priority unblocker** — `test()` is `all(x(:))`),
+    `xor`/`not`/`isequal`/`find`, plus full-size `true`/`false`.
+  - **constructors:** `zeros`/`ones` (full size-vector forms), `eye`, `linspace`/`logspace`,
+    `repmat`, `diag` (build-from-vector / extract-diagonal).
+  - **random:** `rand`/`randn`/`randi` via `rand::rng()` + `rand_distr::StandardNormal`.
+  - **linalg wrappers:** `inv`/`det`/`eig`/`svd`/`lu`/`qr`/`chol`/`norm`/`rank`/`pinv`/`trace`.
+  - **inspection/type/string:** `typeof` (complex → `complex`/`dcomplex`), `float`, `complex`/
+    `dcomplex`, `feps`/`realmax`/`realmin`, `strcmp`/`strcmpi`, `iscellstr`, `issame`,
+    `iscomplex`/`isfloat`/`isinteger`/`islogical`/`isvector`/`isscalar`/`ismatrix`/`isrow`/
+    `iscolumn`/`isstruct`. 27 builtins integration tests (drive the interpreter end-to-end).
+
+- **`fm-cli` REPL (`cargo run -p fm-cli`):** a lean `rustyline::DefaultEditor` loop — builds an
+  `Interpreter`, registers the standard library, evaluates each line via `interp.run`, prints
+  buffered output (`take_output`; trailing `;` suppresses the echo per the interpreter), and
+  renders runtime/parse errors through `miette`'s `GraphicalReportHandler` (unicode theme).
+  Ctrl-C abandons the line, Ctrl-D / `quit` / `exit` leaves. Graphics webserver is Stage 7.
+
+- **Milestone 1 acceptance (evidence):** `crates/fm-conformance/tests/curated.rs::
+  milestone1_acceptance` + `fm-builtins` tests verify `A=[1 2;3 4]; A*A' = [5 11;11 25]`,
+  `eig([2 0;0 3]) = {2,3}`, `svd([3 0;0 4]) = {4,3}`, `lu([4 3;6 3])` reconstructs, and
+  `[2 0;0 4]\[2;8] = [1;2]`. The live REPL prints the same.
+
+- **Conformance: 62/603 (10.3%) → 198/603 (32.8%), Δ +136 tests.** Harness now registers the
+  full standard library (`run_test_file`). Per-dir (total / pass / fail / error):
+
+  | dir | total | pass | fail | error |
+  |---|---:|---:|---:|---:|
+  | array | 68 | 23 | 8 | 37 |
+  | binary | 3 | 0 | 0 | 3 |
+  | constants | 1 | 0 | 0 | 1 |
+  | elementary | 7 | 5 | 0 | 2 |
+  | flow | 22 | 20 | 2 | 0 |
+  | freemat | 11 | 0 | 0 | 11 |
+  | functions | 9 | 5 | 3 | 1 |
+  | inspection | 20 | 9 | 2 | 9 |
+  | io | 6 | 0 | 0 | 6 |
+  | operators | 66 | 9 | 1 | 56 |
+  | random | 1 | 0 | 0 | 1 |
+  | signal | 1 | 0 | 0 | 1 |
+  | string | 3 | 0 | 0 | 3 |
+  | suite | 337 | 104 | 24 | 209 |
+  | typecast | 5 | 2 | 0 | 3 |
+  | variables | 43 | 21 | 7 | 15 |
+  | **TOTAL** | **603** | **198** | **47** | **358** |
+
+  Remaining `Error`s are dominated by Stage-6/8 surface: `sparse`/`sprandn`/`sparse_test_mat`
+  (~169), `struct` (20), `eval`/`save`/`reshape`/`permute`/`sort`/`strcmp`-on-cells, etc.
+- **Pass-floor guard raised 62 → 195** (`curated.rs::PASS_FLOOR`; live is 198, the small margin
+  absorbs the few PRNG-dependent `rand`/`randn` tests). The curated must-pass list gained the
+  elementary `all`-backed tests and array `det`/`diag`/`repmat`/`ones`/`isfloat`/`isinteger`.
+
+- **Decisions / deferrals (MATLAB-compatible choices made where ambiguous):**
+  - `eig` on a real input uses faer's `new_from_real` so a real-symmetric matrix returns real
+    eigenvalues (not complex with tiny imaginary noise); ordering is faer's (not re-sorted —
+    MATLAB itself does not guarantee eig order).
+  - `qr` returns the **full** `[Q (m×m), R (m×n)]` (MATLAB default), padding faer's economy R.
+  - `var`/`std` use the N-1 (sample) normalization, MATLAB's default.
+  - `min`/`max` `[val,idx]` pick the **first** extreme index (MATLAB semantics); NaNs are skipped.
+  - `complex`/`dcomplex` always produce a complex array; `typeof` reports `complex`/`dcomplex`
+    because fm-core folds complex into the Float/Double classes (no separate complex `DataClass`).
+  - `power`/`hypot`/`atan2`/`xor`/`min(a,b)` do scalar-or-equal-length broadcasting only (full
+    singleton broadcasting for these stays in the operator path; Stage 6 can widen if needed).
+  - The two documented `fm-core` bugs (struct-array concat, `x(i)=[]` delete) are **Stage 6** and
+    were worked around, not fixed (they still surface as honest `Error`s).
 
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,

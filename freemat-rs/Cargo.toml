@@ -20,6 +20,14 @@ num-complex = "0.4"
 # `fancy` feature (graphical rendering) is enabled by the consumer (CLI / tests).
 miette = "7.6"
 thiserror = "2.0"
+# Linear algebra (Stage 5): pure-Rust LU/QR/SVD/eig/Cholesky over column-major
+# storage; the fm-core buffer feeds faer near zero-copy.
+faer = "0.24"
+# PRNG for rand/randn (Stage 5).
+rand = "0.9"
+rand_distr = "0.5"
+# Interactive REPL line editing (Stage 5, fm-cli).
+rustyline = "15"
 
 [workspace.lints.rust]
 rust_2018_idioms = "warn"

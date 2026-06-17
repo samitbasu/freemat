@@ -41,8 +41,17 @@ const CURATED: &[&str] = &[
     "functions/test_nargin2",
     // operators — ranges
     "operators/test_range9",
-    // elementary — the `test()` helper itself
+    // elementary — the `test()` helper itself + all/any-backed checks
+    "elementary/test_test1",
+    "elementary/test_test2",
     "elementary/test_test5",
+    // array — Stage-5 builtins (det, diag, repmat, ones, isfloat/isinteger)
+    "array/test_det1",
+    "array/test_diag1",
+    "array/test_repmat2",
+    "array/test_isfloat1",
+    "array/test_isinteger1",
+    "array/test_ones1",
     // typecast — uint64 round trip
     "typecast/test_uint64_1",
     // suite — assignment, control flow, subsetting, matrix concat, persistents
@@ -107,7 +116,9 @@ fn curated_subset_passes() {
 /// Guard against silent regressions in the *aggregate* pass count: the full
 /// covered corpus must keep passing at least this many tests. Raise the floor
 /// as later stages improve the number (the binary prints the live total).
-const PASS_FLOOR: usize = 62;
+/// Stage 5 raised the live total to 198/603 (32.8%); the floor allows a small
+/// margin for PRNG-dependent tests.
+const PASS_FLOOR: usize = 195;
 
 #[test]
 fn full_suite_pass_count_does_not_regress() {
@@ -118,6 +129,42 @@ fn full_suite_pass_count_does_not_regress() {
         pass >= PASS_FLOOR,
         "full-suite pass count regressed: {pass} < floor {PASS_FLOOR}"
     );
+}
+
+/// **Milestone 1 acceptance:** the REPL path does real numeric work — matmul +
+/// transpose, eigenvalues, SVD, LU, and a `\` solve give the known answers.
+#[test]
+fn milestone1_acceptance() {
+    use fm_interp::Interpreter;
+    let mut i = Interpreter::new();
+    fm_builtins::register_standard_library(&mut i);
+
+    let vec_of = |i: &Interpreter, name: &str| -> Vec<f64> {
+        fm_interp::value::to_f64_vec(i.context.lookup(name).expect("var"))
+    };
+
+    // A*A'
+    i.run("A = [1 2; 3 4]; m = A*A';").unwrap();
+    assert_eq!(vec_of(&i, "m"), vec![5.0, 11.0, 11.0, 25.0]);
+
+    // eig
+    i.run("e = eig([2 0; 0 3]);").unwrap();
+    let mut e = vec_of(&i, "e");
+    e.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert!((e[0] - 2.0).abs() < 1e-9 && (e[1] - 3.0).abs() < 1e-9);
+
+    // svd
+    i.run("s = svd([3 0; 0 4]);").unwrap();
+    let s = vec_of(&i, "s");
+    assert!((s[0] - 4.0).abs() < 1e-9 && (s[1] - 3.0).abs() < 1e-9);
+
+    // lu reconstructs
+    i.run("[L, U] = lu([4 3; 6 3]); P = L*U;").unwrap();
+    assert_eq!(vec_of(&i, "P"), vec![4.0, 6.0, 3.0, 3.0]);
+
+    // backslash solve
+    i.run("x = [2 0; 0 4] \\ [2; 8];").unwrap();
+    assert_eq!(vec_of(&i, "x"), vec![1.0, 2.0]);
 }
 
 /// Non-gating full-suite reporter. Run with:

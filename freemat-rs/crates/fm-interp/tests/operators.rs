@@ -91,10 +91,10 @@ fn naive_matmul() {
 }
 
 #[test]
-fn matrix_solve_deferred_to_stage5() {
-    let mut interp = fm_interp::Interpreter::new();
-    let err = interp.run("x = [1 2;3 4] \\ [1;1];").unwrap_err();
-    assert!(err.message.contains("Stage 5"));
+fn matrix_solve_via_faer() {
+    // Stage 5: `\` now routes through fm-linalg. A=[2 0;0 4], b=[2;8] => x=[1;2].
+    let v = run_vec("x = [2 0;0 4] \\ [2;8];", "x");
+    assert_eq!(v, vec![1.0, 2.0]);
 }
 
 #[test]
