@@ -187,3 +187,31 @@ fn complex_single_multi_gather_keeps_imaginary() {
     assert_eq!((c[0].re, c[0].im), (1.0, 2.0));
     assert_eq!((c[1].re, c[1].im), (5.0, 6.0));
 }
+
+#[test]
+fn cell_brace_multi_position_single_value_errors() {
+    // `c{5:6} = -1` (a single value into multiple cells) is an error.
+    let mut i = fm_interp::Interpreter::new();
+    let r = i.run("c = {1,2,3,4,5}; c{5:6} = -1;");
+    assert!(
+        r.is_err(),
+        "single-value multi-cell brace assign must error"
+    );
+    // A single-position brace-assign still works (and grows).
+    let mut i = fm_interp::Interpreter::new();
+    i.run("c = {1,2,3}; c{5} = 7;").unwrap();
+    assert_eq!(i.context.lookup("c").unwrap().numel(), 5);
+}
+
+#[test]
+fn field_assign_on_struct_array_errors() {
+    // `a.foo = -1` on a multi-element struct array is an error (build the 1x2
+    // struct array via grow-assign, then assign the field without indexing).
+    let mut i = fm_interp::Interpreter::new();
+    i.run("a(1).foo = 5; a(2).foo = 7;").unwrap();
+    let r = i.run("a.foo = -1;");
+    assert!(
+        r.is_err(),
+        "scalar field assign across struct array must error"
+    );
+}

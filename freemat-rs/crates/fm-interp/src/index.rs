@@ -814,6 +814,14 @@ fn scatter_cell(base: &Array, plan: &IndexPlan, rhs: &Array) -> Flow<Array> {
 /// Scatter cell *contents* via brace-assignment (`c{i} = val`): grows the cell
 /// and places each `rhs` value directly into the cell slot.
 pub fn scatter_cell_contents(base: &Array, plan: &IndexPlan, rhs: Array) -> Flow<Array> {
+    // A single-value brace-assign into *multiple* positions (`c{5:6} = v`) is an
+    // error in FreeMat — the comma-list on the left needs a comma-list on the
+    // right with the same number of elements.
+    if plan.linear.len() > 1 {
+        return Err(Signal::Error(InterpError::msg(
+            "in assignment c{I} = B, the number of values on the right must match the number of indexed cells",
+        )));
+    }
     let needed: usize = plan.needed_dims.iter().product();
     let mut flat: Vec<Array> = match base {
         Array::Cell(d) => crate::value::mem_order(d),
@@ -1031,6 +1039,11 @@ pub fn field_read(base: &Array, name: &str) -> Flow<Array> {
 /// needed (grow-on-assign for fields).
 pub fn field_write(base: &Array, name: &str, value: Array) -> Flow<Array> {
     match base {
+        // `a.foo = v` on a *multi-element* struct array is an error: a single
+        // assignment can't span the array (FreeMat requires `a(i).foo = v`).
+        Array::Struct(s) if s.numel() > 1 => Err(Signal::Error(InterpError::msg(format!(
+            "cannot assign field '{name}' on a struct array with more than one element"
+        )))),
         Array::Struct(s) => {
             let mut fields: Vec<(String, Array)> = s
                 .field_names()
