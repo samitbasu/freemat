@@ -313,9 +313,31 @@ fn plan_subscript(
     // dimension adopts the assigned value's extent for that axis (FreeMat's
     // grow-on-assign colon). Only applies when assigning (`rhs_dims` set).
     if let Some(rd) = rhs_dims {
-        for (i, arg) in args.iter().enumerate() {
-            if matches!(arg, IndexArg::Colon) && eff[i] == 0 {
-                eff[i] = rd.get(i).copied().unwrap_or(1);
+        let target_empty = eff.iter().product::<usize>() == 0;
+        // Colon axes (the dimensions whose extent the RHS dictates when growing).
+        let colon_axes: Vec<usize> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| matches!(a, IndexArg::Colon))
+            .map(|(i, _)| i)
+            .collect();
+        // The RHS's non-singleton dimensions, in order.
+        let rhs_dims_ns: Vec<usize> = rd.iter().copied().filter(|&d| d != 1).collect();
+        if target_empty && !colon_axes.is_empty() && colon_axes.len() == rhs_dims_ns.len() {
+            // Growing from empty and the colon count matches the RHS rank: each
+            // colon adopts the corresponding RHS dimension in order. This grows
+            // `a(2,:,:) = r` (`r` 2×2) into a 2×2×2 array. When the colon count
+            // does *not* match the RHS rank (e.g. `c(2,:) = [2 3;4 5]`), the
+            // assignment is a dimension mismatch — fall through to the per-axis
+            // adopt below, which produces a region the scatter rejects.
+            for (axis, &ext) in colon_axes.iter().zip(&rhs_dims_ns) {
+                eff[*axis] = ext;
+            }
+        } else {
+            for (i, arg) in args.iter().enumerate() {
+                if matches!(arg, IndexArg::Colon) && eff[i] == 0 {
+                    eff[i] = rd.get(i).copied().unwrap_or(1);
+                }
             }
         }
     }
@@ -437,7 +459,7 @@ fn scalar_at(base: &Array, i: usize) -> Option<ScalarValue> {
         Array::Complex32(d) => at!(d, ScalarValue::Complex32),
         Array::Complex64(d) => at!(d, ScalarValue::Complex64),
         Array::Char(d) => at!(d, ScalarValue::Char),
-        Array::Cell(_) | Array::Struct(_) => None,
+        Array::Cell(_) | Array::Struct(_) | Array::FunctionHandle(_) => None,
         Array::Sparse(s) => {
             let (re, im) = s.get_linear(i);
             if im != 0.0 {
@@ -1098,6 +1120,21 @@ pub fn field_read(base: &Array, name: &str) -> Flow<Array> {
             "cannot access field '{name}' of a {} value",
             base.class_name()
         )))),
+    }
+}
+
+/// Read field `name` across **every** element of a struct array, yielding a
+/// comma-separated list (one value per element, column-major). For a scalar
+/// struct this is a single value, matching [`field_read`]. This is what
+/// `s.foo` expands to in an argument list / `[s.foo]` (FreeMat's cs-list).
+pub fn field_read_multi(base: &Array, name: &str) -> Flow<Vec<Array>> {
+    match base {
+        Array::Struct(s) => s.field(name).map(<[Array]>::to_vec).ok_or_else(|| {
+            Signal::Error(InterpError::msg(format!(
+                "reference to non-existent field '{name}'"
+            )))
+        }),
+        _ => Ok(vec![field_read(base, name)?]),
     }
 }
 

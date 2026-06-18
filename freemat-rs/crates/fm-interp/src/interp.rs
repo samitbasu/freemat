@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use fm_core::{Array, C64, DataClass, Dims, FormatMode, ScalarValue};
+use fm_core::{Array, C64, DataClass, Dims, FormatMode, FunctionHandle, ScalarValue};
 use fm_parser::ast::{
     BinaryOp, Case, Expr, ExprKind, FunctionDef, Program, Stmt, StmtKind, Terminator,
 };
@@ -27,6 +27,10 @@ use crate::graphics::GraphicsState;
 use crate::index::{self, IndexArg, IndexPlan};
 use crate::ops;
 use crate::value::{self, truth};
+
+/// The result of a by-reference call: the function's outputs paired with the
+/// final values of each `&` parameter (by parameter index) to write back.
+type CallWithRefs = (Vec<Array>, Vec<(usize, Array)>);
 
 /// The tree-walking interpreter — owns the [`Context`] and function table.
 pub struct Interpreter {
@@ -456,12 +460,52 @@ impl Interpreter {
             let plan = self.plan_for(&current, args, src)?;
             return Ok(plan.linear.len().max(1));
         }
+        // `[s.foo] = f` over a multi-element struct array consumes one value per
+        // struct element (comma-list expansion on the left).
+        if let ExprKind::Field { base, .. } = &target.kind {
+            let (_, current) = self.lvalue_base(base, src)?;
+            if let Array::Struct(s) = &current {
+                return Ok(s.numel().max(1));
+            }
+        }
         Ok(1)
     }
 
     /// Assign several values into a multi-position cell-content target
     /// (`[c{1:3}] = f`): each indexed cell slot receives one of `values`.
     fn assign_to_multi(&mut self, target: &Expr, values: Vec<Array>, src: &str) -> Flow<String> {
+        // `[s.foo] = a, b, c` — assign one value to each element's field across a
+        // multi-element struct array (cs-list distribution on the LHS).
+        if let ExprKind::Field { base, name: field } = &target.kind {
+            let (root, current) = self.lvalue_base(base, src)?;
+            if let Some(s) = current.as_struct() {
+                let n = s.numel();
+                if n > 1 {
+                    let mut fields: Vec<(String, Vec<Array>)> = s.field_pairs().to_vec();
+                    // Ensure the field exists; collect its column (or fill empty).
+                    if !fields.iter().any(|(fname, _)| fname == field) {
+                        fields.push((field.clone(), vec![Array::empty(); n]));
+                    }
+                    for (fname, col) in &mut fields {
+                        if fname == field {
+                            for (k, v) in values.iter().enumerate().take(n) {
+                                col[k] = v.clone();
+                            }
+                        }
+                    }
+                    let updated = Array::struct_array(fm_core::StructArray::from_fields(
+                        s.dims().to_vec(),
+                        fields,
+                    ));
+                    self.store_lvalue(base, updated, src)?;
+                    return Ok(root);
+                }
+            }
+            // Scalar struct (or non-struct): single-value assign.
+            let mut it = values.into_iter();
+            let first = it.next().unwrap_or_else(Array::empty);
+            return self.assign_to(target, first, src);
+        }
         let ExprKind::CellIndex { base, args } = &target.kind else {
             // Only cell-content targets expand; fall back to single-value assign.
             let mut it = values.into_iter();
@@ -652,10 +696,10 @@ impl Interpreter {
             }
             ExprKind::Matrix(rows) => self.eval_matrix(rows, src),
             ExprKind::Cell(rows) => self.eval_cell(rows, src),
-            ExprKind::FuncHandle(_) | ExprKind::AnonFunc { .. } => Err(Signal::Error(
-                InterpError::msg("function handles are not yet implemented (Stage 5/6)")
-                    .located(src, e.span),
-            )),
+            ExprKind::FuncHandle(name) => Ok(Array::function_handle(FunctionHandle::named(name))),
+            ExprKind::AnonFunc { params, body } => {
+                Ok(self.make_anon_handle(params, body, src, e.span))
+            }
             // Possibly multi-valued (function call / cell-content): take first.
             ExprKind::Ident(_) | ExprKind::Index { .. } | ExprKind::CellIndex { .. } => {
                 let vals = self.eval_multi(e, 1, src)?;
@@ -699,7 +743,9 @@ impl Interpreter {
             ExprKind::CellIndex { base, args } => self.eval_cell_index(base, args, src),
             ExprKind::Field { base, name } => {
                 let b = self.eval(base, src)?;
-                Ok(vec![index::field_read(&b, name)?])
+                // A `.field` over a multi-element struct array expands to a
+                // comma-list (cs-list); a scalar struct yields a single value.
+                index::field_read_multi(&b, name)
             }
             ExprKind::DynField { base, name } => {
                 let b = self.eval(base, src)?;
@@ -711,11 +757,41 @@ impl Interpreter {
             }
             ExprKind::Matrix(rows) => Ok(vec![self.eval_matrix(rows, src)?]),
             ExprKind::Cell(rows) => Ok(vec![self.eval_cell(rows, src)?]),
-            ExprKind::FuncHandle(_) | ExprKind::AnonFunc { .. } => Err(Signal::Error(
-                InterpError::msg("function handles are not yet implemented (Stage 5/6)")
-                    .located(src, e.span),
-            )),
+            ExprKind::FuncHandle(name) => {
+                Ok(vec![Array::function_handle(FunctionHandle::named(name))])
+            }
+            ExprKind::AnonFunc { params, body } => {
+                Ok(vec![self.make_anon_handle(params, body, src, e.span)])
+            }
         }
+    }
+
+    /// Build an anonymous-function handle, capturing the body's free variables by
+    /// value from the current scope (MATLAB/FreeMat semantics — capture happens
+    /// at definition time).
+    fn make_anon_handle(&self, params: &[String], body: &Expr, src: &str, span: Span) -> Array {
+        let mut free = Vec::new();
+        collect_free_vars(body, &mut free);
+        let mut captures = HashMap::new();
+        for name in free {
+            if params.contains(&name) {
+                continue;
+            }
+            if let Some(v) = self.context.lookup(&name) {
+                captures.insert(name, v.clone());
+            }
+        }
+        // `func2str`/display text: the original source slice of the `@(...)` expr.
+        let text = src
+            .get(span.start..span.end)
+            .map_or_else(|| "@(...)".to_string(), |s| s.to_string());
+        Array::function_handle(FunctionHandle::anonymous(
+            params.to_vec(),
+            body.clone(),
+            captures,
+            text,
+            Arc::new(src.to_string()),
+        ))
     }
 
     fn eval_ident(
@@ -844,12 +920,79 @@ impl Interpreter {
             && (!is_builtin_constant(name) || self.resolves_function(name))
         {
             let arg_vals = self.eval_args(args, src)?;
+            // Pass-by-reference (`function f(&x)`): copy the callee's final value
+            // of each `&` parameter back into the caller's variable, when the
+            // corresponding argument is a plain variable name.
+            if let Some(def) = self.lookup_interpreted_def(name)
+                && def.inputs.iter().any(|p| p.by_ref)
+            {
+                let locals = self.locals_for(name);
+                let (outputs, refs) =
+                    self.call_interpreted_refs(&def, &arg_vals, nargout, locals)?;
+                for (param_idx, val) in refs {
+                    if let Some(arg) = args.get(param_idx)
+                        && is_lvalue(arg)
+                    {
+                        self.assign_to(arg, val, src)?;
+                    }
+                }
+                return Ok(outputs);
+            }
             return self.call_function(name, &arg_vals, nargout, src, span);
         }
-        // Otherwise index a value.
+        // Otherwise index a value — unless it is a function handle, in which case
+        // `h(args)` *calls* the handle (FreeMat: applying a handle by parens).
         let value = self.eval(base, src)?;
+        if value.is_function_handle() {
+            let arg_vals = self.eval_args(args, src)?;
+            return self.invoke_handle(&value, &arg_vals, nargout, src, span);
+        }
         let plan = self.plan_for(&value, args, src)?;
         Ok(vec![index::gather(&value, &plan)?])
+    }
+
+    /// Call a function-handle value with `args`, requesting `nargout` outputs.
+    /// A **named** handle resolves the function by name at call time; an
+    /// **anonymous** handle binds its parameters, installs its captured workspace
+    /// in a fresh scope, and evaluates the body.
+    pub fn invoke_handle(
+        &mut self,
+        handle: &Array,
+        args: &[Array],
+        nargout: usize,
+        src: &str,
+        span: Span,
+    ) -> Flow<Vec<Array>> {
+        let h = handle.as_function_handle().ok_or_else(|| {
+            Signal::Error(InterpError::msg("value is not a function handle").located(src, span))
+        })?;
+        match h {
+            FunctionHandle::Named(name) => self.call_function(name, args, nargout, src, span),
+            FunctionHandle::Anonymous(c) => {
+                let c = c.clone();
+                if args.len() > c.params.len() {
+                    return Err(Signal::Error(InterpError::msg(
+                        "too many input arguments to anonymous function",
+                    )));
+                }
+                // Evaluate the body in a fresh scope seeded with the captured
+                // variables, then the bound parameters (params shadow captures).
+                self.context.push_scope("@anonymous".to_string());
+                self.nargin_stack.push(args.len());
+                self.nargout_stack.push(nargout.max(1));
+                for (k, v) in &c.captures {
+                    self.context.assign(k, v.clone());
+                }
+                for (param, val) in c.params.iter().zip(args) {
+                    self.context.assign(param, val.clone());
+                }
+                let result = self.eval(&c.body, &c.source);
+                self.nargin_stack.pop();
+                self.nargout_stack.pop();
+                self.context.pop_scope();
+                Ok(vec![result?])
+            }
+        }
     }
 
     /// Brace-indexing: cell-content extraction (yields possibly several values).
@@ -927,13 +1070,18 @@ impl Interpreter {
     fn eval_args(&mut self, args: &[Expr], src: &str) -> Flow<Vec<Array>> {
         let mut out = Vec::with_capacity(args.len());
         for a in args {
-            // A `{}`-index argument may expand to multiple values (cs-list);
-            // for the minimal Stage 3 set we take the first value.
-            if let ExprKind::CellIndex { .. } = &a.kind {
-                let vals = self.eval_multi(a, 1, src)?;
-                out.extend(vals);
-            } else {
-                out.push(self.eval(a, src)?);
+            // A `{}`-index argument may expand to multiple values (cs-list); so
+            // may a `.field` access over a multi-element struct array
+            // (`f(s.foo)` passes one argument per struct element).
+            match &a.kind {
+                ExprKind::CellIndex { .. } => {
+                    out.extend(self.eval_multi(a, 1, src)?);
+                }
+                ExprKind::Field { base, name } => {
+                    let b = self.eval(base, src)?;
+                    out.extend(index::field_read_multi(&b, name)?);
+                }
+                _ => out.push(self.eval(a, src)?),
             }
         }
         Ok(out)
@@ -948,7 +1096,17 @@ impl Interpreter {
     /// Returns a runtime error if the operands' shapes are incompatible.
     pub fn concat_values(&self, dim: usize, values: &[Array]) -> Flow<Array> {
         let refs: Vec<Array> = values.to_vec();
-        if dim == 1 { vcat(&refs) } else { hcat(&refs) }
+        match dim {
+            0 | 1 => vcat(&refs),
+            2 => hcat(&refs),
+            _ => {
+                let non_empty: Vec<&Array> = refs.iter().filter(|e| e.numel() > 0).collect();
+                if non_empty.is_empty() {
+                    return Ok(Array::empty());
+                }
+                cat_nd(dim - 1, &non_empty)
+            }
+        }
     }
 
     // ---- Matrix / cell literals ---------------------------------------------
@@ -1102,6 +1260,101 @@ impl Interpreter {
         outputs
     }
 
+    /// Resolve the [`FunctionDef`] for an interpreted function `name` (a
+    /// file-local subfunction of the current file, or a global). Returns `None`
+    /// for builtins / unknown names.
+    fn lookup_interpreted_def(&self, name: &str) -> Option<Arc<FunctionDef>> {
+        if let Some(locals) = self.local_funcs_stack.last()
+            && let Some(def) = locals.get(name)
+        {
+            return Some(def.clone());
+        }
+        match self.functions.get(name) {
+            Some(Function::Interpreted { def, .. }) => Some(def.clone()),
+            _ => None,
+        }
+    }
+
+    /// The file-local table that would be active when calling `name`.
+    fn locals_for(&self, name: &str) -> Arc<crate::function::FileLocals> {
+        if let Some(locals) = self.local_funcs_stack.last()
+            && locals.get(name).is_some()
+        {
+            return locals.clone();
+        }
+        match self.functions.get(name) {
+            Some(Function::Interpreted { locals, .. }) => locals.clone(),
+            _ => self.local_funcs_stack.last().cloned().unwrap_or_default(),
+        }
+    }
+
+    /// Like [`call_interpreted`], but also returns, for each `&` (by-reference)
+    /// parameter, its **final** value in the callee scope (paired with the
+    /// parameter index) so the caller can write it back. Captured before the
+    /// scope is popped.
+    fn call_interpreted_refs(
+        &mut self,
+        def: &FunctionDef,
+        args: &[Array],
+        nargout: usize,
+        locals: Arc<crate::function::FileLocals>,
+    ) -> Flow<CallWithRefs> {
+        if args.len() > def.inputs.len() && !has_varargin(def) {
+            return Err(Signal::Error(InterpError::msg(format!(
+                "too many input arguments to '{}'",
+                def.name
+            ))));
+        }
+        let fsrc = locals.src.clone();
+        self.local_funcs_stack.push(locals);
+        self.context.push_scope(def.name.clone());
+        self.nargin_stack.push(args.len());
+        self.nargout_stack.push(nargout.max(1));
+
+        for (i, param) in def.inputs.iter().enumerate() {
+            if param.name == "varargin" {
+                let rest: Vec<Array> = args.iter().skip(i).cloned().collect();
+                let n = rest.len();
+                self.context.assign("varargin", Array::cell(&[1, n], rest));
+                break;
+            }
+            if let Some(v) = args.get(i) {
+                self.context.assign(&param.name, v.clone());
+            }
+        }
+
+        let result = self.exec_block(&def.body, &fsrc);
+        let flow = match result {
+            Ok(()) | Err(Signal::Return) => Ok(()),
+            Err(Signal::Break | Signal::Continue) => Ok(()),
+            Err(e @ Signal::Error(_)) => Err(e),
+        };
+        let outputs = if flow.is_ok() {
+            self.collect_outputs(def, nargout)
+        } else {
+            Ok(Vec::new())
+        };
+        // Capture by-ref parameter final values before the scope is popped.
+        let mut refs = Vec::new();
+        if flow.is_ok() {
+            for (i, param) in def.inputs.iter().enumerate() {
+                if param.by_ref
+                    && let Some(v) = self.context.lookup(&param.name)
+                {
+                    refs.push((i, v.clone()));
+                }
+            }
+        }
+
+        self.nargin_stack.pop();
+        self.nargout_stack.pop();
+        self.context.pop_scope();
+        self.local_funcs_stack.pop();
+
+        flow?;
+        Ok((outputs?, refs))
+    }
+
     fn collect_outputs(&mut self, def: &FunctionDef, nargout: usize) -> Flow<Vec<Array>> {
         let want = if nargout == 0 { 1 } else { nargout };
         let mut out = Vec::new();
@@ -1186,6 +1439,68 @@ fn root_name(e: &Expr) -> Option<String> {
         | ExprKind::Field { base, .. }
         | ExprKind::DynField { base, .. } => root_name(base),
         _ => None,
+    }
+}
+
+/// Whether `e` is a valid assignment target (a variable, index, field, or
+/// dynamic-field reference rooted at a variable). Used to decide whether a
+/// by-reference argument can be written back.
+fn is_lvalue(e: &Expr) -> bool {
+    matches!(
+        &e.kind,
+        ExprKind::Ident(_)
+            | ExprKind::Index { .. }
+            | ExprKind::CellIndex { .. }
+            | ExprKind::Field { .. }
+            | ExprKind::DynField { .. }
+    ) && root_name(e).is_some()
+}
+
+/// Collect identifier names referenced in an expression (the candidate free
+/// variables of an anonymous-function body). Over-approximates: it includes
+/// function names too, but the capture step only snapshots names actually bound
+/// as variables, so extra names are harmless.
+fn collect_free_vars(e: &Expr, out: &mut Vec<String>) {
+    match &e.kind {
+        ExprKind::Ident(n) => {
+            if !out.contains(n) {
+                out.push(n.clone());
+            }
+        }
+        ExprKind::Unary { operand, .. } | ExprKind::Transpose { operand, .. } => {
+            collect_free_vars(operand, out);
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
+            collect_free_vars(lhs, out);
+            collect_free_vars(rhs, out);
+        }
+        ExprKind::Range { start, step, stop } => {
+            collect_free_vars(start, out);
+            if let Some(s) = step {
+                collect_free_vars(s, out);
+            }
+            collect_free_vars(stop, out);
+        }
+        ExprKind::Index { base, args } | ExprKind::CellIndex { base, args } => {
+            collect_free_vars(base, out);
+            for a in args {
+                collect_free_vars(a, out);
+            }
+        }
+        ExprKind::Field { base, .. } => collect_free_vars(base, out),
+        ExprKind::DynField { base, name } => {
+            collect_free_vars(base, out);
+            collect_free_vars(name, out);
+        }
+        ExprKind::Matrix(rows) | ExprKind::Cell(rows) => {
+            for row in rows {
+                for el in row {
+                    collect_free_vars(el, out);
+                }
+            }
+        }
+        ExprKind::AnonFunc { body, .. } => collect_free_vars(body, out),
+        _ => {}
     }
 }
 
@@ -1351,6 +1666,13 @@ fn hcat(elems: &[Array]) -> Flow<Array> {
     if non_empty.len() == 1 {
         return Ok(non_empty[0].clone());
     }
+    // N-D concatenation along dim 2 (any operand with rank > 2) goes through the
+    // general column-major N-D path; the 2-D fast paths below assume rank 2.
+    if non_empty.iter().any(|e| e.shape().len() > 2)
+        && !non_empty.iter().any(|e| matches!(e, Array::Struct(_)))
+    {
+        return cat_nd(1, &non_empty);
+    }
     let rows = non_empty[0].dims()[0];
     let any_char = non_empty.iter().any(|e| e.is_char());
     for e in &non_empty {
@@ -1400,6 +1722,12 @@ fn vcat(rows: &[Array]) -> Flow<Array> {
     }
     if non_empty.len() == 1 {
         return Ok(non_empty[0].clone());
+    }
+    // N-D concatenation along dim 1 (any operand with rank > 2).
+    if non_empty.iter().any(|e| e.shape().len() > 2)
+        && !non_empty.iter().any(|e| matches!(e, Array::Struct(_)))
+    {
+        return cat_nd(0, &non_empty);
     }
     let cols = non_empty[0].dims()[1];
     for e in &non_empty {
@@ -1585,6 +1913,132 @@ fn concat_structs(elems: &[&Array], horizontal: bool) -> Flow<Array> {
     Ok(Array::struct_array(fm_core::StructArray::from_fields(
         out_dims, fields,
     )))
+}
+
+/// General N-D concatenation of `elems` along 0-based `axis`, column-major.
+///
+/// Handles numeric (real/complex), char, and cell operands of any rank. The
+/// output extent along `axis` is the sum of the operands' extents there; every
+/// other axis must match. Each operand's column-major data is scattered into the
+/// output at the correct offset along `axis` (FreeMat's `NDimConcat`).
+fn cat_nd(axis: usize, elems: &[&Array]) -> Flow<Array> {
+    // Determine the maximum rank and pad every operand's shape to it.
+    let rank = elems
+        .iter()
+        .map(|e| e.shape().len())
+        .max()
+        .unwrap_or(2)
+        .max(axis + 1);
+    let padded: Vec<Dims> = elems
+        .iter()
+        .map(|e| {
+            let mut d: Dims = Dims::from_slice(e.shape());
+            while d.len() < rank {
+                d.push(1);
+            }
+            d
+        })
+        .collect();
+
+    // Output shape: every non-`axis` extent must agree; `axis` extents sum.
+    let mut out_dims = padded[0].clone();
+    out_dims[axis] = 0;
+    for d in &padded {
+        for (k, &e) in d.iter().enumerate() {
+            if k == axis {
+                out_dims[axis] += e;
+            } else if e != out_dims[k] {
+                return Err(Signal::Error(InterpError::msg(
+                    "dimension mismatch in concatenation",
+                )));
+            }
+        }
+    }
+
+    let out_total: usize = out_dims.iter().product();
+    let out_str = strides_vec(&out_dims);
+    let any_cell = elems.iter().any(|e| matches!(e, Array::Cell(_)));
+    let any_char = elems.iter().all(|e| e.is_char()) && elems.iter().any(|e| e.is_char());
+    let complex = elems.iter().any(|e| e.is_complex());
+
+    // For each operand, scatter its column-major flat data into the output at the
+    // running offset along `axis`.
+    let mut axis_off = 0usize;
+    if any_cell {
+        let mut data = vec![Array::empty(); out_total];
+        for (e, d) in elems.iter().zip(&padded) {
+            let flat: Vec<Array> = match e.as_cell() {
+                Some(c) => value::mem_order(c),
+                None => vec![(*e).clone()],
+            };
+            scatter_block(&mut data, &flat, d, axis, axis_off, &out_str);
+            axis_off += d[axis];
+        }
+        return Ok(Array::cell(&out_dims, data));
+    }
+    if any_char {
+        let mut data = vec!['\u{0}'; out_total];
+        for (e, d) in elems.iter().zip(&padded) {
+            let flat: Vec<char> = match e {
+                Array::Char(c) => value::mem_order(c),
+                Array::Scalar(ScalarValue::Char(c)) => vec![*c],
+                _ => Vec::new(),
+            };
+            scatter_block(&mut data, &flat, d, axis, axis_off, &out_str);
+            axis_off += d[axis];
+        }
+        return Ok(value::char_matrix(&out_dims, data));
+    }
+    let class = result_class(elems);
+    if complex {
+        let mut data = vec![C64::new(0.0, 0.0); out_total];
+        for (e, d) in elems.iter().zip(&padded) {
+            let flat = value::to_c64_vec(e);
+            scatter_block(&mut data, &flat, d, axis, axis_off, &out_str);
+            axis_off += d[axis];
+        }
+        return Ok(value::build_complex_class(class, &out_dims, data));
+    }
+    let mut data = vec![0.0f64; out_total];
+    for (e, d) in elems.iter().zip(&padded) {
+        let flat = value::to_f64_vec(e);
+        scatter_block(&mut data, &flat, d, axis, axis_off, &out_str);
+        axis_off += d[axis];
+    }
+    Ok(value::build_real(class, &out_dims, data))
+}
+
+/// Column-major strides for `dims`.
+fn strides_vec(dims: &[usize]) -> Vec<usize> {
+    let mut s = vec![1usize; dims.len()];
+    for i in 1..dims.len() {
+        s[i] = s[i - 1] * dims[i - 1];
+    }
+    s
+}
+
+/// Scatter a column-major `block` of shape `bdims` into `out` (shape with
+/// strides `out_str`), offsetting coordinate `axis` by `axis_off`.
+fn scatter_block<T: Clone>(
+    out: &mut [T],
+    block: &[T],
+    bdims: &[usize],
+    axis: usize,
+    axis_off: usize,
+    out_str: &[usize],
+) {
+    let bstr = strides_vec(bdims);
+    let rank = bdims.len();
+    for (lin, val) in block.iter().enumerate() {
+        // Decompose `lin` into per-axis coordinates (column-major).
+        let mut pos = 0usize;
+        for d in 0..rank {
+            let coord = (lin / bstr[d]) % bdims[d];
+            let oc = if d == axis { coord + axis_off } else { coord };
+            pos += oc * out_str[d];
+        }
+        out[pos] = val.clone();
+    }
 }
 
 /// The common result class for a concatenation, mirroring FreeMat's

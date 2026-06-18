@@ -355,6 +355,8 @@ fn mx_class_of(a: &Array) -> u8 {
         DataClass::Char => MX_CHAR,
         DataClass::Cell => MX_CELL,
         DataClass::Struct => MX_STRUCT,
+        // Function handles are not serializable to a .mat file; treat as double.
+        DataClass::FunctionHandle => MX_DOUBLE,
     }
 }
 

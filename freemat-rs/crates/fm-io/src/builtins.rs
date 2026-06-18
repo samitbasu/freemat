@@ -30,7 +30,17 @@ pub fn register(table: &mut FunctionTable) {
     table.add_builtin("fscanf", b_fscanf);
     table.add_builtin("sscanf", b_sscanf);
     table.add_builtin("fileread", b_fileread);
+    table.add_builtin("dlmread", b_dlmread);
+    table.add_builtin("dlmwrite", b_dlmwrite);
+    table.add_builtin("csvread", b_csvread);
+    table.add_builtin("csvwrite", b_csvwrite);
     table.add_builtin("exist", b_exist);
+    // Filesystem.
+    table.add_builtin("pwd", b_pwd);
+    table.add_builtin("cd", b_cd);
+    table.add_builtin("dir", b_dir);
+    table.add_builtin("ls", b_ls);
+    table.add_builtin("which", b_which);
     // FFT.
     table.add_builtin("fft", |_i, a, _n| fft::fft1(a, false));
     table.add_builtin("ifft", |_i, a, _n| fft::fft1(a, true));
@@ -329,6 +339,277 @@ fn b_fileread(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array
     let text = std::fs::read_to_string(&name)
         .map_err(|e| Signal::Error(InterpError::msg(format!("fileread: {e}"))))?;
     Ok(vec![Array::char_string(&text)])
+}
+
+// ---- delimited text I/O -------------------------------------------------
+
+/// `dlmread(name [, delim [, R, C]])` — read a numeric matrix from a delimited
+/// text file. `delim` defaults to comma; an empty/whitespace delimiter splits on
+/// any whitespace. `R`/`C` give a zero-based starting row/column offset.
+fn b_dlmread(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return err("dlmread: filename required");
+    }
+    let name = args[0].as_string().unwrap_or_default();
+    let delim = args.get(1).and_then(Array::as_string);
+    let r0 = args.get(2).and_then(Array::as_f64).unwrap_or(0.0).max(0.0) as usize;
+    let c0 = args.get(3).and_then(Array::as_f64).unwrap_or(0.0).max(0.0) as usize;
+    let text = std::fs::read_to_string(&name)
+        .map_err(|e| Signal::Error(InterpError::msg(format!("dlmread: {e}"))))?;
+    Ok(vec![parse_delimited(&text, delim.as_deref(), r0, c0)])
+}
+
+/// `csvread(name [, R, C])` — comma-delimited read (a `dlmread` with `','`).
+fn b_csvread(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return err("csvread: filename required");
+    }
+    let name = args[0].as_string().unwrap_or_default();
+    let r0 = args.get(1).and_then(Array::as_f64).unwrap_or(0.0).max(0.0) as usize;
+    let c0 = args.get(2).and_then(Array::as_f64).unwrap_or(0.0).max(0.0) as usize;
+    let text = std::fs::read_to_string(&name)
+        .map_err(|e| Signal::Error(InterpError::msg(format!("csvread: {e}"))))?;
+    Ok(vec![parse_delimited(&text, Some(","), r0, c0)])
+}
+
+/// Parse a delimited numeric matrix, column-major, skipping the first `r0` rows
+/// and `c0` columns.
+fn parse_delimited(text: &str, delim: Option<&str>, r0: usize, c0: usize) -> Array {
+    let mut rows: Vec<Vec<f64>> = Vec::new();
+    for line in text.lines().skip(r0) {
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if trimmed.is_empty() {
+            continue;
+        }
+        let fields: Vec<&str> = match delim {
+            Some(d) if !d.is_empty() => trimmed.split(d).collect(),
+            _ => trimmed.split_whitespace().collect(),
+        };
+        let nums: Vec<f64> = fields
+            .iter()
+            .skip(c0)
+            .map(|s| s.trim().parse::<f64>().unwrap_or(0.0))
+            .collect();
+        rows.push(nums);
+    }
+    let r = rows.len();
+    let c = rows.iter().map(Vec::len).max().unwrap_or(0);
+    let mut data = vec![0.0f64; r * c];
+    for (ri, row) in rows.iter().enumerate() {
+        for (ci, &v) in row.iter().enumerate() {
+            data[ci * r + ri] = v;
+        }
+    }
+    Array::double_matrix(&[r, c], data)
+}
+
+/// `dlmwrite(name, M [, delim])` — write a numeric matrix as delimited text.
+fn b_dlmwrite(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.len() < 2 {
+        return err("dlmwrite: expected (filename, matrix [, delim])");
+    }
+    let name = args[0].as_string().unwrap_or_default();
+    let delim = args
+        .get(2)
+        .and_then(Array::as_string)
+        .unwrap_or_else(|| ",".to_string());
+    write_delimited(i, &name, &args[1], &delim)
+}
+
+/// `csvwrite(name, M)` — comma-delimited write.
+fn b_csvwrite(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.len() < 2 {
+        return err("csvwrite: expected (filename, matrix)");
+    }
+    let name = args[0].as_string().unwrap_or_default();
+    write_delimited(i, &name, &args[1], ",")
+}
+
+fn write_delimited(_i: &mut Interpreter, name: &str, m: &Array, delim: &str) -> Flow<Vec<Array>> {
+    let dims = m.dims();
+    let rows = dims.first().copied().unwrap_or(0);
+    let cols = dims.get(1).copied().unwrap_or(0);
+    let data = fm_interp::value::to_f64_vec(m); // column-major
+    let mut text = String::new();
+    for r in 0..rows {
+        for c in 0..cols {
+            if c > 0 {
+                text.push_str(delim);
+            }
+            let v = data[c * rows + r];
+            if v.fract() == 0.0 && v.abs() < 1e15 {
+                text.push_str(&format!("{}", v as i64));
+            } else {
+                text.push_str(&format!("{v}"));
+            }
+        }
+        text.push('\n');
+    }
+    std::fs::write(name, text)
+        .map_err(|e| Signal::Error(InterpError::msg(format!("dlmwrite: {e}"))))?;
+    Ok(vec![])
+}
+
+// ---- filesystem ----------------------------------------------------------
+
+/// `pwd` — the current working directory.
+fn b_pwd(_i: &mut Interpreter, _args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let dir = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(vec![Array::char_string(&dir)])
+}
+
+/// `cd [dir]` — change (or report) the working directory.
+fn b_cd(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if let Some(d) = args.first().and_then(Array::as_string) {
+        std::env::set_current_dir(&d)
+            .map_err(|e| Signal::Error(InterpError::msg(format!("cd: {e}"))))?;
+    }
+    let dir = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(vec![Array::char_string(&dir)])
+}
+
+/// `dir [pattern]` — a struct array of directory entries with `name`, `bytes`,
+/// and `isdir` fields (a useful subset of MATLAB's `dir`).
+fn b_dir(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let pattern = args
+        .first()
+        .and_then(Array::as_string)
+        .unwrap_or_else(|| ".".to_string());
+    let (dir, glob) = split_dir_pattern(&pattern);
+    let mut names = Vec::new();
+    let mut bytes = Vec::new();
+    let mut isdir = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for entry in rd.flatten() {
+            let fname = entry.file_name().to_string_lossy().into_owned();
+            if let Some(g) = &glob
+                && !glob_match(g, &fname)
+            {
+                continue;
+            }
+            let meta = entry.metadata().ok();
+            names.push(Array::char_string(&fname));
+            bytes.push(Array::double(meta.as_ref().map_or(0.0, |m| m.len() as f64)));
+            isdir.push(Array::bool(
+                meta.as_ref().is_some_and(std::fs::Metadata::is_dir),
+            ));
+        }
+    }
+    let n = names.len();
+    let fields = vec![
+        ("name".to_string(), names),
+        ("bytes".to_string(), bytes),
+        ("isdir".to_string(), isdir),
+    ];
+    Ok(vec![Array::struct_array(StructArray::from_fields(
+        vec![n, 1],
+        fields,
+    ))])
+}
+
+/// `ls [pattern]` — newline-joined directory listing (a char row vector).
+fn b_ls(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let pattern = args
+        .first()
+        .and_then(Array::as_string)
+        .unwrap_or_else(|| ".".to_string());
+    let (dir, glob) = split_dir_pattern(&pattern);
+    let mut entries: Vec<String> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for entry in rd.flatten() {
+            let fname = entry.file_name().to_string_lossy().into_owned();
+            if let Some(g) = &glob
+                && !glob_match(g, &fname)
+            {
+                continue;
+            }
+            entries.push(fname);
+        }
+    }
+    entries.sort();
+    Ok(vec![Array::char_string(&entries.join("\n"))])
+}
+
+/// `which(name)` — locate a function: returns `'<name> is a built-in function'`
+/// for a registered builtin, an on-disk `.m` path if found, else `''`.
+fn b_which(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return err("which: name required");
+    }
+    let name = args[0].as_string().unwrap_or_default();
+    // A loaded/registered function.
+    if i.functions.contains(&name) {
+        return Ok(vec![Array::char_string(&format!(
+            "{name} is a built-in function"
+        ))]);
+    }
+    // An `.m` file on the path (cwd only — no search path model yet).
+    let candidate = format!("{name}.m");
+    if Path::new(&candidate).exists() {
+        let abs = std::fs::canonicalize(&candidate)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or(candidate);
+        return Ok(vec![Array::char_string(&abs)]);
+    }
+    Ok(vec![Array::char_string("")])
+}
+
+/// Split a `dir`/`ls` pattern into a directory and an optional glob of its last
+/// component (only `*` wildcards are supported).
+fn split_dir_pattern(pattern: &str) -> (String, Option<String>) {
+    let p = Path::new(pattern);
+    if p.is_dir() {
+        return (pattern.to_string(), None);
+    }
+    let parent = p
+        .parent()
+        .map(|d| {
+            if d.as_os_str().is_empty() {
+                ".".to_string()
+            } else {
+                d.to_string_lossy().into_owned()
+            }
+        })
+        .unwrap_or_else(|| ".".to_string());
+    let glob = p
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .filter(|f| f.contains('*'));
+    match glob {
+        Some(g) => (parent, Some(g)),
+        None => (pattern.to_string(), None),
+    }
+}
+
+/// Minimal `*`-glob match (used by `dir`/`ls`).
+fn glob_match(pat: &str, name: &str) -> bool {
+    let parts: Vec<&str> = pat.split('*').collect();
+    if parts.len() == 1 {
+        return pat == name;
+    }
+    let mut pos = 0usize;
+    for (idx, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            continue;
+        }
+        if idx == 0 {
+            if !name[pos..].starts_with(part) {
+                return false;
+            }
+            pos += part.len();
+        } else if idx + 1 == parts.len() {
+            return name[pos..].ends_with(part);
+        } else if let Some(found) = name[pos..].find(part) {
+            pos += found + part.len();
+        } else {
+            return false;
+        }
+    }
+    true
 }
 
 /// `exist(name [, kind])` — extends the interpreter's `exist` with file checks:

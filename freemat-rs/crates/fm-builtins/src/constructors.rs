@@ -142,41 +142,59 @@ fn b_logspace(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array
 fn b_repmat(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     need(args, 2, "repmat")?;
     let a = &args[0];
-    let dims = a.dims();
-    if dims.len() != 2 {
-        return err("repmat: only 2-D inputs are supported");
-    }
-    let (m, n) = (dims[0], dims[1]);
-    // Replication counts: repmat(A, k) or repmat(A, p, q) or repmat(A, [p q]).
-    let (p, q) = if args.len() >= 3 {
-        (
-            scalar_arg(args, 1, "repmat")?.round().max(0.0) as usize,
-            scalar_arg(args, 2, "repmat")?.round().max(0.0) as usize,
-        )
+    let src_dims = a.dims();
+
+    // Replication counts: repmat(A, k) → k×k…; repmat(A, p, q, …) per-dim;
+    // repmat(A, [p q …]) per-dim from a vector.
+    let reps: Vec<usize> = if args.len() >= 3 {
+        (1..args.len())
+            .map(|k| scalar_arg(args, k, "repmat").map(|v| v.round().max(0.0) as usize))
+            .collect::<Flow<Vec<usize>>>()?
     } else if args[1].numel() >= 2 {
-        let r = to_f64_vec(&args[1]);
-        (r[0].max(0.0) as usize, r[1].max(0.0) as usize)
+        to_f64_vec(&args[1])
+            .iter()
+            .map(|&v| v.max(0.0) as usize)
+            .collect()
     } else {
         let k = scalar_arg(args, 1, "repmat")?.round().max(0.0) as usize;
-        (k, k)
+        vec![k, k]
     };
-    let (om, on) = (m * p, n * q);
-    // Build the column-major source-position permutation for the tiled output,
-    // then materialise it for the value's actual element type (numeric, char,
-    // complex, or cell).
-    let mut perm = vec![0usize; om * on];
-    for tj in 0..q {
-        for ti in 0..p {
-            for j in 0..n {
-                for i in 0..m {
-                    let oi = ti * m + i;
-                    let oj = tj * n + j;
-                    perm[oi + oj * om] = i + j * m;
-                }
-            }
+
+    // Pad source dims and rep counts to a common rank.
+    let rank = src_dims.len().max(reps.len());
+    let sd: Vec<usize> = (0..rank)
+        .map(|i| src_dims.get(i).copied().unwrap_or(1))
+        .collect();
+    let rp: Vec<usize> = (0..rank)
+        .map(|i| reps.get(i).copied().unwrap_or(1))
+        .collect();
+    let out_dims: Vec<usize> = sd.iter().zip(&rp).map(|(&s, &r)| s * r).collect();
+    let out_total: usize = out_dims.iter().product();
+
+    let sstr = col_strides(&sd);
+    let ostr = col_strides(&out_dims);
+    // For each output position, map to the corresponding source position by
+    // taking the per-axis output coordinate modulo the source extent.
+    let mut perm = vec![0usize; out_total];
+    for (out_lin, slot) in perm.iter_mut().enumerate() {
+        let mut src = 0usize;
+        for d in 0..rank {
+            let oc = (out_lin / ostr[d]) % out_dims[d];
+            let sc = if sd[d] == 0 { 0 } else { oc % sd[d] };
+            src += sc * sstr[d];
         }
+        *slot = src;
     }
-    Ok(vec![tile_by(a, &[om, on], &perm)])
+    Ok(vec![tile_by(a, &out_dims, &perm)])
+}
+
+/// Column-major strides for `dims`.
+fn col_strides(dims: &[usize]) -> Vec<usize> {
+    let mut s = vec![1usize; dims.len()];
+    for i in 1..dims.len() {
+        s[i] = s[i - 1] * dims[i - 1];
+    }
+    s
 }
 
 /// Materialise a permutation `perm` (column-major source positions) over `a` as

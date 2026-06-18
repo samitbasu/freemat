@@ -17,7 +17,77 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("polyder", b_polyder);
     table.add_builtin("polyint", b_polyint);
     table.add_builtin("conv", b_conv);
+    table.add_builtin("conv2", b_conv2);
     table.add_builtin("deconv", b_deconv);
+}
+
+/// `conv2(A, B [, shape])` — 2-D convolution. `shape` is `'full'` (default),
+/// `'same'`, or `'valid'`. Supports real and complex inputs.
+fn b_conv2(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 2, "conv2")?;
+    let shape = args
+        .get(2)
+        .and_then(Array::as_string)
+        .unwrap_or_else(|| "full".to_string());
+    let ad = args[0].dims();
+    let bd = args[1].dims();
+    let (ar, ac) = (
+        ad.first().copied().unwrap_or(0),
+        ad.get(1).copied().unwrap_or(0),
+    );
+    let (br, bc) = (
+        bd.first().copied().unwrap_or(0),
+        bd.get(1).copied().unwrap_or(0),
+    );
+    if ar == 0 || ac == 0 || br == 0 || bc == 0 {
+        return Ok(vec![Array::empty()]);
+    }
+    let complex = args[0].is_complex() || args[1].is_complex();
+    // Full-convolution dimensions.
+    let (fr, fc) = (ar + br - 1, ac + bc - 1);
+
+    // Compute the full convolution column-major into `re`/`im`.
+    let av = fm_interp::value::to_c64_vec(&args[0]);
+    let bv = fm_interp::value::to_c64_vec(&args[1]);
+    let at = |i: usize, j: usize| av[i + j * ar];
+    let bt = |i: usize, j: usize| bv[i + j * br];
+    let mut full = vec![fm_core::C64::new(0.0, 0.0); fr * fc];
+    for ja in 0..ac {
+        for ia in 0..ar {
+            let a = at(ia, ja);
+            if a == fm_core::C64::new(0.0, 0.0) {
+                continue;
+            }
+            for jb in 0..bc {
+                for ib in 0..br {
+                    full[(ia + ib) + (ja + jb) * fr] += a * bt(ib, jb);
+                }
+            }
+        }
+    }
+
+    // Crop to the requested shape.
+    let (or, oc, ro, co) = match shape.as_str() {
+        "same" => (ar, ac, (br - 1) / 2, (bc - 1) / 2),
+        "valid" => {
+            let vr = ar.saturating_sub(br) + 1;
+            let vc = ac.saturating_sub(bc) + 1;
+            (vr, vc, br - 1, bc - 1)
+        }
+        _ => (fr, fc, 0, 0),
+    };
+    let mut out = vec![fm_core::C64::new(0.0, 0.0); or * oc];
+    for j in 0..oc {
+        for i in 0..or {
+            out[i + j * or] = full[(i + ro) + (j + co) * fr];
+        }
+    }
+    if complex {
+        Ok(vec![fm_interp::value::build_complex(&[or, oc], out)])
+    } else {
+        let re: Vec<f64> = out.iter().map(|c| c.re).collect();
+        Ok(vec![build_real(DataClass::Double, &[or, oc], re)])
+    }
 }
 
 /// `polyval(p, x)` — evaluate the polynomial `p` (highest power first) at each

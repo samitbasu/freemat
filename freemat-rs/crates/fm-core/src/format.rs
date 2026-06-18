@@ -65,6 +65,9 @@ impl Array {
         if let Some(sp) = self.as_sparse() {
             return format_sparse(sp, mode);
         }
+        if let Some(h) = self.as_function_handle() {
+            return h.display_str();
+        }
         format_matrix(self, mode)
     }
 
@@ -269,7 +272,7 @@ fn scalar_at(a: &Array, flat: usize) -> Option<ScalarValue> {
         Array::Complex32(x) => at!(x, ScalarValue::Complex32),
         Array::Complex64(x) => at!(x, ScalarValue::Complex64),
         Array::Char(x) => at!(x, ScalarValue::Char),
-        Array::Cell(_) | Array::Struct(_) | Array::Sparse(_) => None,
+        Array::Cell(_) | Array::Struct(_) | Array::Sparse(_) | Array::FunctionHandle(_) => None,
     }
 }
 

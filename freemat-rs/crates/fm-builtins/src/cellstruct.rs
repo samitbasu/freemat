@@ -24,7 +24,79 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("struct2cell", b_struct2cell);
     table.add_builtin("cell2struct", b_cell2struct);
     table.add_builtin("cellfun", b_cellfun);
+    table.add_builtin("arrayfun", b_arrayfun);
     table.add_builtin("structfun", b_structfun);
+}
+
+/// `arrayfun(fn, A, ...)` — apply `fn` to each element of the array operand(s),
+/// collecting the results. With `'UniformOutput', false` the results are packed
+/// into a cell array; otherwise scalar results pack into a numeric/logical array
+/// shaped like the input.
+fn b_arrayfun(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 2, "arrayfun")?;
+    let callable = args[0].clone();
+    let mut operands: Vec<Array> = Vec::new();
+    let mut uniform = true;
+    let mut idx = 1;
+    while idx < args.len() {
+        if args[idx].as_string().as_deref() == Some("UniformOutput") {
+            uniform = args.get(idx + 1).and_then(Array::as_f64).unwrap_or(1.0) != 0.0;
+            idx += 2;
+        } else {
+            operands.push(args[idx].clone());
+            idx += 1;
+        }
+    }
+    if operands.is_empty() {
+        return err("arrayfun: at least one array operand is required");
+    }
+    let dims = operands[0].dims();
+    let count = operands[0].numel();
+    // Read each operand's elements as 1×1 arrays (preserving class), column-major.
+    let elemwise: Vec<Vec<Array>> = operands.iter().map(split_elements).collect();
+    let mut results: Vec<Array> = Vec::with_capacity(count);
+    for k in 0..count {
+        let call_args: Vec<Array> = elemwise
+            .iter()
+            .map(|o| o.get(k).cloned().unwrap_or_else(Array::empty))
+            .collect();
+        results.push(apply_callable(i, &callable, &call_args)?);
+    }
+    if uniform {
+        let all_scalar = results.iter().all(|r| r.numel() == 1);
+        if all_scalar {
+            let any_bool =
+                !results.is_empty() && results.iter().all(|r| r.class() == DataClass::Bool);
+            let data: Vec<f64> = results.iter().map(|r| r.as_f64().unwrap_or(0.0)).collect();
+            let class = if any_bool {
+                DataClass::Bool
+            } else {
+                DataClass::Double
+            };
+            return Ok(vec![build_real(class, &dims, data)]);
+        }
+    }
+    Ok(vec![Array::cell(&dims, results)])
+}
+
+/// Split an array into its elements as 1×1 arrays, column-major, preserving the
+/// element class (so `arrayfun` passes typed scalars to the callable).
+fn split_elements(a: &Array) -> Vec<Array> {
+    let n = a.numel();
+    (0..n)
+        .map(|k| {
+            let plan = fm_interp::index::plan_index(
+                &a.dims(),
+                &[fm_interp::index::IndexArg::Value(Array::double(
+                    (k + 1) as f64,
+                ))],
+            );
+            match plan {
+                Ok(p) => fm_interp::index::gather(a, &p).unwrap_or_else(|_| Array::empty()),
+                Err(_) => Array::empty(),
+            }
+        })
+        .collect()
 }
 
 fn dims_arg(args: &[Array]) -> Vec<usize> {
@@ -147,16 +219,35 @@ fn b_rmfield(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>
     ))])
 }
 
-fn b_getfield(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+fn b_getfield(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     need(args, 2, "getfield")?;
-    let s = args[0]
-        .as_struct()
-        .ok_or_else(|| err_signal("getfield: argument must be a struct"))?;
-    let name = args[1].as_string().unwrap_or_default();
-    s.scalar_field(&name)
-        .cloned()
-        .map(|v| vec![v])
-        .ok_or_else(|| err_signal(format!("getfield: no field named '{name}'")))
+    // `getfield(s, idx1, name1, idx2, ...)`: each trailing argument is either a
+    // cell of subscripts `{i,j}` (paren-index the current value) or a field-name
+    // string (`.name`). Walk them left to right.
+    let mut cur = args[0].clone();
+    for arg in &args[1..] {
+        if let Some(cell) = arg.as_cell() {
+            // Cell of subscripts → paren-index `cur` at those positions.
+            let subs: Vec<Array> = crate::util::cell_mem_order(arg);
+            let _ = cell;
+            let plan = fm_interp::index::plan_index(
+                &cur.dims(),
+                &subs
+                    .iter()
+                    .map(|s| fm_interp::index::IndexArg::Value(s.clone()))
+                    .collect::<Vec<_>>(),
+            )?;
+            cur = fm_interp::index::gather(&cur, &plan)?;
+        } else {
+            let name = arg.as_string().ok_or_else(|| {
+                err_signal("getfield: expected a field name or cell of subscripts")
+            })?;
+            cur = fm_interp::index::field_read(&cur, &name)
+                .map_err(|_| err_signal(format!("getfield: no field named '{name}'")))?;
+        }
+    }
+    let _ = i;
+    Ok(vec![cur])
 }
 
 fn b_setfield(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
@@ -272,10 +363,22 @@ fn func_name(a: &Array) -> Flow<String> {
         .ok_or_else(|| err_signal("expected a function name string"))
 }
 
+/// Apply a callable (a function-name string **or** a function handle) to `args`,
+/// requesting one output. Shared by `cellfun` / `arrayfun` / `structfun`.
+pub(crate) fn apply_callable(i: &mut Interpreter, callable: &Array, args: &[Array]) -> Flow<Array> {
+    let out = if callable.is_function_handle() {
+        i.invoke_handle(callable, args, 1, "", Span::empty(0))?
+    } else {
+        let name = func_name(callable)?;
+        i.call_function(&name, args, 1, "", Span::empty(0))?
+    };
+    Ok(out.into_iter().next().unwrap_or_else(Array::empty))
+}
+
 /// `cellfun(fn, C, ...)` — apply `fn` to each cell, collecting the results.
 fn b_cellfun(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     need(args, 2, "cellfun")?;
-    let name = func_name(&args[0])?;
+    let callable = args[0].clone();
     // Collect the cell operands (every trailing cell argument before options).
     let mut operands: Vec<Vec<Array>> = Vec::new();
     let mut uniform = true;
@@ -299,8 +402,7 @@ fn b_cellfun(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>>
     let mut results: Vec<Array> = Vec::with_capacity(count);
     for k in 0..count {
         let call_args: Vec<Array> = operands.iter().map(|o| o[k].clone()).collect();
-        let out = i.call_function(&name, &call_args, 1, "", Span::empty(0))?;
-        results.push(out.into_iter().next().unwrap_or_else(Array::empty));
+        results.push(apply_callable(i, &callable, &call_args)?);
     }
     if uniform {
         // Pack scalar numeric/logical results into an array of the cell's shape.
@@ -322,7 +424,7 @@ fn b_cellfun(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>>
 /// `structfun(fn, s)` — apply `fn` to each field of a scalar struct.
 fn b_structfun(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     need(args, 2, "structfun")?;
-    let name = func_name(&args[0])?;
+    let callable = args[0].clone();
     let s = args[1]
         .as_struct()
         .ok_or_else(|| err_signal("structfun: second argument must be a struct"))?;
@@ -330,8 +432,7 @@ fn b_structfun(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array
     let mut results = Vec::with_capacity(pairs.len());
     for (_, v) in &pairs {
         let val = v.first().cloned().unwrap_or_else(Array::empty);
-        let out = i.call_function(&name, std::slice::from_ref(&val), 1, "", Span::empty(0))?;
-        results.push(out.into_iter().next().unwrap_or_else(Array::empty));
+        results.push(apply_callable(i, &callable, std::slice::from_ref(&val))?);
     }
     let all_scalar = results.iter().all(|r| r.numel() == 1);
     if all_scalar {

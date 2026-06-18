@@ -617,6 +617,7 @@ dependencies = [
 name = "fm-core"
 version = "0.0.0"
 dependencies = [
+ "fm-parser",
  "ndarray",
  "num-complex",
  "smallvec",

@@ -23,6 +23,7 @@ pub type Dims = SmallVec<[usize; 4]>;
 
 use crate::class::DataClass;
 use crate::complex::{C32, C64};
+use crate::handle::FunctionHandle;
 use crate::scalar::ScalarValue;
 use crate::sparse::SparseMatrix;
 use crate::struct_array::{StructArray, StructHandle};
@@ -74,6 +75,10 @@ pub enum Array {
     /// Sparse matrix (CSC). Purely additive — dense variants and their COW are
     /// unchanged. The element class is tracked inside [`SparseMatrix`].
     Sparse(Arc<SparseMatrix>),
+
+    /// Function handle (`@f` / `@(x) expr`). Purely additive — a scalar-shaped
+    /// (`1×1`) reference value holding a named function or a captured closure.
+    FunctionHandle(Arc<FunctionHandle>),
 }
 
 /// Build a new column-major (F-order) `ArrayD` from `dims` + a column-major
@@ -232,6 +237,7 @@ impl Array {
             Array::Cell(_) => DataClass::Cell,
             Array::Struct(_) => DataClass::Struct,
             Array::Sparse(s) => s.class(),
+            Array::FunctionHandle(_) => DataClass::FunctionHandle,
         }
     }
 
@@ -269,6 +275,7 @@ impl Array {
             Array::Cell(a) => a.shape(),
             Array::Struct(s) => s.dims(),
             Array::Sparse(s) => s.dims_slice(),
+            Array::FunctionHandle(_) => &SCALAR_SHAPE,
         }
     }
 
@@ -380,7 +387,7 @@ impl Array {
             Array::Complex32(a) => first!(a, ScalarValue::Complex32),
             Array::Complex64(a) => first!(a, ScalarValue::Complex64),
             Array::Char(a) => first!(a, ScalarValue::Char),
-            Array::Cell(_) | Array::Struct(_) => None,
+            Array::Cell(_) | Array::Struct(_) | Array::FunctionHandle(_) => None,
             Array::Sparse(s) => {
                 let (re, im) = s.get_linear(0);
                 if im != 0.0 {
@@ -459,7 +466,29 @@ impl Array {
             Array::Cell(a) => one!(a),
             Array::Struct(a) => one!(a),
             Array::Sparse(a) => one!(a),
+            Array::FunctionHandle(a) => one!(a),
         }
+    }
+
+    /// Borrow the function handle, if this value is one.
+    #[must_use]
+    pub fn as_function_handle(&self) -> Option<&FunctionHandle> {
+        match self {
+            Array::FunctionHandle(h) => Some(h),
+            _ => None,
+        }
+    }
+
+    /// Wrap a [`FunctionHandle`] as an [`Array`].
+    #[must_use]
+    pub fn function_handle(h: FunctionHandle) -> Self {
+        Array::FunctionHandle(Arc::new(h))
+    }
+
+    /// Whether this value is a function handle.
+    #[must_use]
+    pub fn is_function_handle(&self) -> bool {
+        matches!(self, Array::FunctionHandle(_))
     }
 }
 

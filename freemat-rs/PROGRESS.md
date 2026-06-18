@@ -1266,6 +1266,78 @@ Deliberately left (feature-needing or ambiguous, not correctness bugs):
 - `getfield(a,{2,3},'foo')` (index+field getfield, test_getfield2),
   `test_sparse75` (sparse `lu` must error on `inf`).
 
+### Feature pass (post-correctness — function handles, N-D arrays, cheap builtins)
+
+Closed the highest-value language gaps left by the correctness pass. **Conformance
+627/677 (92.6%) → 650/677 (96.0%), Δ +23.** Per-dir deltas (pass count, was→now):
+array 64→66, elementary 6→7, freemat 9→10, functions 6→9, io 3→4, suite 311→322,
+variables 39→43; the rest unchanged. Gates: `cargo build --workspace` ✓,
+`cargo clippy --workspace --all-targets -D warnings` clean ✓ (no `#[allow]`),
+`cargo fmt --all --check` ✓, `cargo test --workspace` green ✓ (still ~seconds).
+**Pass-floor raised 615 → 645** (`curated.rs::PASS_FLOOR`; live 650, margin for the
+PRNG/eig tests). Curated must-pass list gained `fptr1`, `call3/4`, `matcat2/3`,
+`assign14/15`, `repmat3`, `struct5/8`, `getfield2`. `--list-builtins` 331 → **346**;
+`docs/COVERAGE.md` regenerated.
+
+- **Function handles (the headliner).** New **additive** `Array::FunctionHandle(Arc<FunctionHandle>)`
+  variant in `fm-core` (a 1×1 reference value; **dense/sparse/COW byte-for-byte
+  unchanged** — only new match arms added). `fm-core/src/handle.rs` defines
+  `FunctionHandle::{Named(String), Anonymous(Arc<AnonClosure>)}`; `AnonClosure`
+  holds `{ params, body: Expr, captures: HashMap<String,Array>, text, source }`.
+  This needed a new `fm-core → fm-parser` dep (one-directional, no cycle — the
+  parser never depended on core). New `DataClass::FunctionHandle` (`class` =
+  `"function_handle"`, so `isa(h,'function_handle')` works for free).
+  - **Eval** (`fm-interp/interp.rs`): `@name` → `FunctionHandle::named`; `@(x) body`
+    → `make_anon_handle`, which walks the body for free variables (`collect_free_vars`)
+    and **captures by value at definition time** (MATLAB/FreeMat semantics — a later
+    mutation of a captured var does not change the closure). `func2str` text is the
+    original source slice of the `@(...)` expr; the closure also stores the full
+    source so nested closures re-evaluate with correct spans.
+  - **Calling**: `h(args)` — `eval_index` detects a handle base and routes to
+    `Interpreter::invoke_handle` instead of `gather`. A named handle resolves the
+    function by name at call time; an anonymous one pushes a fresh scope seeded
+    with captures then bound params (params shadow captures) and evaluates the body.
+  - **Builtins**: `feval(name_or_handle, …)`, `func2str`, `str2func` (a leading `@`
+    is parsed+evaluated so it captures live vars), `is_function_handle`/
+    `isfunctionhandle`, plus `arrayfun`; `cellfun`/`structfun` now accept handles
+    via a shared `apply_callable` helper.
+- **N-D arrays (>2 dims).** Generalized the interpreter's concatenation: new
+  `cat_nd(axis, elems)` (column-major scatter along any axis) backs `concat_values`
+  for `dim ≥ 3` and the `[a;a]`/`[a,a]` literal paths when any operand has rank > 2
+  (numeric/complex/char/cell). `cat(3,…)`, N-D `[a;a]`, and N-D `repmat`
+  (rewritten for arbitrary rank, modulo-tiling) now work. N-D grow-on-assign
+  `a(2,:,:) = r` adopts the RHS dims onto the colon axes **only when the colon count
+  matches the RHS rank** (so `c(2,:) = [2 3;4 5]` still correctly errors —
+  test_assign15). `size`/`squeeze`/`permute`/`ndims` and the `(:,:,k) =` page display
+  already handled N-D from earlier stages. Flipped matcat2/3, assign14, repmat3.
+- **Struct field comma-list expansion.** `field_read_multi` reads a field across
+  every struct-array element → a cs-list; wired into `eval_args` and `eval_multi`
+  so `f(s.foo)` passes one arg per element (test_struct5). `[s.foo] = f` distributes
+  one returned value per element on the LHS (test_struct8). `getfield(a,{i,j},'f')`
+  walks an alternating subscript-cell / field-name argument list (test_getfield2).
+- **Pass-by-reference `&x`.** Interpreted functions with `&` params now write the
+  callee's final param value back into the caller's variable/field after the call
+  (`call_interpreted_refs` captures before the scope is popped; the call site in
+  `eval_index` writes back to any lvalue arg). Flipped test_call3/4.
+- **Cheap builtins added.** `conv2` (full/same/valid, real+complex), `dlmread`/
+  `dlmwrite`/`csvread`/`csvwrite` (delimited text I/O), `pwd`/`cd`/`dir`/`ls`/`which`
+  (native filesystem; `dir` returns a struct array with `name`/`bytes`/`isdir`).
+- **Tests added.** 18 new `fm-builtins` integration tests (handle call/closure-capture/
+  multi-param/`feval`/`func2str`+`str2func`/`is_function_handle`+`isa`/handle-in-struct/
+  `arrayfun`/`cellfun`; `cat(3)`/N-D `[a;a]`/N-D grow-assign/N-D `repmat`/`squeeze`;
+  `conv2`).
+- **New dep:** `fm-core → fm-parser` (path dep, for the closure body AST). No new
+  external crates.
+- **Deferred (documented, not done):** generalized eigenvalue `eig(a,b)` (test_eig4/5 —
+  needs a QZ/generalized solver, larger), sparse `lu` must-error-on-`inf`
+  (test_sparse75), `imwrite`/`imread` (needs an image lib), `eigs` (ARPACK),
+  `fitfun`/`gausfit` (curvefit — Stage 9), `wbtest_near`/`fileparts`/`source` (toolbox
+  helpers the conformance harness does not load, so test_conv2_1/test_source still
+  error despite `conv2`/`which` working), `int2bin`/`bin2int` N-D round-trip
+  (test_bin2int1, also a filename≠function corpus quirk), and a handful of FreeMat
+  corpus files whose filename ≠ defined function name (test_resize5/8, test_file1's
+  `return (expr)` form).
+
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,
   no GUI. Debug *engine* lives in `fm-interp`; new crates `fm-dap` (+ optional `fm-lsp`).

@@ -1,7 +1,10 @@
 # FreeMat-rs builtin coverage
 
 > **Generated snapshot** regenerated after Stage 9 (sparse matrices)
-> (rust-port branch; `--list-builtins` now reports **331**). This is a
+> (rust-port branch; after the feature pass `--list-builtins` now reports
+> **346** — added function-handle builtins `func2str`/`str2func`/
+> `is_function_handle`, `arrayfun`, `conv2`, and filesystem/delimited I/O
+> `dlmread`/`dlmwrite`/`csvread`/`csvwrite`/`pwd`/`cd`/`dir`/`ls`/`which`). This is a
 > point-in-time diff of the **real freemat-rs registration table** against the
 > FreeMat 4.2 builtin surface — *not* a grep of the source tree. A prior
 > grep-based inventory was wrong (it falsely reported `pi`/`eps` as missing);
@@ -48,9 +51,9 @@ The FreeMat 4.2 side is taken from:
 
 | metric | count |
 |---|---:|
-| freemat-rs registered builtins (`--list-builtins`) | **331** |
+| freemat-rs registered builtins (`--list-builtins`) | **346** |
 | freemat-rs evaluator constants (`pi`/`eps`/`i`/`true`/…) | 13 |
-| **freemat-rs total implemented** | **~344** |
+| **freemat-rs total implemented** | **~359** |
 | FreeMat C++ builtins (all directive types) | 330 |
 |  — of which dropped (ITK/VTK/GL image primitives) | 44 |
 | FreeMat toolbox `.m` (excl. help/test stubs) | ~219 |
@@ -88,12 +91,12 @@ FreeMat names in that category (excluding dropped ITK/GL and help/test stubs);
 | trig | 33 | 33 | 100% | — (degree variants, hyperbolic + inverse reciprocals all added) |
 | reductions / stat | 6 | 5 | 83% | `cov` |
 | linear algebra | 18 | 16 | 89% | `eigs` `expm` (`cond`/`rcond`/`rref`/`tril`/`triu`/`kron`/`null`/`orth` ✓) |
-| array construct / manip | 67 | 49 | 73% | `arrayfun` `shiftdim` `nonzeros` (`meshgrid`/`ndgrid`/`deal`/`vec` ✓) |
+| array construct / manip | 67 | 50 | 75% | `shiftdim` `nonzeros` (`arrayfun`/`meshgrid`/`ndgrid`/`deal`/`vec` ✓) |
 | logical / relational | 8 | 8 | 100% | — (`bitand`/`bitor`/`bitxor`/`bitcmp`/`bitshift`/`dec2bin`/`bin2dec`/`int2bin`/`bin2int` ✓) |
 | strings | 23 | 20 | 87% | `cellstr` `strstr` |
 | cell / struct | 7 | 1 | 14% | the `ctype*` C-struct interop (`ctypedefine`/`ctypesize`/…) — native-FFI, deprioritized |
-| type / inspection | 44 | 28 | 64% | `computer` `version` `which`/`who`/`whos` `issparse` (`dec2hex`/`hex2dec`/`num2hex` ✓) |
-| file I/O | 25 | 9 | 36% | `dlmread` `csvread`/`csvwrite` `fseek`/`ftell` `format` `input` `fflush` |
+| type / inspection | 44 | 29 | 66% | `computer` `version` `who`/`whos` `issparse` (`which`/`dec2hex`/`hex2dec`/`num2hex` ✓) |
+| file I/O | 25 | 13 | 52% | `fseek`/`ftell` `format` `input` `fflush` (`dlmread`/`dlmwrite`/`csvread`/`csvwrite` ✓) |
 | FFT / signal | 8 | 2 | 25% | `conv` `fftn`/`ifftn` `fftshift`/`ifftshift` `hilbert` |
 | random | 16 | 4 | 25% | `randperm`, and the distribution draws (`randbeta`/`randchi`/`randp`/…) (`seed` ✓) |
 | graphics | 83 | 21 | 25% | `subplot` `axes` `set`/`get` `contour` `colorbar`/`colormap` `xlim`/`ylim` `patch` `plot3` (Stage 7.5) |
@@ -102,8 +105,8 @@ FreeMat names in that category (excluding dropped ITK/GL and help/test stubs);
 | sparse | 7 | 7 | 100% | — (`sparse`/`full`/`speye`/`spones`/`sprand`/`sprandn`/`spy` ✓; rs adds `spdiags`/`spzeros`/`nnz`/`nonzeros`/`nzmax`/`issparse`) |
 | polynomial | 6 | 6 | 100% | — (`polyval`/`polyfit`/`roots`/`poly`/`polyder`/`polyint`/`conv`/`deconv` ✓) |
 | ODE | 13 | 5 | 38% | `ode45` `odeset` `deval` `trapz`/`cumtrapz` |
-| system / OS | 26 | 0 | 0% | `cd` `pwd` `dir`/`ls` `getenv` `system` `mkdir` `fileparts` `path` `help` |
-| misc | 70 | 26 | 37% | `conv2` `interp2` `func2str`/`str2func` `fullfile` `getenv` (`diff`/`dot`/`cross`/`conv`/`rcond` ✓) |
+| system / OS | 26 | 5 | 19% | `getenv` `system` `mkdir` `fileparts` `path` `help` (`cd`/`pwd`/`dir`/`ls` ✓) |
+| misc | 70 | 30 | 43% | `interp2` `fullfile` `getenv` (`conv2`/`func2str`/`str2func`/`diff`/`dot`/`cross`/`conv`/`rcond` ✓) |
 | **TOTAL** | **505** | **~278** | **~55%** | |
 
 Notes on the table:
@@ -130,12 +133,12 @@ category. (Dropped ITK/VTK/GL primitives and help/test stubs are omitted.)
 - **trig** (0): all degree variants, hyperbolic reciprocals, and inverse reciprocals are now implemented
 - **reductions / stat** (1): `cov`
 - **linear algebra** (2): `eigs`, `expm` (`cond`/`rcond`/`rref`/`tril`/`triu`/`kron`/`null`/`orth` now ✓)
-- **array construct / manip** (17): `arrayfun`, `cast`, `flipdim`, `isalpha`, `isdigit`, `ishandle`, `ishold`, `isinttype`, `isspace`, `issquare`, `isstr`, `maxdim`, `nnz`, `nonzeros`, `shiftdim`, `subsref`, `test` (`deal`/`meshgrid`/`ndgrid`/`vec` now ✓)
+- **array construct / manip** (16): `cast`, `flipdim`, `isalpha`, `isdigit`, `ishandle`, `ishold`, `isinttype`, `isspace`, `issquare`, `isstr`, `maxdim`, `nnz`, `nonzeros`, `shiftdim`, `subsref`, `test` (`arrayfun`/`deal`/`meshgrid`/`ndgrid`/`vec` now ✓)
 - **logical / relational** (0): `bitand`/`bitor`/`bitxor`/`bitcmp`/`bitshift`/`dec2bin`/`bin2dec`/`int2bin`/`bin2int` now ✓
 - **strings** (3): `cellstr`, `regexprepdriver`, `strstr`
 - **cell / struct** (6): `cenum`, `ctypedefine`, `ctypefreeze`, `ctypeprint`, `ctypesize`, `ctypethaw`
-- **type / inspection** (17): `IsInf`, `IsNaN`, `computer`, `isequalwithequalnans`, `issparse`, `makehandleclass`, `mfilename`, `nargin`, `nargout`, `p_end`, `string`, `version`, `verstring`, `where`, `which`, `who`, `whos` (`dec2hex`/`hex2dec`/`num2hex`/`hex2num` now ✓)
-- **file I/O** (16): `csvread`, `csvwrite`, `dlmread`, `fflush`, `format`, `fseek`, `ftell`, `getline`, `getprintlimit`, `input`, `rawread`, `rawwrite`, `setprintlimit`, `type`, `wavread`, `wavwrite`
+- **type / inspection** (16): `IsInf`, `IsNaN`, `computer`, `isequalwithequalnans`, `issparse`, `makehandleclass`, `mfilename`, `nargin`, `nargout`, `p_end`, `string`, `version`, `verstring`, `where`, `who`, `whos` (`which`/`dec2hex`/`hex2dec`/`num2hex`/`hex2num` now ✓)
+- **file I/O** (12): `fflush`, `format`, `fseek`, `ftell`, `getline`, `getprintlimit`, `input`, `rawread`, `rawwrite`, `setprintlimit`, `type`, `wavread`, `wavwrite` (`dlmread`/`dlmwrite`/`csvread`/`csvwrite` now ✓)
 - **FFT / signal** (6): `conv`, `fftn`, `fftshift`, `hilbert`, `ifftn`, `ifftshift`
 - **random** (12): `randbeta`, `randbin`, `randchi`, `randexp`, `randf`, `randgamma`, `randmulti`, `randnbin`, `randnchi`, `randnf`, `randp`, `randperm` (`seed` now ✓)
 - **graphics** (62): `axes`, `cla`, `clabel`, `clim`, `close`, `colorbar`, `colormap`, `colorset`, `completeprops`, `contour`, `contour3`, `copper`, `copy`, `datacursormanager`, `datacursormode`, `figlower`, `figraise`, `get`, `gray`, `hcontour`, `himage`, `hist`, `hline`, `hpatch`, `hpoint`, `hrawplot`, `htext`, `htextbitmap`, `imread`, `imwrite`, `is2dview`, `islinespec`, `markerset`, `matchit`, `newplot`, `parseit`, `patch`, `pcolor`, `plot3`, `point`, `print`, `pvalid`, `quiver`, `set`, `sizefig`, `stcmp`, `styleset`, `subplot`, `surface`, `testtube`, `text`, `tubeplot`, `uicontrol`, `view`, `volrender`, `vtkfigure`, `winlev`, `xlim`, `ylim`, `zlim`, `zoom`, `zplane`
@@ -144,8 +147,8 @@ category. (Dropped ITK/VTK/GL primitives and help/test stubs are omitted.)
 - **sparse** (0): `full`/`sparse`/`speye`/`spones`/`sprand`/`sprandn`/`spy` now ✓ (+ `spdiags`/`spzeros`/`nnz`/`nonzeros`/`nzmax`/`issparse`)
 - **polynomial** (0): `poly`/`polyder`/`polyfit`/`polyint`/`polyval`/`roots` (+ `conv`/`deconv`) now ✓
 - **ODE** (8): `cumtrapz`, `deval`, `idiv`, `mpower`, `ode45`, `odeset`, `teps`, `trapz`
-- **system / OS** (26): `blaslib`, `cd`, `copyfile`, `delete`, `dir`, `dirsep`, `fileattrib`, `fileparts`, `getpath`, `help`, `helpwin`, `htmlread`, `import`, `loadlib`, `ls`, `mkdir`, `mkdir_core`, `pathtool`, `pwd`, `rmdir`, `setpath`, `urlwrite`, `wavplay`, `wavrecord`, `what`, `xmlread`
-- **misc** (44): `addpath`, `bind`, `conv2`, `ctypecast`, `ctypenew`, `ctyperead`, `ctypewrite`, `diary`, `docli`, `exit`, `filesep`, `fitfun`, `fullfile`, `func2str`, `gausfit`, `getenv`, `gfitfun`, `inline`, `inline_evaluate`, `install`, `interp2`, `interplin1`, `license`, `path`, `pathsep`, `pcode`, `qtnew`, `quiet`, `rehash`, `rescan`, `simkeys`, `source`, `str2func`, `symvar`, `system`, `threadcall`, `wb_test`, `wbgentests`, `wbtest_exact`, `wbtest_near`, `wbtest_near_permute`, `wbtestcompare`, `wbtestinputs`, `wrap_jit_test`, `wrap_test` (`diff`/`dot`/`cross`/`rcond` now ✓)
+- **system / OS** (22): `blaslib`, `copyfile`, `delete`, `dirsep`, `fileattrib`, `fileparts`, `getpath`, `help`, `helpwin`, `htmlread`, `import`, `loadlib`, `mkdir`, `mkdir_core`, `pathtool`, `rmdir`, `setpath`, `urlwrite`, `wavplay`, `wavrecord`, `what`, `xmlread` (`cd`/`pwd`/`dir`/`ls`/`which` now ✓)
+- **misc** (41): `addpath`, `bind`, `ctypecast`, `ctypenew`, `ctyperead`, `ctypewrite`, `diary`, `docli`, `exit`, `filesep`, `fitfun`, `fullfile`, `gausfit`, `getenv`, `gfitfun`, `inline`, `inline_evaluate`, `install`, `interp2`, `interplin1`, `license`, `path`, `pathsep`, `pcode`, `qtnew`, `quiet`, `rehash`, `rescan`, `simkeys`, `source`, `symvar`, `system`, `threadcall`, `wb_test`, `wbgentests`, `wbtest_exact`, `wbtest_near`, `wbtest_near_permute`, `wbtestcompare`, `wbtestinputs`, `wrap_jit_test`, `wrap_test` (`conv2`/`func2str`/`str2func`/`diff`/`dot`/`cross`/`rcond` now ✓)
 
 ## Toolbox caveat — runnability is the real signal
 

@@ -38,6 +38,8 @@ pub enum DataClass {
     Cell,
     /// Struct array (named fields).
     Struct,
+    /// Function handle (`@f`, `@(x) expr`).
+    FunctionHandle,
 }
 
 impl DataClass {
@@ -59,6 +61,7 @@ impl DataClass {
             DataClass::Char => "char",
             DataClass::Cell => "cell",
             DataClass::Struct => "struct",
+            DataClass::FunctionHandle => "function_handle",
         }
     }
 

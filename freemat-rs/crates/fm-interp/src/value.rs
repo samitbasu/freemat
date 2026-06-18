@@ -56,7 +56,7 @@ pub fn to_f64_vec(a: &Array) -> Vec<f64> {
             .iter()
             .map(|&c| f64::from(u32::from(c)))
             .collect(),
-        Array::Cell(_) | Array::Struct(_) => Vec::new(),
+        Array::Cell(_) | Array::Struct(_) | Array::FunctionHandle(_) => Vec::new(),
         Array::Sparse(s) => s.to_dense_cols().0,
     }
 }
@@ -236,7 +236,7 @@ pub fn cast_scalar(class: DataClass, v: f64) -> ScalarValue {
         DataClass::Float => ScalarValue::Float(v as f32),
         DataClass::Double => ScalarValue::Double(v),
         DataClass::Char => ScalarValue::Char(char::from_u32(v as u32).unwrap_or('\u{fffd}')),
-        DataClass::Cell | DataClass::Struct => ScalarValue::Double(v),
+        DataClass::Cell | DataClass::Struct | DataClass::FunctionHandle => ScalarValue::Double(v),
     }
 }
 

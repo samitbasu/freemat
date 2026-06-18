@@ -106,7 +106,7 @@ fn to_f64(a: &Array) -> Vec<f64> {
             .iter()
             .map(|&c| f64::from(u32::from(c)))
             .collect(),
-        Array::Cell(_) | Array::Struct(_) => Vec::new(),
+        Array::Cell(_) | Array::Struct(_) | Array::FunctionHandle(_) => Vec::new(),
         Array::Sparse(s) => s.to_dense_cols().0,
     }
 }

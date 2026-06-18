@@ -1,10 +1,10 @@
 //! Interpreter-aware builtins: `eval`, `evalin`, `feval`, `builtin`, `exist`,
 //! `clear`, `isset`, `assignin`, plus a handful of type predicates.
 
-use fm_core::Array;
+use fm_core::{Array, FunctionHandle};
 use fm_interp::error::{Flow, InterpError, Signal};
 use fm_interp::{FunctionTable, Interpreter};
-use fm_parser::{Span, parse_statements};
+use fm_parser::{Span, parse_expression, parse_statements};
 
 use crate::util::need;
 
@@ -17,6 +17,46 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("isset", b_isset);
     table.add_builtin("clear", b_clear);
     table.add_builtin("assignin", b_assignin);
+    table.add_builtin("func2str", b_func2str);
+    table.add_builtin("str2func", b_str2func);
+    table.add_builtin("is_function_handle", b_is_function_handle);
+    table.add_builtin("isfunctionhandle", b_is_function_handle);
+}
+
+/// `func2str(h)` — the source text of a handle: `name` for `@name`, `@(x) expr`
+/// for an anonymous closure (FreeMat/MATLAB).
+fn b_func2str(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "func2str")?;
+    let h = args[0].as_function_handle().ok_or_else(|| {
+        Signal::Error(InterpError::msg(
+            "func2str: argument must be a function handle",
+        ))
+    })?;
+    Ok(vec![Array::char_string(&h.to_str())])
+}
+
+/// `str2func(s)` — build a handle from a string. `'name'` → `@name`; a string
+/// beginning with `@` is parsed as an anonymous-function expression.
+fn b_str2func(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "str2func")?;
+    let s = args[0]
+        .as_string()
+        .ok_or_else(|| Signal::Error(InterpError::msg("str2func: argument must be a string")))?;
+    let trimmed = s.trim();
+    if trimmed.starts_with('@') {
+        // Parse and evaluate the `@(...)...` expression in the current scope so a
+        // closure captures live variables, exactly like writing it literally.
+        let expr = parse_expression(trimmed)
+            .map_err(|e| Signal::Error(InterpError::msg(format!("str2func: parse error: {e}"))))?;
+        return Ok(vec![i.eval(&expr, trimmed)?]);
+    }
+    Ok(vec![Array::function_handle(FunctionHandle::named(trimmed))])
+}
+
+/// `is_function_handle(x)` — true iff `x` is a function-handle value.
+fn b_is_function_handle(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "is_function_handle")?;
+    Ok(vec![Array::bool(args[0].is_function_handle())])
 }
 
 /// `eval(expr)` / `eval(expr, catch)` — parse and run `expr` in the current
@@ -116,12 +156,18 @@ fn run_source(i: &mut Interpreter, src: &str) -> Flow<()> {
     Ok(())
 }
 
-/// `feval(fn, args...)` — call `fn` (a name string) with the given arguments.
+/// `feval(fn, args...)` — call `fn` (a name string **or** a function handle)
+/// with the given arguments.
 fn b_feval(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
     need(args, 1, "feval")?;
-    let name = args[0]
-        .as_string()
-        .ok_or_else(|| Signal::Error(InterpError::msg("feval: first argument must be a name")))?;
+    if args[0].is_function_handle() {
+        return i.invoke_handle(&args[0], &args[1..], nargout.max(1), "", Span::empty(0));
+    }
+    let name = args[0].as_string().ok_or_else(|| {
+        Signal::Error(InterpError::msg(
+            "feval: first argument must be a name or function handle",
+        ))
+    })?;
     i.call_function(&name, &args[1..], nargout.max(1), "", Span::empty(0))
 }
 

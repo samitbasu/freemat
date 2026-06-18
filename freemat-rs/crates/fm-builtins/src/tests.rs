@@ -1295,3 +1295,147 @@ fn builtin_bypasses_user_shadow() {
     i.run("r = test_abs();").unwrap();
     assert_eq!(i.context.lookup("r").unwrap().as_f64(), Some(3.0));
 }
+
+// ---- Function handles (feature pass) ----------------------------------------
+
+#[test]
+fn named_handle_calls_builtin() {
+    assert!(eval_scalar("h = @sin; h(0)").abs() < 1e-12);
+}
+
+#[test]
+fn anon_closure_captures_by_value() {
+    let mut i = interp();
+    // `c` is captured by value at definition; mutating it afterwards must not
+    // change the closure's result.
+    i.run("c = 3; g = @(x) x + c; c = 100; r = g(2);").unwrap();
+    assert_eq!(i.context.lookup("r").unwrap().as_f64(), Some(5.0));
+}
+
+#[test]
+fn anon_closure_multi_param() {
+    assert_eq!(eval_scalar("f = @(x,y) x*y + 1; f(3,4)"), 13.0);
+}
+
+#[test]
+fn feval_with_name_and_handle() {
+    assert_eq!(eval_scalar("feval('mod', 7, 3)"), 1.0);
+    assert_eq!(eval_scalar("h = @(a,b) a-b; feval(h, 9, 4)"), 5.0);
+}
+
+#[test]
+fn func2str_and_str2func_roundtrip() {
+    let mut i = interp();
+    i.run("h = str2func('cos'); s = func2str(h); r = h(0);")
+        .unwrap();
+    assert_eq!(
+        i.context.lookup("s").unwrap().as_string().as_deref(),
+        Some("cos")
+    );
+    assert!((i.context.lookup("r").unwrap().as_f64().unwrap() - 1.0).abs() < 1e-12);
+}
+
+#[test]
+fn is_function_handle_and_isa() {
+    assert_eq!(eval_scalar("is_function_handle(@sin)"), 1.0);
+    assert_eq!(eval_scalar("is_function_handle(3)"), 0.0);
+    assert_eq!(eval_scalar("isa(@sin, 'function_handle')"), 1.0);
+}
+
+#[test]
+fn handle_in_struct_field_is_callable() {
+    // Regression for the test_fptr1 corpus case: `a.b = @cos; a.b(2.0)`.
+    assert!((eval_scalar("a.b = @cos; a.b(2.0)") - (2.0_f64).cos()).abs() < 1e-12);
+}
+
+#[test]
+fn arrayfun_with_handle() {
+    let mut i = interp();
+    i.run("r = arrayfun(@(x) x*x, [1 2 3 4]);").unwrap();
+    let r = i.context.lookup("r").unwrap();
+    assert_eq!(fm_interp::value::to_f64_vec(r), vec![1.0, 4.0, 9.0, 16.0]);
+}
+
+#[test]
+fn cellfun_with_handle() {
+    let mut i = interp();
+    i.run("r = cellfun(@numel, {[1 2 3], [1 2], [1]});")
+        .unwrap();
+    let r = i.context.lookup("r").unwrap();
+    assert_eq!(fm_interp::value::to_f64_vec(r), vec![3.0, 2.0, 1.0]);
+}
+
+// ---- N-D arrays (feature pass) ----------------------------------------------
+
+#[test]
+fn cat_along_third_dim() {
+    let mut i = interp();
+    i.run("a = [1 2; 3 4]; b = [5 6; 7 8]; c = cat(3, a, b); s = size(c);")
+        .unwrap();
+    let s = i.context.lookup("s").unwrap();
+    assert_eq!(fm_interp::value::to_f64_vec(s), vec![2.0, 2.0, 2.0]);
+    // c(:,:,2) should equal b.
+    i.run("p = c(:,:,2);").unwrap();
+    let p = i.context.lookup("p").unwrap();
+    assert_eq!(fm_interp::value::to_f64_vec(p), vec![5.0, 7.0, 6.0, 8.0]);
+}
+
+#[test]
+fn nd_vertical_concat_of_pages() {
+    // `[a;a]` of a 1x2x2 array yields a 2x2x2 array (matcat2 corpus case).
+    let mut i = interp();
+    i.run("a = zeros(1,2,2); a(1,1,1)=1; a(1,2,1)=2; a(1,1,2)=5; a(1,2,2)=6; c=[a;a]; s=size(c);")
+        .unwrap();
+    let s = i.context.lookup("s").unwrap();
+    assert_eq!(fm_interp::value::to_f64_vec(s), vec![2.0, 2.0, 2.0]);
+    i.run("c1 = c(:,:,1); c2 = c(:,:,2);").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("c1").unwrap()),
+        vec![1.0, 1.0, 2.0, 2.0]
+    );
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("c2").unwrap()),
+        vec![5.0, 5.0, 6.0, 6.0]
+    );
+}
+
+#[test]
+fn nd_assign_grows_to_3d() {
+    // a(2,:,:) = r grows an undefined `a` to 2x2x2 (assign14 corpus case).
+    let mut i = interp();
+    i.run("r = [2,3;3,4]; a(2,:,:) = r; b = zeros(2,2,2); b(2,:,:) = r; t = all(a(:)==b(:)) && all(size(a)==size(b));")
+        .unwrap();
+    assert_eq!(i.context.lookup("t").unwrap().as_f64(), Some(1.0));
+}
+
+#[test]
+fn repmat_nd() {
+    let mut i = interp();
+    i.run("s = ones(2,2,2); p = repmat(s,[2 2 1]); t = all(p(:) == 1) && all(size(p)==[4 4 2]);")
+        .unwrap();
+    assert_eq!(i.context.lookup("t").unwrap().as_f64(), Some(1.0));
+}
+
+#[test]
+fn squeeze_nd() {
+    let mut i = interp();
+    i.run("a = ones(1,3,1); b = squeeze(a); s = size(b);")
+        .unwrap();
+    let s = i.context.lookup("s").unwrap();
+    assert_eq!(fm_interp::value::to_f64_vec(s), vec![3.0, 1.0]);
+}
+
+// ---- conv2 / dlmread (feature pass) -----------------------------------------
+
+#[test]
+fn conv2_full_real() {
+    let mut i = interp();
+    i.run("c = conv2([1 1; 1 1], [1 0; 0 1]);").unwrap();
+    let c = i.context.lookup("c").unwrap();
+    // [1 1;1 1] * [1 0;0 1] full → 3x3.
+    assert_eq!(c.dims(), vec![3, 3]);
+    assert_eq!(
+        fm_interp::value::to_f64_vec(c),
+        vec![1.0, 1.0, 0.0, 1.0, 2.0, 1.0, 0.0, 1.0, 1.0]
+    );
+}
