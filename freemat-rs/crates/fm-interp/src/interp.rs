@@ -384,6 +384,37 @@ impl Interpreter {
                 Ok(name.clone())
             }
             ExprKind::Index { base, args } => {
+                // Fast path for `A(idx) = value` where the base is a plain
+                // variable: **take** the array out of the symbol table (so its
+                // backing `Arc` is unshared when not aliased), build the plan,
+                // scatter **in place** (`make_mut_*` deep-copies only on share —
+                // preserving copy-on-write), then **put it back**. This avoids
+                // the O(N) whole-array materialise+rebuild per element write.
+                if let ExprKind::Ident(name) = &base.kind {
+                    // Build the plan FIRST, while the variable is still bound:
+                    // the index expression may reference the variable itself
+                    // (e.g. `v(v > 2) = 0`, `A(end) = ...`). `plan_for` only
+                    // needs the target's dims, so read them without cloning the
+                    // data, then evaluate the index args.
+                    // Missing variable → grow-from-nothing: use the empty
+                    // array's dims (`[0, 0]`), matching the old lvalue path so
+                    // the plan grows the target identically.
+                    let dims = self
+                        .context
+                        .lookup(name)
+                        .map_or_else(|| Array::empty().dims(), Array::dims);
+                    let plan = self.plan_for_dims(&dims, args, src)?;
+                    // Now TAKE the array out (Arc unshared if not aliased),
+                    // scatter IN PLACE (COW deep-copies only when shared), and
+                    // PUT it back.
+                    let mut current = self.context.take(name).unwrap_or_else(Array::empty);
+                    let result = index::scatter_into(&mut current, &plan, &value);
+                    self.context.set(name, current);
+                    result?;
+                    return Ok(name.clone());
+                }
+                // Nested l-value (`a.b(2)`, `a(1).b(3)`): keep the existing
+                // evaluate-base → scatter → store-back path.
                 let (name, current) = self.lvalue_base(base, src)?;
                 let plan = self.plan_for(&current, args, src)?;
                 let updated = index::scatter(&current, &plan, &value)?;
@@ -648,18 +679,26 @@ impl Interpreter {
     /// Evaluate index arguments against `target`, resolving `:` and `end`.
     fn plan_for(&mut self, target: &Array, args: &[Expr], src: &str) -> Flow<IndexPlan> {
         let dims = target.dims();
+        self.plan_for_dims(&dims, args, src)
+    }
+
+    /// Like [`plan_for`](Self::plan_for) but the target's `dims` are supplied
+    /// directly. Used by the in-place indexed-assignment fast path so the index
+    /// arguments are evaluated **while the target variable is still bound** (the
+    /// index may reference the variable itself, e.g. `v(v > 2) = 0`).
+    fn plan_for_dims(&mut self, dims: &[usize], args: &[Expr], src: &str) -> Flow<IndexPlan> {
         let mut resolved = Vec::with_capacity(args.len());
         let nargs = args.len();
         for (pos, arg) in args.iter().enumerate() {
             if matches!(arg.kind, ExprKind::Colon) {
                 resolved.push(IndexArg::Colon);
             } else {
-                let dim_len = end_extent(&dims, pos, nargs);
+                let dim_len = end_extent(dims, pos, nargs);
                 let v = self.eval_with_end(arg, dim_len, src)?;
                 resolved.push(IndexArg::Value(v));
             }
         }
-        index::plan_index(&dims, &resolved)
+        index::plan_index(dims, &resolved)
     }
 
     /// Evaluate an index argument, substituting `end` with `dim_len`.

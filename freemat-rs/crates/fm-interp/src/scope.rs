@@ -7,18 +7,18 @@
 //! line of the statement currently executing** — a debug seam (Stage 3) that a
 //! future debugger / `dbstack` reads to know the active line.
 
-use std::collections::HashMap;
-
 use fm_core::Array;
 use fm_parser::Span;
+use rustc_hash::FxHashMap;
 
 /// A lexical scope: locals + global/persistent declarations + the active line.
 #[derive(Debug, Clone)]
 pub struct Scope {
     /// The name of the function this scope belongs to (`""` for the base/REPL).
     pub name: String,
-    /// Local variables.
-    locals: HashMap<String, Array>,
+    /// Local variables. Uses `FxHashMap` (fast non-cryptographic hash) — variable
+    /// lookup is a tree-walker hot path.
+    locals: FxHashMap<String, Array>,
     /// Names declared `global` in this scope (resolved from the global table).
     globals: Vec<String>,
     /// Names declared `persistent` in this scope.
@@ -35,7 +35,7 @@ impl Scope {
     pub fn new(name: impl Into<String>) -> Self {
         Scope {
             name: name.into(),
-            locals: HashMap::new(),
+            locals: FxHashMap::default(),
             globals: Vec::new(),
             persistents: Vec::new(),
             current_span: None,
@@ -78,6 +78,19 @@ impl Scope {
     /// Insert / overwrite a *local* variable.
     pub fn set_local(&mut self, name: &str, value: Array) {
         self.locals.insert(name.to_string(), value);
+    }
+
+    /// Remove and return a *local* variable, leaving it unbound. Used by the
+    /// in-place indexed-assignment fast path (take → mutate → put back) so the
+    /// owned `Array` has an unshared `Arc` whenever it is not aliased elsewhere.
+    pub fn take_local(&mut self, name: &str) -> Option<Array> {
+        self.locals.remove(name)
+    }
+
+    /// Mutable access to a *local* variable in place (no take/put-back).
+    #[must_use]
+    pub fn get_local_mut(&mut self, name: &str) -> Option<&mut Array> {
+        self.locals.get_mut(name)
     }
 
     /// Remove a local variable, returning it.

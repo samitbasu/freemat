@@ -169,7 +169,7 @@ fn build_integer(class: DataClass, dims: &[usize], data: &[f64]) -> Array {
 }
 
 /// Saturating cast of `f64` → `i64` (MATLAB rounds to nearest, saturates).
-fn sat_i(v: f64) -> i64 {
+pub(crate) fn sat_i(v: f64) -> i64 {
     if v.is_nan() {
         0
     } else {
@@ -185,7 +185,7 @@ fn sat_i(v: f64) -> i64 {
 }
 
 /// Saturating cast of `f64` → `u64`.
-fn sat_u(v: f64) -> u64 {
+pub(crate) fn sat_u(v: f64) -> u64 {
     if v.is_nan() || v < 0.0 {
         0
     } else {

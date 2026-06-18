@@ -16,6 +16,7 @@ fm-graphics = { version = "0.0.0", path = "../fm-graphics" }
 ndarray.workspace = true
 miette.workspace = true
 thiserror.workspace = true
+rustc-hash.workspace = true
 
 [dev-dependencies]
 # Render annotated diagnostics in error-path tests.

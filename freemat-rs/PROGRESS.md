@@ -654,6 +654,66 @@ then tick it here and commit. Leave notes for the next session under each stage.
   warnings` clean ✓; `cargo fmt --all --check` ✓; `cargo test --workspace` green ✓ (incl. the
   7 fm-graphics, 7 new fm-builtins graphics, and the Milestone-2 websocket integration tests).
 
+### Perf fix (before Stage 8) — in-place indexed assignment
+
+- **Symptom / root cause.** `A=zeros(1000); for i=1:1000; for j=1:1000; A(i,j)=i+j; end; end`
+  (1e6 single-element writes into a 1e6-element array) was catastrophically slow. Cause:
+  `index::scatter` **materialised the whole array** to a `Vec<f64>` and **rebuilt a fresh `Arc`
+  for every single write** — O(N) per element, O(N²) for the loop. Worse, the assignment path
+  (`interp.rs` `assign_to` / `lvalue_base`) `lookup().cloned()`'d the array *out* of the symbol
+  table first, so the existing COW `make_mut_*` accessors were never reached. `gather` had the same
+  whole-array materialisation on reads.
+
+- **Fix (interpreter hot path only — the `fm-core` `Array` design was NOT changed).**
+  - `scope.rs` / `context.rs`: added `Scope::take_local` / `get_local_mut` and
+    `Context::take` (remove & own, honouring global/persistent) + `set` (alias of `assign`). The
+    indexed-assignment path now does **take → mutate → put-back** so the backing `Arc` has
+    strong-count 1 in the non-aliased case and `make_mut_*` mutates in place.
+  - `index.rs`: new `scatter_into(target: &mut Array, plan, rhs)` with an **in-place fast path**
+    for same-class, in-bounds, no-growth, non-complex/char/cell/struct/deletion writes — it calls
+    the COW `target.make_mut_<class>()` → `as_slice_memory_order_mut()` (column-major, matching
+    `plan.linear`) and writes only the indexed positions (O(count), zero rebuild, deep-copies only
+    when the `Arc` is shared). All other cases (growth, type-promote, complex, char, cell, struct,
+    deletion) fall back to the existing materialise+rebuild `scatter` into `*target` — byte-identical
+    behaviour. Integer saturation reuses `value::sat_i`/`sat_u` so in-place == rebuild.
+  - `index.rs`: `gather_unchecked` now indexes `as_slice_memory_order()` directly at `plan.linear`
+    (O(count)) instead of cloning the whole buffer via `mem_order`, for the contiguous case.
+  - `interp.rs`: the `assign_to` `ExprKind::Index` branch (plain-variable base) now reads the
+    target's dims (no data clone), builds the plan **while the variable is still bound** (so
+    `v(v>2)=0` / `A(end)=…` still resolve), then `take` → `scatter_into` → `set`. Nested l-values
+    (`a.b(2)`, `a(1).b`) keep the existing evaluate-base → scatter → store-back path. Added
+    `plan_for_dims` so the plan can be built from dims directly.
+  - **Optional cheap win:** symbol tables (`Scope::locals`, `Context::globals`/`persistents`) now
+    use `FxHashMap` (`rustc-hash`) instead of the SipHash `HashMap` — variable lookup is a
+    tree-walker hot path that doesn't need collision-DoS resistance.
+  - **CLI:** added a `--no-gfx` flag (skips the embedded axum/tokio graphics server + browser
+    auto-open) for headless / scripted / benchmark runs.
+
+- **Benchmark (release, `fm --no-gfx`, wall-clock).**
+  - The target `1000×1000` loop (1e6 writes): **before** = did not finish within 120s (O(N²),
+    effectively unbounded — far worse than the original ~10s estimate); **after** = **~0.98s**
+    (result `A(1000,1000)=2000` correct). Startup + `zeros(1000)` alone is ~1ms, so the time is
+    essentially the loop. Reference C++ FreeMat is ~0.78s — same ballpark.
+  - A measurable `300×300` baseline (90k writes): **before 1.489s → after 0.100s** (~15×).
+
+- **COW-correctness tests (new `crates/fm-interp/tests/inplace_assign.rs`, 16 + 1 ignored).** The
+  key guard `cow_alias_not_disturbed_by_indexed_assign`: `B = A; A(i,j) = x` ⇒ **B unchanged** (the
+  shared `Arc` deep-copies on first write); plus `cow_alias_holds_across_many_writes`. Value
+  correctness for scalar / vector / logical-mask / range / `:` / int8 scatter; fallback correctness
+  for growth / type-promote / complex / char / cell-paren / deletion; and read-after-gather
+  correctness. An `#[ignore]`d `inplace_bench` times the 1e6-write loop (informational, **no flaky
+  wall-clock assert**).
+
+- **Conformance: unchanged-to-slightly-up at 260/603 (43.1%)** (was 258; +2, no regression — the
+  pass-floor guard `curated.rs::PASS_FLOOR = 246` is untouched). Verification: `cargo build
+  --workspace` ✓, `cargo clippy --workspace --all-targets -D warnings` clean ✓, `cargo fmt --all
+  --check` ✓, `cargo test --workspace` green ✓ (incl. the new COW tests + the slow curated
+  conformance test).
+
+- **New dep:** `rustc-hash = "2"` (workspace; `fm-interp` opts in). The core `fm-core::Array`
+  enum, its `Arc` COW model, and the `make_mut_*` accessors were **not** modified — this was purely
+  an interpreter hot-path change that finally *uses* the COW accessors that already existed.
+
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,
   no GUI. Debug *engine* lives in `fm-interp`; new crates `fm-dap` (+ optional `fm-lsp`).

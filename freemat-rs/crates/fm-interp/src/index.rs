@@ -289,10 +289,17 @@ pub fn gather(base: &Array, plan: &IndexPlan) -> Flow<Array> {
 /// Gather without bounds-checking (callers pre-validate). All reads are in
 /// column-major (memory) order so linear positions line up.
 fn gather_unchecked(base: &Array, linear: &[usize], result_dims: &[usize]) -> Array {
+    // Pick elements at `linear` straight from the column-major memory buffer:
+    // O(count), no whole-array clone. `mem_order` (which copies the entire
+    // buffer) is only used as a fallback for the rare non-contiguous view.
     macro_rules! gather_dense {
         ($d:expr, $build:path) => {{
-            let flat = crate::value::mem_order($d);
-            let data: Vec<_> = linear.iter().map(|&i| flat[i].clone()).collect();
+            let data: Vec<_> = if let Some(flat) = $d.as_slice_memory_order() {
+                linear.iter().map(|&i| flat[i].clone()).collect()
+            } else {
+                let flat = crate::value::mem_order($d);
+                linear.iter().map(|&i| flat[i].clone()).collect()
+            };
             $build(result_dims, data)
         }};
     }
@@ -304,13 +311,21 @@ fn gather_unchecked(base: &Array, linear: &[usize], result_dims: &[usize]) -> Ar
         Array::Int32(d) => gather_dense!(d, Array::int32_matrix),
         Array::Complex64(d) => gather_dense!(d, Array::complex64_matrix),
         Array::Char(d) => {
-            let flat = crate::value::mem_order(d);
-            let data: Vec<char> = linear.iter().map(|&i| flat[i]).collect();
+            let data: Vec<char> = if let Some(flat) = d.as_slice_memory_order() {
+                linear.iter().map(|&i| flat[i]).collect()
+            } else {
+                let flat = crate::value::mem_order(d);
+                linear.iter().map(|&i| flat[i]).collect()
+            };
             crate::value::char_matrix(result_dims, data)
         }
         Array::Cell(d) => {
-            let flat = crate::value::mem_order(d);
-            let data: Vec<Array> = linear.iter().map(|&i| flat[i].clone()).collect();
+            let data: Vec<Array> = if let Some(flat) = d.as_slice_memory_order() {
+                linear.iter().map(|&i| flat[i].clone()).collect()
+            } else {
+                let flat = crate::value::mem_order(d);
+                linear.iter().map(|&i| flat[i].clone()).collect()
+            };
             Array::cell(result_dims, data)
         }
         Array::Struct(s) => {
@@ -356,6 +371,108 @@ pub fn gather_cell_contents(base: &Array, plan: &IndexPlan) -> Flow<Vec<Array>> 
         out.push(flat[p].clone());
     }
     Ok(out)
+}
+
+/// Scatter `rhs` into `target` **in place when possible**, otherwise rebuild.
+///
+/// This is the hot-path entry point for `A(idx) = rhs`. When the assignment
+/// needs no growth, no type promotion, and stays within the dense
+/// real-numeric / logical / char classes (no complex, cell, struct, or
+/// deletion), it writes `rhs` straight into `target`'s column-major buffer via
+/// the copy-on-write `make_mut_*` accessor — O(count) and zero whole-array
+/// rebuild, deep-copying only if the backing `Arc` is shared (COW correctness).
+///
+/// Every other case (growth, type-promote, complex, cell, struct, deletion)
+/// falls back to the materialise-and-rebuild [`scatter`] and stores the result
+/// into `*target`, so behaviour is identical to the old path.
+pub fn scatter_into(target: &mut Array, plan: &IndexPlan, rhs: &Array) -> Flow<()> {
+    if let Some(()) = try_scatter_in_place(target, plan, rhs)? {
+        return Ok(());
+    }
+    *target = scatter(target, plan, rhs)?;
+    Ok(())
+}
+
+/// Attempt the in-place fast path. Returns `Ok(Some(()))` if it handled the
+/// write, `Ok(None)` if the caller must fall back to the rebuild path, or an
+/// error for an in-place size mismatch.
+fn try_scatter_in_place(target: &mut Array, plan: &IndexPlan, rhs: &Array) -> Flow<Option<()>> {
+    // Bail out of the fast path for any case the rebuild path must own:
+    // deletion, struct/cell, growth, complex, or a class change (promotion).
+    if is_deletion(rhs) && target.numel() > 0 {
+        return Ok(None);
+    }
+    if matches!(target, Array::Cell(_) | Array::Struct(_))
+        || matches!(rhs, Array::Cell(_) | Array::Struct(_))
+    {
+        return Ok(None);
+    }
+    if target.is_complex() || rhs.is_complex() {
+        return Ok(None);
+    }
+    // No growth: every needed extent must already fit, and an inline scalar
+    // target (numel 1, no buffer) can't be written in place — let it rebuild.
+    if matches!(target, Array::Scalar(_)) {
+        return Ok(None);
+    }
+    if plan.needed_dims.iter().product::<usize>() > target.numel() {
+        return Ok(None);
+    }
+    // Same class only (no promotion): assigning e.g. int8 into a double array
+    // keeps the double class but changes values — that's fine and stays in the
+    // fast path because we read the rhs as f64 and the target buffer is f64.
+    // But a class *change* of the target (empty base adopting rhs, or char) is
+    // routed to the rebuild path for simplicity / fidelity.
+    let class = target.class();
+    if class == DataClass::Char {
+        // Char writes go through the rebuild path (code-point conversion).
+        return Ok(None);
+    }
+
+    let count = plan.linear.len();
+    let rhs_vals = to_f64_vec(rhs);
+    if rhs_vals.len() != 1 && rhs_vals.len() != count {
+        return Err(Signal::Error(InterpError::msg(format!(
+            "assignment size mismatch: {} elements into {count} positions",
+            rhs_vals.len()
+        ))));
+    }
+    let scalar = rhs_vals.len() == 1;
+
+    // Write only the indexed positions into the target's column-major buffer.
+    macro_rules! write_in_place {
+        ($accessor:ident, $conv:expr) => {{
+            let buf = target
+                .$accessor()
+                .expect("class checked above")
+                .as_slice_memory_order_mut()
+                .expect("dense F-order buffer is contiguous");
+            for (i, &p) in plan.linear.iter().enumerate() {
+                let v = if scalar { rhs_vals[0] } else { rhs_vals[i] };
+                buf[p] = $conv(v);
+            }
+        }};
+    }
+
+    // Saturating integer casts reuse the exact `value` helpers so an in-place
+    // write produces identical bytes to the rebuild path (`build_integer`).
+    use crate::value::{sat_i, sat_u};
+    match class {
+        DataClass::Double => write_in_place!(make_mut_double, |v: f64| v),
+        DataClass::Float => write_in_place!(make_mut_float, |v: f64| v as f32),
+        DataClass::Bool => write_in_place!(make_mut_bool, |v: f64| v != 0.0),
+        DataClass::Int8 => write_in_place!(make_mut_int8, |v: f64| sat_i(v) as i8),
+        DataClass::UInt8 => write_in_place!(make_mut_uint8, |v: f64| sat_u(v) as u8),
+        DataClass::Int16 => write_in_place!(make_mut_int16, |v: f64| sat_i(v) as i16),
+        DataClass::UInt16 => write_in_place!(make_mut_uint16, |v: f64| sat_u(v) as u16),
+        DataClass::Int32 => write_in_place!(make_mut_int32, |v: f64| sat_i(v) as i32),
+        DataClass::UInt32 => write_in_place!(make_mut_uint32, |v: f64| sat_u(v) as u32),
+        DataClass::Int64 => write_in_place!(make_mut_int64, sat_i),
+        DataClass::UInt64 => write_in_place!(make_mut_uint64, sat_u),
+        // Char handled above; complex/cell/struct bailed out earlier.
+        _ => return Ok(None),
+    }
+    Ok(Some(()))
 }
 
 /// Scatter `rhs` into `base` at `plan`'s positions, growing `base` to

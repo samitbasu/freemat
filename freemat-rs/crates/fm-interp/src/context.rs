@@ -11,10 +11,9 @@
 //! `dbup`/`dbdown` can walk the call stack while paused, inspecting variables in
 //! a frame other than the executing top one.
 
-use std::collections::HashMap;
-
 use fm_core::Array;
 use fm_parser::Span;
+use rustc_hash::FxHashMap;
 
 use crate::scope::Scope;
 
@@ -28,9 +27,9 @@ pub struct Context {
     /// (the top), but a debugger may point it at an outer frame.
     active: usize,
     /// Shared global variables (declared `global`).
-    globals: HashMap<String, Array>,
+    globals: FxHashMap<String, Array>,
     /// Persistent variables, keyed `function\0name`.
-    persistents: HashMap<String, Array>,
+    persistents: FxHashMap<String, Array>,
 }
 
 impl Default for Context {
@@ -46,8 +45,8 @@ impl Context {
         Context {
             scopes: vec![Scope::new("")],
             active: 0,
-            globals: HashMap::new(),
-            persistents: HashMap::new(),
+            globals: FxHashMap::default(),
+            persistents: FxHashMap::default(),
         }
     }
 
@@ -152,6 +151,33 @@ impl Context {
         } else {
             self.top_mut().set_local(name, value);
         }
+    }
+
+    /// Remove and **return ownership** of the variable `name` (local, global, or
+    /// persistent, honouring the top scope's declarations), leaving it unbound.
+    ///
+    /// This is the "take" half of the in-place indexed-assignment fast path: by
+    /// owning the `Array` out of the table (rather than `lookup().cloned()`), the
+    /// backing `Arc` has strong-count 1 in the non-aliased case, so
+    /// `make_mut_*` mutates in place instead of deep-copying. The caller must
+    /// [`set`](Self::set) the (possibly mutated) value back afterwards.
+    pub fn take(&mut self, name: &str) -> Option<Array> {
+        let top = self.top();
+        if top.is_global(name) {
+            self.globals.remove(name)
+        } else if top.is_persistent(name) {
+            let key = self.persistent_key(name);
+            self.persistents.remove(&key)
+        } else {
+            self.top_mut().take_local(name)
+        }
+    }
+
+    /// Bind `value` to `name`, honouring global/persistent declarations. Alias of
+    /// [`assign`](Self::assign); the name pairs with [`take`](Self::take) to make
+    /// the take → mutate → put-back idiom read clearly at call sites.
+    pub fn set(&mut self, name: &str, value: Array) {
+        self.assign(name, value);
     }
 
     /// Whether a variable named `name` is currently visible in the top scope.

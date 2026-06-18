@@ -38,6 +38,9 @@ futures-util = "0.3"
 webbrowser = "1"
 # Websocket client (Stage 7) — used by the Milestone-2 integration test.
 tokio-tungstenite = "0.24"
+# Fast (non-DoS-resistant) hasher for the interpreter's symbol tables — variable
+# lookups are a tree-walker hot path and don't need SipHash's collision defence.
+rustc-hash = "2"
 
 [workspace.lints.rust]
 rust_2018_idioms = "warn"

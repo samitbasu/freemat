@@ -17,6 +17,11 @@ use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
 
 fn main() -> std::process::ExitCode {
+    // `--no-gfx` skips the embedded graphics webserver (and browser auto-open).
+    // Handy for headless runs, scripted/piped input, and benchmarking, where a
+    // background tokio server is pure overhead.
+    let no_gfx = std::env::args().any(|a| a == "--no-gfx");
+
     print_banner();
 
     let mut interp = Interpreter::new();
@@ -24,17 +29,21 @@ fn main() -> std::process::ExitCode {
 
     // Start the embedded graphics webserver and install it as the graphics sink
     // so plotting commands render in the browser. A failure here is non-fatal —
-    // the REPL still works, graphics just won't display.
-    match fm_cli::start(0) {
-        Ok(handle) => {
-            let url = handle.url();
-            println!("Graphics server: {url}");
-            // Best-effort auto-open; ignore failures (headless / no browser).
-            let _ = webbrowser::open(&url);
-            interp.set_graphics_sink(Box::new(handle));
-        }
-        Err(e) => {
-            eprintln!("graphics server unavailable ({e}); plotting disabled");
+    // the REPL still works, graphics just won't display. Skipped under `--no-gfx`.
+    if no_gfx {
+        println!("Graphics disabled (--no-gfx).");
+    } else {
+        match fm_cli::start(0) {
+            Ok(handle) => {
+                let url = handle.url();
+                println!("Graphics server: {url}");
+                // Best-effort auto-open; ignore failures (headless / no browser).
+                let _ = webbrowser::open(&url);
+                interp.set_graphics_sink(Box::new(handle));
+            }
+            Err(e) => {
+                eprintln!("graphics server unavailable ({e}); plotting disabled");
+            }
         }
     }
 
