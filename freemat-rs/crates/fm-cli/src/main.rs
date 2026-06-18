@@ -17,6 +17,18 @@ use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
 
 fn main() -> std::process::ExitCode {
+    // `--list-builtins` prints every registered function name (sorted), one per
+    // line, then exits. This is the authoritative freemat-rs builtin set used to
+    // generate `docs/COVERAGE.md`.
+    if std::env::args().any(|a| a == "--list-builtins") {
+        let mut interp = Interpreter::new();
+        fm_builtins::register_standard_library(&mut interp);
+        for name in interp.functions.names() {
+            println!("{name}");
+        }
+        return std::process::ExitCode::SUCCESS;
+    }
+
     // `--no-gfx` skips the embedded graphics webserver (and browser auto-open).
     // Handy for headless runs, scripted/piped input, and benchmarking, where a
     // background tokio server is pure overhead.

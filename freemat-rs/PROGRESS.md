@@ -890,6 +890,51 @@ then tick it here and commit. Leave notes for the next session under each stage.
     numeric column (recycling the format over the input).
   - `fft2`/`ifft2` are implemented as two 1-D passes over the first two dims.
 
+### Time builtins + `--list-builtins` + `docs/COVERAGE.md` (between Stage 8 and 7.5)
+
+- **Time builtins (`fm-builtins/src/time.rs`):** `tic`, `toc`, `clock`, `cputime`, `etime`,
+  `pause`, `now`, registered in `register_into` (so live in the REPL + conformance harness).
+  - `tic`/`toc` are a `std::time::Instant` stopwatch. The default start time lives in a
+    **thread-local** (`LAST_TIC`, anchored to a per-thread `ANCHOR` instant) — matching the
+    `fm-io` open-file-table precedent, since the interpreter carries no per-instance timer state
+    and `BuiltinFn` can't cheaply add one without growing the `fm-interp` API. `tic` handles
+    (`id = tic`) encode nanos-since-anchor in an `f64` so `toc(id)` round-trips. **Note:** the
+    interpreter evaluates a bare `tic` statement with `nargout==1`, so a builtin can't tell `tic`
+    from `id = tic`; `tic` therefore *always* records the default timer *and* returns the handle
+    (a bare `tic;` harmlessly also sets `ans`). `toc` with no output emits
+    `Elapsed time is N seconds.`; with an output it returns the value.
+  - `clock` → `[y m d H M S]` (local time, fractional seconds) via **chrono** `Local::now`;
+    `now` → MATLAB serial date number (epoch `1970-01-01` = `719529`, local-offset-corrected);
+    `etime(t2,t1)` → seconds between two clock vectors (via `chrono::Local.with_ymd_and_hms`);
+    `cputime` → wall-clock seconds since the Unix epoch (portable proxy; only deltas are used);
+    `pause(n)` sleeps `n` s, bare `pause` is a headless no-op (never blocks forever).
+  - 7 unit tests in `fm-builtins/src/tests.rs` (toc-after-tic small & ≥0, handle round-trip,
+    6-element clock, `etime` of two known vectors = 3630 s, `now` in a sane serial range,
+    `cputime` monotone, `pause(0)` no-op).
+  - **New dep:** `chrono = "0.4"` (workspace; `fm-builtins` opts in) for `clock`/`now`/`etime`.
+
+- **`fm --list-builtins` (`fm-cli/src/main.rs`):** new flag — constructs an `Interpreter`,
+  calls `register_standard_library` (full stdlib + io + graphics + time), and prints every
+  registered function name sorted, one per line, then exits. Backed by a new
+  `FunctionTable::names()` accessor in `fm-interp`. This is the authoritative freemat-rs builtin
+  set (244 names) used to generate the coverage report. (The 13 evaluator constants
+  `pi`/`e`/`eps`/`Inf`/`NaN`/`i`/`j`/`true`/`false` are resolved in `eval_ident`, **not** the
+  function table, so they don't appear in `--list-builtins` — but they ARE implemented.)
+
+- **`docs/COVERAGE.md`** (generated snapshot at this commit): an accurate diff of the real
+  registration table (`--list-builtins` + the 13 constants) against the FreeMat 4.2 surface
+  (330 C++ `@@Signature` builtins across `libs/` + 249 toolbox `.m` basenames). **Headline:
+  freemat-rs implements 206 of the 505 scored FreeMat names ≈ 41% of the API surface**;
+  conformance (the runnability signal) is **284/637 ≈ 44.6%**. Confirms `pi`/`eps` ARE
+  implemented (the prior grep report was wrong) and `subplot` is NOT (gated on the Stage-7.5
+  handle/`set`/`get` system). Includes a per-category table and a full not-yet-implemented
+  backlog. Biggest 0% gaps: bit ops, sparse (Stage 9), polynomial, system/OS. Regenerate with
+  `cargo run -q -p fm-cli -- --list-builtins`.
+
+- **Verification:** `cargo build --workspace` ✓; `cargo clippy --workspace --all-targets -D
+  warnings` clean ✓; `cargo fmt --all --check` ✓; `cargo test --workspace` green ✓ (incl. the 7
+  new time tests). Conformance unchanged at **284/637** (time builtins additive, no regression).
+
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,
   no GUI. Debug *engine* lives in `fm-interp`; new crates `fm-dap` (+ optional `fm-lsp`).

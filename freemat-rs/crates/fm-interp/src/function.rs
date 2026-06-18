@@ -107,4 +107,13 @@ impl FunctionTable {
     pub fn contains(&self, name: &str) -> bool {
         self.funcs.contains_key(name)
     }
+
+    /// Every registered function name, **sorted** — the authoritative builtin
+    /// set for `fm --list-builtins` / coverage reporting.
+    #[must_use]
+    pub fn names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.funcs.keys().cloned().collect();
+        names.sort();
+        names
+    }
 }

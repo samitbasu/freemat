@@ -18,6 +18,7 @@ fm-io = { version = "0.0.0", path = "../fm-io" }
 ndarray.workspace = true
 rand.workspace = true
 rand_distr.workspace = true
+chrono.workspace = true
 
 [lints]
 workspace = true

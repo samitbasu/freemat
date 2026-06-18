@@ -53,6 +53,9 @@ byteorder = "1"
 rustfft = "6"
 # Regular expressions for regexp/regexpi/regexprep.
 regex = "1"
+# Date/time for the `clock`/`now`/`etime` time builtins (local time + serial
+# date-number math). `clock`/`std::env` feature defaults are fine.
+chrono = "0.4"
 
 [workspace.lints.rust]
 rust_2018_idioms = "warn"

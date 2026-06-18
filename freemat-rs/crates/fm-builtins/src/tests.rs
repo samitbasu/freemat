@@ -549,3 +549,94 @@ fn drawnow_flushes_through_sink() {
     assert_eq!(scene.figures.len(), 1);
     assert_eq!(scene.figures[0].axes[0].series.len(), 1);
 }
+
+#[test]
+fn toc_after_tic_is_nonnegative_and_small() {
+    let mut i = interp();
+    i.run("tic; e = toc;").unwrap();
+    let e = i
+        .context
+        .lookup("e")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+    assert!(e >= 0.0, "elapsed should be non-negative, got {e}");
+    assert!(e < 5.0, "elapsed should be small, got {e}");
+}
+
+#[test]
+fn toc_handle_form_roundtrips() {
+    let mut i = interp();
+    i.run("id = tic; e = toc(id);").unwrap();
+    let e = i
+        .context
+        .lookup("e")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+    assert!(
+        (0.0..5.0).contains(&e),
+        "handle-form elapsed out of range: {e}"
+    );
+}
+
+#[test]
+fn clock_is_six_element_vector() {
+    let mut i = interp();
+    i.run("c = clock;").unwrap();
+    let c = i.context.lookup("c").unwrap();
+    assert_eq!(c.numel(), 6);
+    let v = fm_interp::value::to_f64_vec(c);
+    assert!(v[0] >= 2020.0, "year looks wrong: {}", v[0]);
+    assert!((1.0..=12.0).contains(&v[1]), "month out of range: {}", v[1]);
+}
+
+#[test]
+fn etime_of_known_clock_vectors() {
+    // Two clock vectors one hour and 30 seconds apart on the same day.
+    let mut i = interp();
+    i.run("t1 = [2020 1 1 10 0 0]; t2 = [2020 1 1 11 0 30]; d = etime(t2, t1);")
+        .unwrap();
+    let d = i
+        .context
+        .lookup("d")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+    assert!((d - 3630.0).abs() < 1e-6, "etime mismatch: {d}");
+}
+
+#[test]
+fn now_is_a_reasonable_serial_date() {
+    let mut i = interp();
+    i.run("n = now;").unwrap();
+    let n = i
+        .context
+        .lookup("n")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+    // 2020-01-01 is serial 737791; 2050-01-01 is ~748000-ish. Today is between.
+    assert!(n > 737_791.0, "now too small: {n}");
+    assert!(n < 800_000.0, "now too large: {n}");
+}
+
+#[test]
+fn cputime_increases_or_holds() {
+    let mut i = interp();
+    i.run("a = cputime; b = cputime;").unwrap();
+    let a = i
+        .context
+        .lookup("a")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+    let b = i
+        .context
+        .lookup("b")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+    assert!(b >= a, "cputime went backwards: {a} -> {b}");
+}
+
+#[test]
+fn pause_zero_is_noop() {
+    let mut i = interp();
+    // Should return promptly and not error.
+    i.run("pause(0);").unwrap();
+}

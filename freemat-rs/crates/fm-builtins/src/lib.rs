@@ -26,6 +26,7 @@ mod random;
 mod reductions;
 mod setops;
 mod strings;
+mod time;
 mod trig;
 mod util;
 
@@ -51,6 +52,7 @@ pub fn register_into(table: &mut FunctionTable) {
     strings::register(table);
     setops::register(table);
     cellstruct::register(table);
+    time::register(table);
     interp_ops::register(table);
     graphics::register(table);
     graphics::register_log_plots(table);
