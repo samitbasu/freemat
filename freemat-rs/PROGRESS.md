@@ -14,7 +14,7 @@ then tick it here and commit. Leave notes for the next session under each stage.
 - [x] **Stage 5 — `fm-linalg` + core math builtins  ·  ★ Milestone 1**
 - [x] **Stage 6 — `fm-builtins`: remaining core functions**
 - [x] **Stage 7 — `fm-graphics` + webserver + Plotly  ·  ★ Milestone 2**
-- [ ] **Stage 8 — `fm-io`: MAT files, file I/O, FFT, regex**
+- [x] **Stage 8 — `fm-io`: MAT files, file I/O, FFT, regex**
 - [ ] **Stage 9 — Advanced / optional**
 - [ ] **Stage 10 — Debugging & editor integration (DAP + `db*` engine; optional LSP)**
 
@@ -767,6 +767,127 @@ then tick it here and commit. Leave notes for the next session under each stage.
 - **New dep:** `smallvec = "1"` (workspace; `fm-core` + `fm-interp` opt in). The core
   `fm-core::Array` enum, its `Arc` COW model, and the `make_mut_*` accessors were **not** modified —
   the new `shape()`/`dims_smallvec()`/`Dims` are purely additive accessors.
+
+### Stage 8 — done (`fm-io`: MAT files, file I/O, FFT, regex + conformance-speed fix)
+
+- **Deps added** (pinned in root `[workspace.dependencies]`): `flate2 = "1"` (zlib for compressed
+  MAT elements), `byteorder = "1"` (endian-aware MAT/file reads), `rustfft = "6"` (`fft`/`ifft`),
+  `regex = "1"` (`regexp`/`regexprep`). `fm-io` opts into `fm-core`/`fm-interp`/`fm-parser`/
+  `ndarray`/`num-complex` + the four new crates. `fm-builtins` gained a path dep on `fm-io` so the
+  io builtins register everywhere `register_standard_library` is called (CLI + conformance).
+
+- **`fm-io` module layout (`crates/fm-io/src/`):**
+  - `matfile.rs` — **MAT v7 / Level-5 read AND write** (ported byte-for-byte from
+    `libCore/MatIO.cpp`): 128-byte header, regular **and** packed "small-element" tags, the
+    `miMATRIX` sub-element sequence (array-flags → dims → name → payload), array-flags
+    complex/logical bits + class byte, and **zlib-compressed (`miCOMPRESSED`) elements on write**
+    (matching FreeMat) with transparent inflate on read. Round-trips **double/single, complex,
+    every integer class, logical (int32+logical-flag), char (UTF-16), struct (field-name-length +
+    null-padded names + field-major fields), and cell (nested matrices)**. `read_mat` is tolerant
+    (skips a variable it can't parse rather than failing the whole `load`); `read_first` reads just
+    the leading variable. **Sparse MAT is deferred to Stage 9** (no sparse type in `fm-core`; a
+    sparse element on read returns a clear error).
+  - `fileio.rs` — `fopen`/`fclose`/`fread`/`fwrite`/`frewind`/`feof`/`fgetl`/`fgets`(+`fgetline`)
+    over a **thread-local open-file table** (fids start at 3; 0/1/2 reserved). `fwrite`/`fread`
+    honor a precision/class string; `fprintf_to` routes a formatted string to a file or back to the
+    console.
+  - `scanf.rs` — `sscanf`/`fscanf`: a pragmatic format parser covering `%d %i %u %f %e %g %s %c`
+    with MATLAB format recycling, returning a numeric column vector (or char for `%s`/`%c`).
+  - `fft.rs` — `fft`/`ifft`/`fft2`/`ifft2` via **rustfft**: transform along the first
+    non-singleton (or given) dimension with optional length truncation/zero-pad, `ifft` normalized
+    by `n`, column-major segment gather/scatter over arbitrary N-D shapes.
+  - `regexp.rs` — `regexp`/`regexpi`/`regexprep` via the **regex** crate: default returns 1-based
+    `start` indices; option keywords `start`/`end`/`match`/`tokens`/`split`/`once`; multi-output
+    order (start,end,match,tokens,split); `regexprep` translates MATLAB `$N` → regex `${N}`.
+  - `builtins.rs` — registration + `save`/`load`/`fprintf`/`fscanf`/`sscanf`/`fileread`/`exist`.
+    `save f x y` (command syntax) writes named (or all) locals to a `.mat` (or `-ascii` text);
+    `load f` injects variables into the current scope, `S = load('f')` (nargout≥1) returns a struct;
+    `-ascii` load parses a whitespace/`,`/`;`-delimited numeric matrix. `fprintf` reuses the
+    existing `sprintf` printf engine via `call_function`. `exist` extends the interp_ops one with a
+    **file-on-disk → 2** check (registered last so it shadows it).
+
+- **MAT read/write coverage + deferrals.** Write+read round-trip verified for all core classes
+  (`crates/fm-io/src/tests.rs`, 20 tests). Reading **real MATLAB/FreeMat-written files** is proven
+  against checked-in fixtures (`crates/fm-io/tests/fixtures/`): an uncompressed FreeMat v6 file
+  reads fully; a zlib-compressed MATLAB v7 file's first variable reads cleanly (its trailing
+  elements are a MATLAB object-reference cell dump we don't fully decode — a documented limitation,
+  not needed by any conformance test). **Deferred:** sparse MAT (Stage 9), MAT v7.3/HDF5,
+  big-endian MAT files, MATLAB object/function-handle classes.
+
+- **`.mat`-fixture / new conformance dirs.** `reference` and `matcompat` were **inspected and kept
+  deferred** — they contain only `.mat` *fixtures* + whitebox driver scripts (`mcompat.m`,
+  `wbinputs.mat`, `wbtest_*_ref.mat`) with **no `test_*.m`** functions, so the harness has nothing
+  runnable there (the MAT reader is exercised by the fm-io unit tests against real fixtures + the
+  now-passing `io` save/load tests instead; the DEFERRED note was updated to say so honestly).
+  **`transforms` was moved into the covered set** — its 34 `test_*.m` (eig/lu/qr/svd/fft, all
+  self-contained) exercise the Stage-5 linalg + the new fft; **18/34 pass**. The `io` dir (already
+  covered) went **0 → 3** (`save1`, `load1`, `sscanf1`). `curvefit` stays deferred (needs
+  `fitfun`/`gausfit` optimization → Stage 9).
+
+- **Conformance-test-speed restructure.** The old `full_suite_pass_count_does_not_regress` ran the
+  **whole** covered corpus on every `cargo test` (~7–8 min, dragging `cargo test --workspace`). It
+  is now `#[ignore]`d (run it via `cargo test -p fm-conformance -- --ignored
+  full_suite_pass_count_does_not_regress` or the `cargo run -p fm-conformance` reporter). A new fast
+  `curated_floor_is_met` asserts the curated must-pass subset's count instead. **The asserted
+  conformance path now runs in ~0.7s** (full `cargo test --workspace` ≈ **1.9s** when compiled, vs
+  ~7–8 min before). The curated subset gained Stage-8 anchors: `io/test_save1`, `io/test_load1`,
+  `io/test_sscanf1`, `transforms/test_eig3`, `transforms/test_svd1`.
+
+- **Conformance: 262/603 (43.4%) → 285/637 (44.7%), Δ +23 passes (+1.3 pp on the absolute pass
+  count, with the denominator grown by the 34 newly-enabled `transforms` tests).** Per-dir
+  (total / pass / fail / error):
+
+  | dir | total | pass | fail | error |
+  |---|---:|---:|---:|---:|
+  | array | 68 | 33 | 7 | 28 |
+  | binary | 3 | 0 | 0 | 3 |
+  | constants | 1 | 0 | 0 | 1 |
+  | elementary | 7 | 6 | 0 | 1 |
+  | flow | 22 | 20 | 2 | 0 |
+  | freemat | 11 | 4 | 4 | 3 |
+  | functions | 9 | 5 | 3 | 1 |
+  | inspection | 20 | 15 | 3 | 2 |
+  | io | 6 | 3 | 0 | 3 |
+  | operators | 66 | 9 | 1 | 56 |
+  | random | 1 | 0 | 0 | 1 |
+  | signal | 1 | 0 | 0 | 1 |
+  | string | 3 | 1 | 0 | 2 |
+  | suite | 337 | 139 | 35 | 163 |
+  | transforms | 34 | 18 | 6 | 10 |
+  | typecast | 5 | 2 | 0 | 3 |
+  | variables | 43 | 30 | 7 | 6 |
+  | **TOTAL** | **637** | **285** | **68** | **284** |
+
+  The +23 breaks down as +18 transforms (eig/svd/qr/lu over faer), +3 io (save/load/sscanf), and +5
+  in `suite` (fft/save/regexp-using tests) net of a small PRNG wobble. Remaining io misses:
+  `dlmread`/`imwrite` (not implemented — image/CSV I/O) and `io/test_file1` (uses FreeMat's
+  `return (expr)` value-syntax the parser doesn't yet accept — pre-existing parser gap, not an
+  io-builtin gap).
+
+- **Pass-floor guard raised 246 → 266** (`curated.rs::PASS_FLOOR`; live full-suite is 285, margin
+  absorbs the PRNG-dependent `rand`/`randn`/`eig` transforms tests).
+
+- **Verification:** `cargo build --workspace` ✓; `cargo clippy --workspace --all-targets -D
+  warnings` clean ✓ (no `#[allow]`s added); `cargo fmt --all --check` ✓; `cargo test --workspace`
+  green AND fast ✓ (the slow full-corpus assertion is `#[ignore]`d). 20 new `fm-io` tests (MAT
+  round-trip per class, real-fixture reads, fft vs known transforms, regex match/replace, sscanf).
+
+- **`fm-interp` was not modified** (only used: `context.lookup/assign`, `top().local_names()`,
+  `call_function`, `value::{to_f64_vec,to_c64_vec,build_real,build_complex,char_matrix}`, `emit`) —
+  the open-file table lives entirely in `fm-io` as a thread-local, so no interpreter state was
+  added. The MAT reader's tolerance to unparseable trailing variables is the only behavioural
+  nuance worth noting for next session.
+
+- **Decisions / deferrals (MATLAB-compatible choices where ambiguous):**
+  - MAT files are written **little-endian + zlib-compressed** (FreeMat's default); the reader
+    accepts both compressed and uncompressed, both tag forms, but rejects big-endian and sparse.
+  - `load` of a bare name tries `<name>.mat`; an ASCII-looking non-`.mat` file falls back to the
+    `-ascii` numeric-matrix parser and binds to the file-stem variable.
+  - `fread` returns a column vector in the requested precision's class (integers preserve class,
+    float/double → double); `feof` is set after a short/EOF read (MATLAB semantics).
+  - `regexp` default output is the `start` index vector; `sscanf %g` etc. all collect into one
+    numeric column (recycling the format over the input).
+  - `fft2`/`ifft2` are implemented as two 1-D passes over the first two dims.
 
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,

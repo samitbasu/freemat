@@ -54,6 +54,9 @@ pub fn register_into(table: &mut FunctionTable) {
     interp_ops::register(table);
     graphics::register(table);
     graphics::register_log_plots(table);
+    // Stage 8: MAT save/load, file I/O, FFT, regex. Registered last so its
+    // `exist` (which also checks for files on disk) shadows the interp_ops one.
+    fm_io::register(table);
 }
 
 #[cfg(test)]

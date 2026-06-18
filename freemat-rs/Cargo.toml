@@ -44,6 +44,15 @@ rustc-hash = "2"
 # Small-vector optimisation for short index/shape vectors (Perf round 2): keeps
 # the common low-rank `dims()` / index-plan buffers on the stack (no heap).
 smallvec = "1"
+# Stage 8 (fm-io): MAT-file I/O, FFT, regex.
+# zlib (de)compression for MAT v7 compressed matrix elements.
+flate2 = "1"
+# Endian-aware reads/writes for the MAT binary layout.
+byteorder = "1"
+# Pure-Rust FFT for fft/ifft/fft2/ifft2.
+rustfft = "6"
+# Regular expressions for regexp/regexpi/regexprep.
+regex = "1"
 
 [workspace.lints.rust]
 rust_2018_idioms = "warn"

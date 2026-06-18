@@ -227,18 +227,28 @@ pub const COVERED_DIRS: &[&str] = &[
     "signal",
     "string",
     "suite",
+    "transforms",
     "typecast",
     "variables",
 ];
 
 /// Directories deferred to later stages, with the reason.
 pub const DEFERRED: &[(&str, &str)] = &[
-    ("reference", "367 .mat fixtures — needs Stage 8 fm-io"),
-    ("matcompat", ".mat reference fixtures — Stage 8"),
+    // `reference`/`matcompat` hold .mat *fixtures* + whitebox driver scripts but
+    // **no `test_*.m`** functions, so there is nothing the harness can run there
+    // (the Stage-8 fm-io reader is exercised by the fm-io unit tests + the now-
+    // enabled `io` save/load tests instead).
+    (
+        "reference",
+        "367 .mat fixtures + whitebox drivers — no test_*.m to run",
+    ),
+    (
+        "matcompat",
+        ".mat fixtures + mcompat driver — no test_*.m to run",
+    ),
     ("class", "user-defined classes/OOP — later stage"),
     ("sparse", "sparse matrices — deferred (Stage 9)"),
-    ("transforms", "fft/linalg reference fixtures — Stage 5/8"),
-    ("curvefit", "curve fitting + .mat fixtures — later"),
+    ("curvefit", "curve fitting (fitfun/gausfit) — Stage 9"),
     ("handle", "handle graphics — Stage 7"),
     ("glwin", "OpenGL graphics — Stage 7"),
     ("jit", "JIT compiler — dropped per plan"),
