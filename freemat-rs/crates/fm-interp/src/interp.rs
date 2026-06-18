@@ -10,6 +10,7 @@
 //! - The [`Context`]'s **active scope is switchable** ([`Context::set_active`]),
 //!   the basis for `dbup`/`dbdown`.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use fm_core::{Array, C64, DataClass, Dims, FormatMode, ScalarValue};
@@ -43,6 +44,10 @@ pub struct Interpreter {
     nargout_stack: Vec<usize>,
     /// Retained graphics scene + current figure + optional broadcast sink.
     pub graphics: GraphicsState,
+    /// Stack of file-local function tables (parallel to the call stack). The
+    /// top frame's locals shadow the global function table, giving FreeMat's
+    /// file-private subfunction scoping.
+    local_funcs_stack: Vec<Arc<crate::function::FileLocals>>,
 }
 
 impl Default for Interpreter {
@@ -63,6 +68,7 @@ impl Interpreter {
             nargin_stack: vec![0],
             nargout_stack: vec![0],
             graphics: GraphicsState::default(),
+            local_funcs_stack: Vec::new(),
         };
         crate::builtins::register_defaults(&mut interp.functions);
         interp
@@ -126,12 +132,42 @@ impl Interpreter {
     /// Register interpreted function definitions in the function table.
     pub fn load_functions(&mut self, defs: Vec<FunctionDef>, src: &str) {
         let shared = Arc::new(src.to_string());
+
+        // A `.m` function file contains the public/main function (the first
+        // top-level `function`) plus any subfunctions (subsequent top-level
+        // functions) and nested functions. FreeMat scopes subfunctions and
+        // nested functions to the *file*: they are callable only from other
+        // functions in the same file, and must NOT clobber identically named
+        // functions from other files (e.g. a test file's private `testeq`).
+        //
+        // We collect every function defined in the file into a shared
+        // file-local table, register only the main function in the global table
+        // (with that table attached), and resolve file-locals first at call
+        // time (see `local_funcs_stack` / `call_function`).
+        let mut funcs: crate::function::FileLocals = crate::function::FileLocals {
+            funcs: HashMap::new(),
+            src: shared,
+        };
+        let mut main: Option<Arc<FunctionDef>> = None;
         for def in defs {
-            // Nested functions become siblings (simple model for Stage 3).
             for n in &def.nested {
-                self.functions.add_interpreted(n.clone(), shared.clone());
+                let n = Arc::new(n.clone());
+                funcs.funcs.entry(n.name.clone()).or_insert(n);
             }
-            self.functions.add_interpreted(def, shared.clone());
+            let def = Arc::new(def);
+            // The first top-level function is the public one (matches the
+            // filename in FreeMat); the rest are file-private subfunctions.
+            if main.is_none() {
+                main = Some(def.clone());
+            }
+            funcs.funcs.entry(def.name.clone()).or_insert(def);
+        }
+        let locals = Arc::new(funcs);
+
+        // Only the public function is registered globally; subfunctions stay
+        // private to the file via `locals`.
+        if let Some(main) = main {
+            self.functions.add_interpreted(main, locals);
         }
     }
 
@@ -620,7 +656,14 @@ impl Interpreter {
         src: &str,
         span: Span,
     ) -> Flow<Vec<Array>> {
-        // Special interpreter variables.
+        // A bound variable always shadows a same-named builtin constant or
+        // function (MATLAB/FreeMat treat `pi`, `e`, `eps`, `i`, … as *functions*,
+        // so a local of that name wins). Check the scope first.
+        if let Some(v) = self.context.lookup(name) {
+            return Ok(vec![v.clone()]);
+        }
+        // Special interpreter constants / pseudo-variables (only when not a
+        // user variable, per the lookup above).
         match name {
             "nargin" => return Ok(vec![Array::double(self.current_nargin() as f64)]),
             "nargout" => return Ok(vec![Array::double(self.current_nargout() as f64)]),
@@ -629,22 +672,19 @@ impl Interpreter {
             "Inf" | "inf" => return Ok(vec![Array::double(f64::INFINITY)]),
             "NaN" | "nan" => return Ok(vec![Array::double(f64::NAN)]),
             "eps" => return Ok(vec![Array::double(f64::EPSILON)]),
-            "i" | "j" | "I" | "J" if !self.context.exists(name) => {
+            "i" | "j" | "I" | "J" => {
                 return Ok(vec![Array::complex64(C64::new(0.0, 1.0))]);
             }
-            "true" if !self.context.exists(name) => {
+            "true" => {
                 return Ok(vec![Array::bool(true)]);
             }
-            "false" if !self.context.exists(name) => {
+            "false" => {
                 return Ok(vec![Array::bool(false)]);
             }
             _ => {}
         }
-        if let Some(v) = self.context.lookup(name) {
-            return Ok(vec![v.clone()]);
-        }
         // Not a variable → a zero-argument function call.
-        if self.functions.contains(name) {
+        if self.resolves_function(name) {
             return self.call_function(name, &[], nargout, src, span);
         }
         Err(Signal::Error(
@@ -719,7 +759,7 @@ impl Interpreter {
         // call form `eps('double')`/`eps(x)` (MATLAB's `eps` is both).
         if let ExprKind::Ident(name) = &base.kind
             && !self.context.exists(name)
-            && (!is_builtin_constant(name) || self.functions.contains(name))
+            && (!is_builtin_constant(name) || self.resolves_function(name))
         {
             let arg_vals = self.eval_args(args, src)?;
             return self.call_function(name, &arg_vals, nargout, src, span);
@@ -862,6 +902,15 @@ impl Interpreter {
 
     // ---- Function calls -----------------------------------------------------
 
+    /// Whether `name` resolves to a callable function — either a file-local
+    /// subfunction of the currently executing file, or a global function.
+    fn resolves_function(&self, name: &str) -> bool {
+        self.local_funcs_stack
+            .last()
+            .is_some_and(|l| l.get(name).is_some())
+            || self.functions.contains(name)
+    }
+
     /// Call a registered function (builtin or interpreted) by name.
     pub fn call_function(
         &mut self,
@@ -871,6 +920,15 @@ impl Interpreter {
         src: &str,
         span: Span,
     ) -> Flow<Vec<Array>> {
+        // Resolve file-local subfunctions first: while a function from a `.m`
+        // file is executing, its sibling subfunctions shadow the global table.
+        if let Some(locals) = self.local_funcs_stack.last()
+            && let Some(def) = locals.get(name).cloned()
+        {
+            let locals = locals.clone();
+            return self.call_interpreted(&def, args, nargout, locals);
+        }
+
         let func = self.functions.get(name).cloned().ok_or_else(|| {
             Signal::Error(
                 InterpError::msg(format!("undefined function '{name}'")).located(src, span),
@@ -878,19 +936,21 @@ impl Interpreter {
         })?;
         match func {
             Function::Builtin { func, .. } => func(self, args, nargout.max(1)),
-            Function::Interpreted { def, src: fsrc } => {
-                self.call_interpreted(&def, &fsrc, args, nargout)
+            Function::Interpreted { def, locals, .. } => {
+                self.call_interpreted(&def, args, nargout, locals)
             }
         }
     }
 
     /// Run an interpreted `.m` function: bind inputs, execute, collect outputs.
+    /// `locals` is the file-local function table that becomes active for the
+    /// duration of the call (so sibling subfunctions resolve).
     fn call_interpreted(
         &mut self,
         def: &FunctionDef,
-        fsrc: &str,
         args: &[Array],
         nargout: usize,
+        locals: Arc<crate::function::FileLocals>,
     ) -> Flow<Vec<Array>> {
         if args.len() > def.inputs.len() && !has_varargin(def) {
             return Err(Signal::Error(InterpError::msg(format!(
@@ -898,6 +958,8 @@ impl Interpreter {
                 def.name
             ))));
         }
+        let fsrc = locals.src.clone();
+        self.local_funcs_stack.push(locals);
         self.context.push_scope(def.name.clone());
         self.nargin_stack.push(args.len());
         self.nargout_stack.push(nargout.max(1));
@@ -915,7 +977,7 @@ impl Interpreter {
             }
         }
 
-        let result = self.exec_block(&def.body, fsrc);
+        let result = self.exec_block(&def.body, &fsrc);
 
         // On error, unwind the frame before propagating.
         let flow = match result {
@@ -933,6 +995,7 @@ impl Interpreter {
         self.nargin_stack.pop();
         self.nargout_stack.pop();
         self.context.pop_scope();
+        self.local_funcs_stack.pop();
 
         flow?;
         outputs

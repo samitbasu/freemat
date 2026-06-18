@@ -6,7 +6,7 @@ use fm_interp::error::Flow;
 use fm_interp::value::{build_real, to_f64_vec};
 use fm_interp::{FunctionTable, Interpreter};
 
-use crate::util::{err, need, scalar_arg};
+use crate::util::{err, err_signal, need, scalar_arg};
 
 pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("zeros", |_i, a, _n| Ok(vec![filled(a, 0.0)]));
@@ -169,21 +169,91 @@ fn b_diag(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     need(args, 1, "diag")?;
     let a = &args[0];
     let dims = a.dims();
-    let data = to_f64_vec(a);
-    let is_vector = dims.len() == 2 && (dims[0] == 1 || dims[1] == 1);
+    if dims.len() != 2 {
+        return err("diag: first argument must be 2-D");
+    }
+    // The diagonal offset `k` (0 = main, >0 above, <0 below). Mirrors FreeMat's
+    // `DiagFunction`: a vector input *builds* a diagonal matrix; a matrix input
+    // *extracts* the k-th diagonal as a column vector.
+    let k = match args.get(1) {
+        None => 0i64,
+        Some(arg) => arg
+            .as_f64()
+            .map(|v| v as i64)
+            .ok_or_else(|| err_signal("diag: second argument must be a scalar"))?,
+    };
+    let (r, c) = (dims[0], dims[1]);
+    let is_vector = r == 1 || c == 1;
+
     if is_vector {
-        let k = data.len();
-        let mut out = vec![0.0; k * k];
-        for (i, &v) in data.iter().enumerate() {
-            out[i + i * k] = v;
+        // Build an M×M matrix placing the vector on the k-th diagonal.
+        let n = a.numel();
+        let m = n + k.unsigned_abs() as usize;
+        // Source linear position for output (row,col); usize::MAX marks a zero.
+        let mut perm = vec![usize::MAX; m * m];
+        for i in 0..n {
+            let (row, col) = if k < 0 {
+                (i + k.unsigned_abs() as usize, i)
+            } else {
+                (i, i + k as usize)
+            };
+            perm[row + col * m] = i;
         }
-        Ok(vec![build_real(DataClass::Double, &[k, k], out)])
-    } else if dims.len() == 2 {
-        let (r, c) = (dims[0], dims[1]);
-        let k = r.min(c);
-        let out: Vec<f64> = (0..k).map(|i| data[i + i * r]).collect();
-        Ok(vec![build_real(DataClass::Double, &[k, 1], out)])
+        Ok(vec![gather_diag(a, &[m, m], &perm)])
     } else {
-        err("diag: input must be 2-D")
+        // Extract the k-th diagonal of the matrix as a column vector.
+        let out_len = if k < 0 {
+            (r as i64 + k).max(0).min(c as i64) as usize
+        } else {
+            (r as i64).min(c as i64 - k).max(0) as usize
+        };
+        let mut perm = vec![usize::MAX; out_len];
+        for (idx, slot) in perm.iter_mut().enumerate() {
+            let (row, col) = if k < 0 {
+                (idx + k.unsigned_abs() as usize, idx)
+            } else {
+                (idx, idx + k as usize)
+            };
+            *slot = row + col * r;
+        }
+        Ok(vec![gather_diag(a, &[out_len, 1], &perm)])
+    }
+}
+
+/// Gather elements of `a` into a new array of shape `dims` using the per-output
+/// source linear positions in `perm` (`usize::MAX` ⇒ a zero fill). Preserves
+/// the source class (real / complex / char), matching FreeMat's `diag`.
+fn gather_diag(a: &Array, dims: &[usize], perm: &[usize]) -> Array {
+    match a {
+        Array::Char(_) | Array::Scalar(fm_core::ScalarValue::Char(_)) => {
+            let flat: Vec<char> = a.as_string().unwrap_or_default().chars().collect();
+            let data: Vec<char> = perm
+                .iter()
+                .map(|&p| if p == usize::MAX { '\u{0}' } else { flat[p] })
+                .collect();
+            fm_interp::value::char_matrix(dims, data)
+        }
+        _ if a.is_complex() => {
+            let flat = fm_interp::value::to_c64_vec(a);
+            let data = perm
+                .iter()
+                .map(|&p| {
+                    if p == usize::MAX {
+                        fm_core::C64::new(0.0, 0.0)
+                    } else {
+                        flat[p]
+                    }
+                })
+                .collect();
+            fm_interp::value::build_complex(dims, data)
+        }
+        _ => {
+            let flat = to_f64_vec(a);
+            let data: Vec<f64> = perm
+                .iter()
+                .map(|&p| if p == usize::MAX { 0.0 } else { flat[p] })
+                .collect();
+            build_real(a.class(), dims, data)
+        }
     }
 }

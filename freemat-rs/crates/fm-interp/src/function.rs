@@ -36,7 +36,31 @@ pub enum Function {
         def: Arc<FunctionDef>,
         /// The source text the def was parsed from (for diagnostics).
         src: Arc<String>,
+        /// The file-local function table: every function defined in the same
+        /// `.m` file (the public/main function plus its subfunctions and nested
+        /// functions). These are visible only while a function from this file is
+        /// executing, mirroring FreeMat's file-private subfunction scoping.
+        locals: Arc<FileLocals>,
     },
+}
+
+/// The set of functions private to a single `.m` file (the main function plus
+/// its subfunctions / nested functions), plus the shared source text they were
+/// parsed from (for diagnostics).
+#[derive(Debug, Default)]
+pub struct FileLocals {
+    /// File-private functions keyed by name.
+    pub funcs: HashMap<String, Arc<FunctionDef>>,
+    /// The source text shared by every function in the file.
+    pub src: Arc<String>,
+}
+
+impl FileLocals {
+    /// Look up a file-local function by name.
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<&Arc<FunctionDef>> {
+        self.funcs.get(name)
+    }
 }
 
 impl Function {
@@ -85,15 +109,12 @@ impl FunctionTable {
         );
     }
 
-    /// Register an interpreted `.m` function.
-    pub fn add_interpreted(&mut self, def: FunctionDef, src: Arc<String>) {
-        self.funcs.insert(
-            def.name.clone(),
-            Function::Interpreted {
-                def: Arc::new(def),
-                src,
-            },
-        );
+    /// Register an interpreted `.m` function with its file-local function set.
+    /// The source text is taken from `locals.src` (shared across the file).
+    pub fn add_interpreted(&mut self, def: Arc<FunctionDef>, locals: Arc<FileLocals>) {
+        let src = locals.src.clone();
+        self.funcs
+            .insert(def.name.clone(), Function::Interpreted { def, src, locals });
     }
 
     /// Look up a function by name.

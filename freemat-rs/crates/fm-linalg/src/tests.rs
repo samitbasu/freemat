@@ -84,9 +84,52 @@ fn lu_three_outputs() {
 
 #[test]
 fn qr_reconstructs() {
+    // 3x2 (m > n): full mode yields Q 3x3, R 3x2; Q*R == A.
     let a = mat(3, 2, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
-    let out = qr(&a, 2).unwrap();
+    let out = qr(&a, 2, false).unwrap();
+    assert_eq!(out[0].shape(), &[3, 3]);
+    assert_eq!(out[1].shape(), &[3, 2]);
     let prod = mtimes(&out[0], &out[1]).unwrap();
+    approx(&prod, &to_f64(&a));
+}
+
+#[test]
+fn qr_economy_dims() {
+    // 4x3 economy: Q 4x3, R 3x3, Q*R == A.
+    let a = mat(
+        4,
+        3,
+        &[1.0, 4.0, 7.0, 10.0, 2.0, 5.0, 8.0, 0.0, 3.0, 6.0, 9.0, 5.0],
+    );
+    let out = qr(&a, 2, true).unwrap();
+    assert_eq!(out[0].shape(), &[4, 3]);
+    assert_eq!(out[1].shape(), &[3, 3]);
+    let prod = mtimes(&out[0], &out[1]).unwrap();
+    approx(&prod, &to_f64(&a));
+}
+
+#[test]
+fn qr_pivoted_reconstructs() {
+    // [Q,R,E] = qr(A): A == Q*R*E' with E an n×n permutation matrix.
+    let a = mat(
+        4,
+        3,
+        &[1.0, 4.0, 7.0, 10.0, 2.0, 5.0, 8.0, 0.0, 3.0, 6.0, 9.0, 5.0],
+    );
+    let out = qr(&a, 3, false).unwrap();
+    assert_eq!(out[0].shape(), &[4, 4]);
+    assert_eq!(out[1].shape(), &[4, 3]);
+    assert_eq!(out[2].shape(), &[3, 3]);
+    let qr_ = mtimes(&out[0], &out[1]).unwrap();
+    // E' (transpose of the 3×3 permutation matrix).
+    let e = to_f64(&out[2]);
+    let mut et = vec![0.0; 9];
+    for i in 0..3 {
+        for j in 0..3 {
+            et[j + i * 3] = e[i + j * 3];
+        }
+    }
+    let prod = mtimes(&qr_, &mat(3, 3, &et)).unwrap();
     approx(&prod, &to_f64(&a));
 }
 

@@ -159,6 +159,47 @@ fn diag_builds_and_extracts() {
 }
 
 #[test]
+fn diag_with_offset() {
+    let mut i = interp();
+    // Extract the super-diagonal (k = 1) as a column vector.
+    i.run("b = diag([1,2,3,4;5,6,7,8;9,10,11,12], 1);").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("b").unwrap()),
+        vec![2.0, 7.0, 12.0]
+    );
+    // Extract the sub-diagonal (k = -1).
+    i.run("c = diag([1,2,3,4;5,6,7,8;9,10,11,12], -1);")
+        .unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("c").unwrap()),
+        vec![5.0, 10.0]
+    );
+    // Build a matrix placing a vector on the k = -1 diagonal.
+    i.run("m = diag([2,3], -1);").unwrap();
+    let m = i.context.lookup("m").unwrap();
+    assert_eq!(m.dims(), vec![3, 3]);
+    assert_eq!(
+        fm_interp::value::to_f64_vec(m),
+        // column-major of [0 0 0; 2 0 0; 0 3 0]
+        vec![0.0, 2.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0]
+    );
+}
+
+#[test]
+fn user_variable_shadows_builtin_constant() {
+    // `e`, `pi`, `eps`, … are functions in FreeMat: a local variable of that
+    // name shadows the constant (regression for `[q,r,e] = qr(a)` then using
+    // `e` as a permutation matrix).
+    let mut i = interp();
+    i.run("e = [1 2; 3 4]; x = e(2,2);").unwrap();
+    assert_eq!(i.context.lookup("x").unwrap().as_f64(), Some(4.0));
+    // Without a binding, `e` is still Euler's number.
+    i.run("clear e; y = e;").unwrap();
+    let y = i.context.lookup("y").unwrap().as_f64().unwrap();
+    assert!((y - std::f64::consts::E).abs() < 1e-12);
+}
+
+#[test]
 fn rand_in_range() {
     let mut i = interp();
     i.run("r = rand(10);").unwrap();

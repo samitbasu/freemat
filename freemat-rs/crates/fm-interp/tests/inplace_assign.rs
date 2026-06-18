@@ -41,6 +41,36 @@ fn cow_alias_not_disturbed_by_indexed_assign() {
     );
 }
 
+/// Linear-index assignment past the end of a **2-D matrix** must not panic.
+/// FreeMat flattens the matrix to a row vector and grows it (column-major
+/// order preserved); a single past-end index also grows the same way.
+#[test]
+fn linear_grow_past_end_of_matrix_flattens_to_row() {
+    // `a = [1 2;3 4]; a(7) = 9` → `1×7` row `[1 3 2 4 0 0 9]`.
+    let interp = common::run("a = [1 2;3 4]; a(7) = 9;");
+    let a = interp.context.lookup("a").unwrap().clone();
+    assert_eq!(
+        a.shape(),
+        &[1, 7],
+        "matrix flattens to a row on linear grow"
+    );
+    assert_eq!(
+        to_f64_vec(&a),
+        vec![1.0, 3.0, 2.0, 4.0, 0.0, 0.0, 9.0],
+        "column-major order preserved, gaps zero-filled"
+    );
+
+    // Multi-position past-end write (regression for the documented panic in
+    // sparse `a(p) = v` with `max(p) > numel(a)`).
+    let interp = common::run("a = [1,0,3;6,2,3]; a([3;4;9]) = [4,6,3];");
+    let a = interp.context.lookup("a").unwrap().clone();
+    assert_eq!(a.shape(), &[1, 9]);
+    assert_eq!(
+        to_f64_vec(&a),
+        vec![1.0, 6.0, 4.0, 6.0, 3.0, 3.0, 0.0, 0.0, 3.0],
+    );
+}
+
 /// COW must also hold across many writes (the loop case): only the *first*
 /// write after aliasing copies; subsequent writes mutate the now-unshared copy.
 #[test]

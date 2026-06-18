@@ -45,6 +45,26 @@ fn persistent_retains_across_calls() {
 }
 
 #[test]
+fn subfunctions_are_file_local() {
+    // A subfunction (a second top-level `function` in a file) is private to its
+    // file: callable from the main function, but it must NOT leak into the
+    // global table and clobber an identically named function from another file.
+    let mut i = Interpreter::new();
+    // File A: a public `helper/1` plus a private subfunction `priv` that
+    // returns 1.
+    i.define_source("function y = useA()\n  y = priv();\nfunction z = priv()\n  z = 1;\n")
+        .unwrap();
+    // File B: a different `priv` returning 2.
+    i.define_source("function y = useB()\n  y = priv();\nfunction z = priv()\n  z = 2;\n")
+        .unwrap();
+    i.run("a = useA(); b = useB();").unwrap();
+    assert_eq!(i.context.lookup("a").unwrap().as_f64(), Some(1.0));
+    assert_eq!(i.context.lookup("b").unwrap().as_f64(), Some(2.0));
+    // The private `priv` is not visible at the top level.
+    assert!(!i.functions.contains("priv"));
+}
+
+#[test]
 fn multi_return_assignment() {
     let mut i = Interpreter::new();
     i.define_source("function [a, b] = swap(x, y)\n  a = y;\n  b = x;\n")

@@ -104,7 +104,9 @@ fn b_lu(_i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>
 
 fn b_qr(_i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
     need(args, 1, "qr")?;
-    fm_linalg::qr(&args[0], nargout).map_err(wrap)
+    // `qr(a, 0)` requests the economy (compact) decomposition.
+    let economy = args.get(1).and_then(Array::as_f64) == Some(0.0);
+    fm_linalg::qr(&args[0], nargout, economy).map_err(wrap)
 }
 
 fn b_chol(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {

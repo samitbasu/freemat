@@ -364,29 +364,83 @@ pub fn lu(a: &Array, nargout: usize) -> Result<Vec<Array>> {
     }
 }
 
-/// QR factorization. Returns `[Q, R]` (full Q) for 2 outputs, else `R`.
+/// QR factorization, matching FreeMat's `QRDFunction` semantics.
+///
+/// - `nargout < 3`: unpivoted QR. With `economy` (`qr(a,0)`) — or whenever
+///   `m <= n` — returns the *compact* factors: `Q` is `m×k`, `R` is `k×n`
+///   (`k = min(m,n)`). Otherwise returns the *full* factors: `Q` is `m×m`,
+///   `R` is `m×n`. With `nargout < 2` only `R` is returned.
+/// - `nargout == 3`: column-pivoted QR, returning `[Q, R, E]`. `E` is the
+///   permutation **row vector** (`1×n`) in economy/compact mode, or the
+///   permutation **matrix** (`n×n`) otherwise, so that `A*E == Q*R`
+///   (vector form) / `A == Q*R*E'` (matrix form).
 ///
 /// # Errors
 /// Returns [`LinalgError`] if the input is not a 2-D matrix.
-pub fn qr(a: &Array, nargout: usize) -> Result<Vec<Array>> {
+pub fn qr(a: &Array, nargout: usize, economy: bool) -> Result<Vec<Array>> {
     let am = MatData::from_array(a)?;
     let (m, n) = (am.rows, am.cols);
-    let factor = am.view().qr();
-    let q = factor.compute_Q();
-    let r = factor.R();
     let complex = am.complex;
-    // MATLAB's `qr` returns a full `m x n` upper-triangular R; faer's `R()` may
-    // be `min(m,n) x n`. Pad with zero rows so `Q*R == A` holds with full Q.
-    let rr = r.nrows();
-    let mut rdata = vec![c64::new(0.0, 0.0); m * n];
+    let k = m.min(n);
+
+    if nargout == 3 {
+        // Column-pivoted QR: A * P == Q * R (faer's convention).
+        let factor = am.view().col_piv_qr();
+        let perm = factor.P().arrays().0; // forward permutation (length n)
+        // Compact saving iff economy mode (matches FreeMat's `compactSav`).
+        let (q, r_full) = if economy {
+            (factor.compute_thin_Q(), false)
+        } else {
+            (factor.compute_Q(), true)
+        };
+        let q_arr = mat_arr(q.as_ref(), complex);
+        let r = factor.R();
+        let (r_rows, r_cols) = if economy { (k, n) } else { (m, n) };
+        let mut rdata = vec![c64::new(0.0, 0.0); r_rows * r_cols];
+        for j in 0..n {
+            for i in 0..r.nrows().min(r_rows) {
+                rdata[i + j * r_rows] = r[(i, j)];
+            }
+        }
+        let r_arr = finish(r_rows, r_cols, rdata, complex);
+        // Permutation output: `perm[j]` is the original column placed in
+        // position `j`. FreeMat's `e` row vector holds, for each output column,
+        // the source column index (1-based).
+        let e_arr = if r_full {
+            // n×n permutation matrix E with E(perm[j]+1, j+1) = 1.
+            let mut pdata = vec![0.0f64; n * n];
+            for (j, &src) in perm.iter().enumerate() {
+                pdata[src + j * n] = 1.0;
+            }
+            build_real(n, n, pdata)
+        } else {
+            let pvec: Vec<f64> = perm.iter().map(|&p| (p + 1) as f64).collect();
+            build_real(1, n, pvec)
+        };
+        return Ok(vec![q_arr, r_arr, e_arr]);
+    }
+
+    // Unpivoted QR. FreeMat uses the full factors only when `m > n` and full
+    // mode was requested; otherwise it falls back to the compact decomposition.
+    let factor = am.view().qr();
+    let full = !economy && m > n;
+    let (q, q_cols) = if full {
+        (factor.compute_Q(), m)
+    } else {
+        (factor.compute_thin_Q(), k)
+    };
+    let r = factor.R();
+    let r_rows = if full { m } else { k };
+    let mut rdata = vec![c64::new(0.0, 0.0); r_rows * n];
     for j in 0..n {
-        for i in 0..rr {
-            rdata[i + j * m] = r[(i, j)];
+        for i in 0..r.nrows().min(r_rows) {
+            rdata[i + j * r_rows] = r[(i, j)];
         }
     }
-    let r_arr = finish(m, n, rdata, complex);
+    let r_arr = finish(r_rows, n, rdata, complex);
     if nargout >= 2 {
-        Ok(vec![mat_arr(q.as_ref(), complex), r_arr])
+        let q_arr = mat_arr(q.as_ref().subcols(0, q_cols), complex);
+        Ok(vec![q_arr, r_arr])
     } else {
         Ok(vec![r_arr])
     }

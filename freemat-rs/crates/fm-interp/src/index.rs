@@ -228,16 +228,20 @@ fn linear_result_dims(dims: &[usize], v: &Array) -> Dims {
     }
 }
 
-/// Grow a shape so a linear position `max-1` fits (only vectors grow linearly).
+/// Grow a shape so a linear position `max-1` fits.
+///
+/// Mirrors FreeMat's `BasicArray::resize(index_t)`: an empty/scalar target or a
+/// row vector grows to a `1×needed` row; a column vector grows to `needed×1`;
+/// and a **non-vector** matrix is *flattened to a row vector* `1×needed` (the
+/// existing elements keep their column-major order). This is why
+/// `a = [1 2;3 4]; a(7) = 9` yields a `1×7` row in FreeMat (not an error).
 fn grow_linear_dims(dims: &[usize], needed: usize) -> Dims {
-    if dims.len() == 2 && dims[0] <= 1 {
-        SmallVec::from_slice(&[1, needed])
-    } else if dims.len() == 2 && dims[1] == 1 {
+    if dims.len() == 2 && dims[1] == 1 && dims[0] > 1 {
+        // Column vector grows downward.
         SmallVec::from_slice(&[needed, 1])
     } else {
-        // Growing a non-vector by linear index is disallowed in MATLAB; we keep
-        // dims and let the caller error if a position is out of range.
-        Dims::from_slice(dims)
+        // Row vector, empty/scalar, or any matrix flattened to a row.
+        SmallVec::from_slice(&[1, needed])
     }
 }
 
