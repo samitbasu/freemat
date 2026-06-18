@@ -788,22 +788,35 @@ impl Interpreter {
         stop: &Expr,
         src: &str,
     ) -> Flow<Array> {
-        let s = self
-            .eval(start, src)?
+        let sa = self.eval(start, src)?;
+        let ea = self.eval(stop, src)?;
+        let sta = match step {
+            Some(expr) => Some(self.eval(expr, src)?),
+            None => None,
+        };
+        let s = sa
             .as_f64()
             .ok_or_else(|| Signal::Error(InterpError::msg("range start must be a scalar")))?;
-        let e = self
-            .eval(stop, src)?
+        let e = ea
             .as_f64()
             .ok_or_else(|| Signal::Error(InterpError::msg("range stop must be a scalar")))?;
-        let st = match step {
-            Some(expr) => self
-                .eval(expr, src)?
+        let st = match &sta {
+            Some(v) => v
                 .as_f64()
                 .ok_or_else(|| Signal::Error(InterpError::msg("range step must be a scalar")))?,
             None => 1.0,
         };
-        Ok(build_range(s, st, e))
+        let range = build_range(s, st, e);
+        // FreeMat: if any endpoint/step is `single`, the range is `single`
+        // (`RangeConstructor(...).toClass(Float)`).
+        let any_single = sa.class() == DataClass::Float
+            || ea.class() == DataClass::Float
+            || sta.as_ref().is_some_and(|v| v.class() == DataClass::Float);
+        if any_single && range.class() == DataClass::Double {
+            let data = value::to_f64_vec(&range);
+            return Ok(value::build_real(DataClass::Float, &range.dims(), data));
+        }
+        Ok(range)
     }
 
     /// Paren-indexing: variable index (read) or a function call.
@@ -1240,6 +1253,7 @@ fn columns_of(v: &Array) -> Vec<Array> {
             needed_dims: needed_dims.clone(),
             linear: positions,
             deleted_axis: None,
+            linear_grow: false,
         };
         out.push(index::gather(v, &plan).unwrap_or_else(|_| v.clone()));
     }
@@ -1307,6 +1321,7 @@ fn transpose(v: &Array, conjugate: bool) -> Flow<Array> {
         needed_dims: SmallVec::from_slice(&[c, r]),
         linear,
         deleted_axis: None,
+        linear_grow: false,
     };
     let mut out = index::gather(v, &plan)?;
     if conjugate && out.is_complex() {

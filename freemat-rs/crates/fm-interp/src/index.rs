@@ -37,6 +37,10 @@ pub struct IndexPlan {
     /// `x(:, j)`), the axis (0 = rows, 1 = cols) the index selects. Used by
     /// `x(i,:) = []` row/column deletion to know which dimension to collapse.
     pub deleted_axis: Option<usize>,
+    /// True for a **linear** (single-subscript) plan. On a growing scatter the
+    /// existing data is appended in flat column-major order rather than remapped
+    /// by N-D coordinate (FreeMat flattens a matrix to a row before growing it).
+    pub linear_grow: bool,
 }
 
 /// A single index argument, already evaluated to a value (or the magic colon).
@@ -127,6 +131,7 @@ fn plan_scalar(dims: &[usize], args: &[IndexArg]) -> Option<IndexPlan> {
         result_dims: SmallVec::from_slice(&[1, 1]),
         needed_dims: needed,
         deleted_axis: None,
+        linear_grow: false,
     })
 }
 
@@ -187,6 +192,7 @@ fn plan_linear(
                     needed_dims: SmallVec::from_slice(&[k, 1]),
                     linear,
                     deleted_axis: None,
+                    linear_grow: true,
                 });
             }
             let linear: Linear = (0..total).collect();
@@ -195,6 +201,7 @@ fn plan_linear(
                 needed_dims: Dims::from_slice(dims),
                 linear,
                 deleted_axis: None,
+                linear_grow: true,
             })
         }
         IndexArg::Value(v) => {
@@ -218,6 +225,7 @@ fn plan_linear(
                     linear,
                     result_dims,
                     deleted_axis: None,
+                    linear_grow: true,
                 })
             } else {
                 let idx = to_f64_vec(v);
@@ -236,6 +244,7 @@ fn plan_linear(
                     result_dims,
                     needed_dims,
                     deleted_axis: None,
+                    linear_grow: true,
                 })
             }
         }
@@ -360,6 +369,7 @@ fn plan_subscript(
         result_dims: squeeze_result(result_dims),
         needed_dims,
         deleted_axis,
+        linear_grow: false,
     })
 }
 
@@ -746,13 +756,23 @@ pub fn scatter(base: &Array, plan: &IndexPlan, rhs: &Array) -> Flow<Array> {
         }
     };
 
+    // When growth changes the *shape* (not just appends), existing elements must
+    // be re-laid-out from the old strides into the new ones: column-major linear
+    // positions differ once an earlier dimension's extent changes (e.g. growing
+    // a 2×2 to 3×3, the element at old-(1,1)=lin 3 moves to new-(1,1)=lin 4).
+    let base_dims = base.dims();
+    // A *subscript* grow that changes the shape must re-lay-out existing data
+    // under the new strides; a *linear* grow appends in flat column-major order
+    // (the matrix is flattened to a row first), so it never remaps.
+    let remap = !plan.linear_grow && needed_dims.as_slice() != base_dims.as_slice();
+
     if class == DataClass::Char {
-        let mut flat: Vec<char> = match base {
+        let src: Vec<char> = match base {
             Array::Char(d) => crate::value::mem_order(d),
             Array::Scalar(ScalarValue::Char(c)) => vec![*c],
             _ => vec!['\u{0}'; base.numel()],
         };
-        flat.resize(needed.max(flat.len()), '\u{0}');
+        let mut flat = relayout(src, &base_dims, &needed_dims, needed, '\u{0}', remap);
         for (i, &p) in plan.linear.iter().enumerate() {
             flat[p] = char::from_u32(take(i)? as u32).unwrap_or('\u{fffd}');
         }
@@ -760,8 +780,15 @@ pub fn scatter(base: &Array, plan: &IndexPlan, rhs: &Array) -> Flow<Array> {
     }
 
     if class == DataClass::Double && (base.is_complex() || rhs.is_complex()) {
-        let mut flat = crate::value::to_c64_vec(base);
-        flat.resize(needed.max(flat.len()), C64::new(0.0, 0.0));
+        let src = crate::value::to_c64_vec(base);
+        let mut flat = relayout(
+            src,
+            &base_dims,
+            &needed_dims,
+            needed,
+            C64::new(0.0, 0.0),
+            remap,
+        );
         let rc = crate::value::to_c64_vec(rhs);
         for (i, &p) in plan.linear.iter().enumerate() {
             let val = if rc.len() == 1 { rc[0] } else { rc[i] };
@@ -770,12 +797,51 @@ pub fn scatter(base: &Array, plan: &IndexPlan, rhs: &Array) -> Flow<Array> {
         return Ok(crate::value::build_complex(&needed_dims, flat));
     }
 
-    let mut flat = to_f64_vec(base);
-    flat.resize(needed.max(flat.len()), 0.0);
+    let src = to_f64_vec(base);
+    let mut flat = relayout(src, &base_dims, &needed_dims, needed, 0.0, remap);
     for (i, &p) in plan.linear.iter().enumerate() {
         flat[p] = take(i)?;
     }
     Ok(crate::value::build_real(class, &needed_dims, flat))
+}
+
+/// Re-lay-out `src` (column-major in `old_dims`) into a buffer of length
+/// `new_len` (column-major in `new_dims`), filling unset positions with `fill`.
+/// When `remap` is false the data is simply resized (append-only growth), which
+/// preserves the column-major order; when true each source element is placed at
+/// its remapped coordinate so a change in an earlier dimension's extent doesn't
+/// corrupt the layout.
+fn relayout<T: Clone>(
+    src: Vec<T>,
+    old_dims: &[usize],
+    new_dims: &[usize],
+    new_len: usize,
+    fill: T,
+    remap: bool,
+) -> Vec<T> {
+    if !remap {
+        let mut flat = src;
+        flat.resize(new_len.max(flat.len()), fill);
+        return flat;
+    }
+    let mut flat = vec![fill; new_len];
+    let old_str = strides(old_dims);
+    let new_str = strides(new_dims);
+    for (lin, v) in src.into_iter().enumerate() {
+        // Decompose `lin` into coordinates against the old strides, then
+        // recompose against the new strides.
+        let mut rem = lin;
+        let mut pos = 0usize;
+        for d in (0..old_dims.len()).rev() {
+            let coord = rem / old_str[d];
+            rem %= old_str[d];
+            pos += coord * new_str.get(d).copied().unwrap_or(0);
+        }
+        if pos < flat.len() {
+            flat[pos] = v;
+        }
+    }
+    flat
 }
 
 /// Scatter into / grow a cell array via paren-assignment (`c(i) = {..}`), where

@@ -86,6 +86,25 @@ fn subscript_assign_grow() {
 }
 
 #[test]
+fn subscript_grow_relays_out_existing_data() {
+    // Growing a 2x2 to 3x3 must keep existing elements at their (row,col)
+    // positions, re-laid-out under the new column-major strides (regression:
+    // the old data was appended without remapping, corrupting the layout).
+    let v = run_var("a = [1 0; 0 2]; a(3,3) = 3;", "a");
+    assert_eq!(v.dims(), vec![3, 3]);
+    assert_eq!(
+        common::run_vec("a = [1 0; 0 2]; a(3,3) = 3;", "a"),
+        // column-major of diag(1,2,3)
+        vec![1.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 3.0]
+    );
+    // Building a diagonal incrementally from a scalar also works.
+    assert_eq!(
+        common::run_vec("a = 0; for i = 1:3; a(i,i) = i; end", "a"),
+        vec![1.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 3.0]
+    );
+}
+
+#[test]
 fn logical_assign() {
     // v(v>2) = 0
     assert_eq!(

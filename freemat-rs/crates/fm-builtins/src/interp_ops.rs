@@ -49,46 +49,55 @@ fn b_eval(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array
 
 /// `evalin(context, expr)` — we treat the context name (`'base'`/`'caller'`) as
 /// a no-op and evaluate in the current scope (sufficient for the test corpus).
-fn b_evalin(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+fn b_evalin(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
     need(args, 2, "evalin")?;
     let context = args[0].as_string().unwrap_or_default();
     let src = args[1]
         .as_string()
         .ok_or_else(|| Signal::Error(InterpError::msg("evalin: expression must be a string")))?;
-    // `evalin('caller', expr)` runs `expr` in the *caller's* scope. The builtin
-    // executes without its own frame, so the current top scope belongs to the
-    // function that called `evalin`; popping it makes the caller the top scope.
-    // `'base'` is the top-level scope; we approximate it with 'caller' since the
-    // corpus only exercises the single-level case.
-    let primary = run_in_caller_scope(i, &context, |i| {
+    // `evalin('caller'/'base', expr)` runs `expr` in the caller's / base scope
+    // (see `run_in_scope`). When an output is requested, the trimmed source is
+    // evaluated as a bare expression and its value returned (mirroring `eval`).
+    run_in_scope(i, &context, |i| {
+        if nargout >= 1
+            && let Ok(expr) = fm_parser::parse_expression(src.trim_end_matches([';', ' ', '\n']))
+        {
+            return i.eval_multi(&expr, nargout, &src);
+        }
         let res = run_source(i, &src);
-        // `evalin('caller', expr, catch_expr)`: run the catch expression on error.
+        // `evalin(ctx, expr, catch_expr)`: run the catch expression on error.
         if res.is_err()
             && let Some(catch) = args.get(2).and_then(Array::as_string)
         {
-            return run_source(i, &catch);
+            run_source(i, &catch)?;
+            return Ok(vec![]);
         }
-        res
-    });
-    primary?;
-    Ok(vec![])
+        res.map(|()| vec![])
+    })
 }
 
-/// Run `f` with the call frame switched to the `'caller'`/`'base'` scope, then
-/// restore. For `'caller'`, the current executing frame (the function that
-/// invoked the calling builtin) is temporarily popped so the *caller* becomes
-/// the top scope. Any other context string runs in the current scope.
-fn run_in_caller_scope<F, R>(i: &mut Interpreter, context: &str, f: F) -> Flow<R>
+/// Run `f` with the call frame switched to the named scope, then restore the
+/// popped frames. `'caller'` pops the current executing frame (the function
+/// that invoked the calling builtin) so the *caller* becomes the top scope;
+/// `'base'` pops down to the base (top-level) scope. Any other context string
+/// runs in the current scope.
+fn run_in_scope<F, R>(i: &mut Interpreter, context: &str, f: F) -> Flow<R>
 where
     F: FnOnce(&mut Interpreter) -> Flow<R>,
 {
-    let switch = (context == "caller" || context == "base") && i.context.depth() > 1;
-    if !switch {
-        return f(i);
+    let pop = match context {
+        "caller" if i.context.depth() > 1 => 1,
+        "base" => i.context.depth().saturating_sub(1),
+        _ => 0,
+    };
+    let mut saved = Vec::with_capacity(pop);
+    for _ in 0..pop {
+        if let Some(s) = i.context.pop_scope() {
+            saved.push(s);
+        }
     }
-    let saved = i.context.pop_scope();
     let out = f(i);
-    if let Some(scope) = saved {
+    while let Some(scope) = saved.pop() {
         i.context.restore_scope(scope);
     }
     out
@@ -186,8 +195,8 @@ fn b_assignin(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>
         .as_string()
         .ok_or_else(|| Signal::Error(InterpError::msg("assignin: name must be a string")))?;
     let value = args[2].clone();
-    // `assignin('caller', name, value)` binds in the caller's scope.
-    run_in_caller_scope(i, &context, |i| {
+    // `assignin('caller'/'base', name, value)` binds in the caller / base scope.
+    run_in_scope(i, &context, |i| {
         i.context.assign(&name, value);
         Ok(())
     })?;
