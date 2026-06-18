@@ -186,6 +186,36 @@ fn diag_with_offset() {
 }
 
 #[test]
+fn float_double_casts_preserve_complex() {
+    // `double`/`single`/`float`/`complex`/`dcomplex` of a complex value must
+    // keep the imaginary part (regression: the casts took the real part only).
+    let mut i = interp();
+    for (expr, want_class) in [
+        ("double(2+3i)", "double"),
+        ("single(2+3i)", "single"),
+        ("float(2+3i)", "single"),
+        ("complex(2+3i)", "single"),
+        ("dcomplex(2+3i)", "double"),
+    ] {
+        i.run(&format!("z = {expr}; im = imag(z); t = typeof(z);"))
+            .unwrap();
+        assert_eq!(
+            i.context.lookup("im").unwrap().as_f64(),
+            Some(3.0),
+            "imag part dropped by {expr}"
+        );
+        assert_eq!(
+            i.context.lookup("t").unwrap().as_string().as_deref(),
+            Some(want_class),
+            "wrong class for {expr}"
+        );
+    }
+    // Integer cast of a complex takes the real part only (no imag).
+    i.run("zi = int32(2+3i); imi = imag(zi);").unwrap();
+    assert_eq!(i.context.lookup("imi").unwrap().as_f64(), Some(0.0));
+}
+
+#[test]
 fn typeof_ignores_complexity_and_single_dominates() {
     let mut i = interp();
     // `typeof` is FreeMat's `className`: complexity is a flag, not a class.

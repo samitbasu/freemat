@@ -5,7 +5,7 @@
 
 use fm_core::{Array, C64, DataClass};
 use fm_interp::error::Flow;
-use fm_interp::value::{build_complex, to_c64_vec, to_f64_vec};
+use fm_interp::value::{to_c64_vec, to_f64_vec};
 use fm_interp::{FunctionTable, Interpreter};
 
 use crate::util::need;
@@ -78,8 +78,18 @@ fn b_typeof(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>>
 
 fn cast_single(args: &[Array]) -> Flow<Vec<Array>> {
     need(args, 1, "float")?;
-    let dims = args[0].dims();
-    let data = to_f64_vec(&args[0]);
+    let a = &args[0];
+    let dims = a.dims();
+    // `float`/`single` preserves complexity (yielding a complex single array).
+    if a.is_complex() {
+        let data = fm_interp::value::to_c64_vec(a);
+        return Ok(vec![fm_interp::value::build_complex_class(
+            DataClass::Float,
+            &dims,
+            data,
+        )]);
+    }
+    let data = to_f64_vec(a);
     Ok(vec![fm_interp::value::build_real(
         DataClass::Float,
         &dims,
@@ -97,8 +107,37 @@ fn b_dcomplex(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array
     make_complex(args, false)
 }
 
-fn make_complex(args: &[Array], _single: bool) -> Flow<Vec<Array>> {
+fn make_complex(args: &[Array], single: bool) -> Flow<Vec<Array>> {
     need(args, 1, "complex")?;
+    let class = if single {
+        DataClass::Float
+    } else {
+        DataClass::Double
+    };
+    // Single-argument form: cast to the target complex width, *preserving* the
+    // input's imaginary part (FreeMat: `complex(x)` returns `x`; `dcomplex(x)`
+    // is `x.toClass(Double)`). The general real+imag build path below would drop
+    // the imaginary component of an already-complex input.
+    if args.len() == 1 {
+        let data = fm_interp::value::to_c64_vec(&args[0]);
+        let dims = args[0].dims();
+        let n: usize = dims.iter().product();
+        if data.iter().all(|c| c.im == 0.0) && n == 1 {
+            // Keep a complex scalar (FreeMat's `complex`/`dcomplex` always yield
+            // a complex array even when the imaginary part is zero).
+            return Ok(vec![if single {
+                Array::Scalar(fm_core::ScalarValue::Complex32(fm_core::C32::new(
+                    data[0].re as f32,
+                    0.0,
+                )))
+            } else {
+                Array::complex64(data[0])
+            }]);
+        }
+        return Ok(vec![fm_interp::value::build_complex_class(
+            class, &dims, data,
+        )]);
+    }
     let re = to_f64_vec(&args[0]);
     let im = if args.len() >= 2 {
         to_f64_vec(&args[1])
@@ -121,9 +160,18 @@ fn make_complex(args: &[Array], _single: bool) -> Flow<Vec<Array>> {
     // Force a complex result even when the imaginary part is zero (FreeMat's
     // `complex` always yields a complex array), so re-narrow only if it matters.
     if data.iter().all(|c| c.im == 0.0) && n == 1 {
-        return Ok(vec![Array::complex64(data[0])]);
+        return Ok(vec![if single {
+            Array::Scalar(fm_core::ScalarValue::Complex32(fm_core::C32::new(
+                data[0].re as f32,
+                0.0,
+            )))
+        } else {
+            Array::complex64(data[0])
+        }]);
     }
-    Ok(vec![build_complex(&dims, data)])
+    Ok(vec![fm_interp::value::build_complex_class(
+        class, &dims, data,
+    )])
 }
 
 /// `strcmp(a, b)` — string equality (case-insensitive for `strcmpi`).

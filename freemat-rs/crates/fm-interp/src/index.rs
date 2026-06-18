@@ -474,6 +474,22 @@ fn gather_unchecked(base: &Array, linear: &[usize], result_dims: &[usize]) -> Ar
         Array::Bool(d) => gather_dense!(d, Array::bool_matrix),
         Array::Int32(d) => gather_dense!(d, Array::int32_matrix),
         Array::Complex64(d) => gather_dense!(d, Array::complex64_matrix),
+        // Complex single: gather the `C32` values directly so the imaginary
+        // part and the single width are preserved (the generic `to_f64_vec`
+        // fallback would drop the imaginary part).
+        Array::Complex32(d) => {
+            let data: Vec<fm_core::C32> = if let Some(flat) = d.as_slice_memory_order() {
+                linear.iter().map(|&i| flat[i]).collect()
+            } else {
+                let flat = crate::value::mem_order(d);
+                linear.iter().map(|&i| flat[i]).collect()
+            };
+            let c64: Vec<fm_core::C64> = data
+                .iter()
+                .map(|c| fm_core::C64::new(c.re as f64, c.im as f64))
+                .collect();
+            crate::value::build_complex_class(DataClass::Float, result_dims, c64)
+        }
         Array::Char(d) => {
             let data: Vec<char> = if let Some(flat) = d.as_slice_memory_order() {
                 linear.iter().map(|&i| flat[i]).collect()
@@ -515,14 +531,16 @@ fn gather_unchecked(base: &Array, linear: &[usize], result_dims: &[usize]) -> Ar
                         fm_core::C64::new(re, im)
                     })
                     .collect();
-                crate::value::build_complex(result_dims, data)
+                // Preserve the stored complex width (single vs double).
+                crate::value::build_complex_class(s.class(), result_dims, data)
             } else {
                 let data: Vec<f64> = linear.iter().map(|&i| s.get_linear(i).0).collect();
                 crate::value::build_real(s.class(), result_dims, data)
             }
         }
-        // Other integer/complex32 classes: route through f64 (loses nothing for
-        // integers; complex32 handled via the dedicated arm above for c64).
+        // Remaining real integer classes (Int8/UInt8/Int16/UInt16/UInt32/
+        // Int64/UInt64): route through f64 — lossless for integers, and the
+        // class is preserved via `build_real`.
         _ => {
             let flat = to_f64_vec(base);
             let data: Vec<f64> = linear.iter().map(|&i| flat[i]).collect();

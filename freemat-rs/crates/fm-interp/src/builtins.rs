@@ -59,8 +59,16 @@ pub fn register_defaults(table: &mut FunctionTable) {
 /// Cast every element of `args[0]` to `class`.
 fn cast(args: &[Array], class: DataClass, name: &str) -> Flow<Vec<Array>> {
     need(args, 1, name)?;
-    let dims = args[0].dims();
-    let data = crate::value::to_f64_vec(&args[0]);
+    let a = &args[0];
+    let dims = a.dims();
+    // `double`/`single` of a complex array preserve complexity (FreeMat's
+    // `toClass(Double/Float)` keeps the complex flag); integer/logical/char
+    // casts take the real part only.
+    if a.is_complex() && matches!(class, DataClass::Double | DataClass::Float) {
+        let data = crate::value::to_c64_vec(a);
+        return Ok(vec![crate::value::build_complex_class(class, &dims, data)]);
+    }
+    let data = crate::value::to_f64_vec(a);
     Ok(vec![crate::value::build_real(class, &dims, data)])
 }
 

@@ -173,3 +173,17 @@ fn struct_array_grow_assign() {
     // g(3).foo = 3 grows a struct array; g(1) = [] deletes an element.
     assert_eq!(eval_f64("g(3).foo = 3; g(1) = []; g(2).foo"), 3.0);
 }
+
+#[test]
+fn complex_single_multi_gather_keeps_imaginary() {
+    // Multi-element gather from a dense complex *single* array must preserve the
+    // imaginary part and the single class (regression: the gather fell through
+    // to a real-only fast path that dropped the imaginary component).
+    let v = run_var("v = single([1+2i, 3+4i, 5+6i]); w = v([1 3]);", "w");
+    assert!(v.is_complex(), "gathered complex single must stay complex");
+    assert_eq!(v.class_name(), "single");
+    let c = fm_interp::value::to_c64_vec(&v);
+    assert_eq!(c.len(), 2);
+    assert_eq!((c[0].re, c[0].im), (1.0, 2.0));
+    assert_eq!((c[1].re, c[1].im), (5.0, 6.0));
+}
