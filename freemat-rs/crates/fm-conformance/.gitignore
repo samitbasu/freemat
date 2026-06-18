@@ -1,0 +1,6 @@
+# Scratch files emitted by save/load/file-I/O conformance .m tests when run
+# with the crate dir as cwd. Anchored to the crate root so real fixtures in
+# subdirectories are never ignored.
+/tmp.mat
+/test_load1.txt
+/test.csv
