@@ -470,6 +470,13 @@ impl Interpreter {
         };
         let (name, current) = self.lvalue_base(base, src)?;
         let plan = self.plan_for(&current, args, src)?;
+        // FreeMat's `SetCellContents` errors when there are fewer right-hand
+        // values than indexed cells (`[a{1:2,1:2}] = f` with `f` returning 3).
+        if values.len() < plan.linear.len() {
+            return Err(Signal::Error(InterpError::msg(
+                "not enough right-hand side values to satisfy the indexed cell assignment",
+            )));
+        }
         let updated = index::scatter_cell_contents_multi(&current, &plan, values)?;
         self.store_lvalue(base, updated, src)?;
         Ok(name)

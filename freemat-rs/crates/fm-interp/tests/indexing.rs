@@ -234,3 +234,15 @@ fn field_assign_on_struct_array_errors() {
         "scalar field assign across struct array must error"
     );
 }
+
+#[test]
+fn cell_content_multi_assign_undercount_errors() {
+    // `[c{1:4}] = f` where `f` yields fewer than four values is an error
+    // (FreeMat's SetCellContents "not enough right hand side values").
+    use fm_interp::Interpreter;
+    let mut i = Interpreter::new();
+    i.define_source("function [a,b,c] = three()\n  a=1; b=2; c=3;\n")
+        .unwrap();
+    let r = i.run("d = {0,0,0,0}; [d{1:4}] = three();");
+    assert!(r.is_err(), "under-supplied cell-content assign must error");
+}
