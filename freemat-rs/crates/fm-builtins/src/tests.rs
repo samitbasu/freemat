@@ -1269,3 +1269,29 @@ fn isset_requires_nonempty() {
     assert_eq!(i.context.lookup("r2").unwrap().as_f64(), Some(0.0));
     assert_eq!(i.context.lookup("r3").unwrap().as_f64(), Some(1.0));
 }
+
+#[test]
+fn evalin_assignin_target_caller_scope() {
+    // `assignin('caller', ...)` operates on the caller's scope (here `outer`),
+    // not the helper subfunction's frame.
+    let mut i = interp();
+    i.define_source(
+        "function y = outer()\n  y = 0;\n  helper();\nfunction helper()\n  assignin('caller','y',7);\n",
+    )
+    .unwrap();
+    i.run("r = outer();").unwrap();
+    assert_eq!(i.context.lookup("r").unwrap().as_f64(), Some(7.0));
+}
+
+#[test]
+fn builtin_bypasses_user_shadow() {
+    // `builtin('abs', x)` calls the native abs even when a same-named user
+    // function shadows it.
+    let mut i = interp();
+    i.define_source(
+        "function y = test_abs()\n  y = builtin('abs', -3);\nfunction y = abs(x)\n  y = x;\n",
+    )
+    .unwrap();
+    i.run("r = test_abs();").unwrap();
+    assert_eq!(i.context.lookup("r").unwrap().as_f64(), Some(3.0));
+}

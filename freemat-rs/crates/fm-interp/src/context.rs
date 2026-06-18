@@ -66,6 +66,14 @@ impl Context {
         s
     }
 
+    /// Push a previously-popped frame back onto the call stack (used to restore
+    /// the executing frame after `evalin`/`assignin('caller', …)` temporarily
+    /// pops it to run in the caller's scope).
+    pub fn restore_scope(&mut self, scope: Scope) {
+        self.scopes.push(scope);
+        self.active = self.scopes.len() - 1;
+    }
+
     /// The number of frames on the call stack (including the base scope).
     #[must_use]
     pub fn depth(&self) -> usize {

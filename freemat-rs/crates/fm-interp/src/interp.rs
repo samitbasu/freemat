@@ -1010,6 +1010,19 @@ impl Interpreter {
         }
     }
 
+    /// Call the **built-in** named `name`, bypassing any user-defined function
+    /// or file-local subfunction of the same name. This is what FreeMat's
+    /// `builtin('name', …)` does — it ignores overloads/shadows and invokes the
+    /// native implementation. Errors if `name` is not a registered builtin.
+    pub fn call_builtin(&mut self, name: &str, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
+        match self.functions.get(name).cloned() {
+            Some(Function::Builtin { func, .. }) => func(self, args, nargout.max(1)),
+            _ => Err(Signal::Error(InterpError::msg(format!(
+                "builtin: '{name}' is not a built-in function"
+            )))),
+        }
+    }
+
     /// Run an interpreted `.m` function: bind inputs, execute, collect outputs.
     /// `locals` is the file-local function table that becomes active for the
     /// duration of the call (so sibling subfunctions resolve).

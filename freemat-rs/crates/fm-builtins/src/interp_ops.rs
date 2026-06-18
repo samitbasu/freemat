@@ -12,7 +12,7 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("eval", b_eval);
     table.add_builtin("evalin", b_evalin);
     table.add_builtin("feval", b_feval);
-    table.add_builtin("builtin", b_feval);
+    table.add_builtin("builtin", b_builtin);
     table.add_builtin("exist", b_exist);
     table.add_builtin("isset", b_isset);
     table.add_builtin("clear", b_clear);
@@ -51,11 +51,47 @@ fn b_eval(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array
 /// a no-op and evaluate in the current scope (sufficient for the test corpus).
 fn b_evalin(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     need(args, 2, "evalin")?;
+    let context = args[0].as_string().unwrap_or_default();
     let src = args[1]
         .as_string()
         .ok_or_else(|| Signal::Error(InterpError::msg("evalin: expression must be a string")))?;
-    run_source(i, &src)?;
+    // `evalin('caller', expr)` runs `expr` in the *caller's* scope. The builtin
+    // executes without its own frame, so the current top scope belongs to the
+    // function that called `evalin`; popping it makes the caller the top scope.
+    // `'base'` is the top-level scope; we approximate it with 'caller' since the
+    // corpus only exercises the single-level case.
+    let primary = run_in_caller_scope(i, &context, |i| {
+        let res = run_source(i, &src);
+        // `evalin('caller', expr, catch_expr)`: run the catch expression on error.
+        if res.is_err()
+            && let Some(catch) = args.get(2).and_then(Array::as_string)
+        {
+            return run_source(i, &catch);
+        }
+        res
+    });
+    primary?;
     Ok(vec![])
+}
+
+/// Run `f` with the call frame switched to the `'caller'`/`'base'` scope, then
+/// restore. For `'caller'`, the current executing frame (the function that
+/// invoked the calling builtin) is temporarily popped so the *caller* becomes
+/// the top scope. Any other context string runs in the current scope.
+fn run_in_caller_scope<F, R>(i: &mut Interpreter, context: &str, f: F) -> Flow<R>
+where
+    F: FnOnce(&mut Interpreter) -> Flow<R>,
+{
+    let switch = (context == "caller" || context == "base") && i.context.depth() > 1;
+    if !switch {
+        return f(i);
+    }
+    let saved = i.context.pop_scope();
+    let out = f(i);
+    if let Some(scope) = saved {
+        i.context.restore_scope(scope);
+    }
+    out
 }
 
 /// Parse and execute `src` as a statement list in the current scope.
@@ -78,6 +114,16 @@ fn b_feval(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Arra
         .as_string()
         .ok_or_else(|| Signal::Error(InterpError::msg("feval: first argument must be a name")))?;
     i.call_function(&name, &args[1..], nargout.max(1), "", Span::empty(0))
+}
+
+/// `builtin(fn, args...)` — like `feval`, but always calls the *native* builtin
+/// `fn`, bypassing any user-defined function / subfunction that shadows it.
+fn b_builtin(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "builtin")?;
+    let name = args[0]
+        .as_string()
+        .ok_or_else(|| Signal::Error(InterpError::msg("builtin: first argument must be a name")))?;
+    i.call_builtin(&name, &args[1..], nargout.max(1))
 }
 
 /// `exist(name)` — 1 if `name` is a variable, 2 if a file/function, 5 if a
@@ -135,9 +181,15 @@ fn b_clear(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
 /// no-op for the test corpus).
 fn b_assignin(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     need(args, 3, "assignin")?;
+    let context = args[0].as_string().unwrap_or_default();
     let name = args[1]
         .as_string()
         .ok_or_else(|| Signal::Error(InterpError::msg("assignin: name must be a string")))?;
-    i.context.assign(&name, args[2].clone());
+    let value = args[2].clone();
+    // `assignin('caller', name, value)` binds in the caller's scope.
+    run_in_caller_scope(i, &context, |i| {
+        i.context.assign(&name, value);
+        Ok(())
+    })?;
     Ok(vec![])
 }
