@@ -124,6 +124,26 @@ const CURATED: &[&str] = &[
     "sparse/test_sparse18", // complex sparse 2-D indexing
     "sparse/test_sparse27", // sparse linear-index assignment A(p) = scalar
     "sparse/test_sparse28", // sparse linear-index assignment A(p) = vector
+    "sparse/test_sparse29", // linear-grow-past-end flattens (was a panic)
+    // Correctness-bug pass — deterministic regressions for fixed root causes.
+    // (These live in the *smaller* dirs so the per-test directory reload stays
+    // cheap; the big `array`/`suite` gains are covered by the full-suite floor.)
+    "transforms/test_qr1",     // qr(a,0) economy + diag(R,k)
+    "transforms/test_qr5",     // qr(a) full
+    "operators/test_range3",   // single-class range
+    "inspection/test_typeof4", // typeof(complex single) == 'single'
+    "inspection/test_typeof5", // typeof(complex double) == 'double'
+    "inspection/test_isset1",  // isset requires non-empty
+    "inspection/test_empty",   // [] ^ [] is empty
+    "inspection/test_size4",   // [c,d]=size(a,2) fewer-returns
+    "flow/test_switch3",       // switch on complex value
+    "flow/test_switch4",       // switch on vector errors
+    "functions/test_call2",    // [d{1:3}]=f multi-output cell-content
+    "freemat/test_evalin1",    // evalin('caller', ...)
+    "freemat/test_evalin2",    // evalin('base', ...) returns value
+    "freemat/test_assignin1",  // assignin('caller', ...)
+    "freemat/test_assignin2",  // assignin('base', ...)
+    "freemat/test_builtin1",   // builtin('abs', x) bypasses user shadow
 ];
 
 /// The corpus must be checked into the crate (self-contained, no `../FreeMat`).
@@ -164,9 +184,15 @@ fn curated_subset_passes() {
 /// gap-fill pass (bit ops, base conversion, polynomial, linalg extras, trig
 /// gaps, `eps`/`seed`) raised the live total to 309/640 (48.3%). Stage 9
 /// (sparse matrices: CSC `Array::Sparse`, sparse builtins + the enabled `sparse`
-/// dir) raised it to 402/677 (59.4%). The floor allows a margin for
-/// PRNG-dependent (`rand`/`randn`/`sprandn`/`eig`) tests.
-const PASS_FLOOR: usize = 395;
+/// dir) raised it to 402/677 (59.4%). The **correctness-bug pass** then fixed a
+/// run of root causes (file-local subfunctions + flat-sibling parsing, the
+/// linear-grow/subscript-grow relayout, qr modes, `diag(A,k)`, single-dominant
+/// promotion + complex-preserving casts + complex-single gather, `randi`
+/// semantics, colon-grow-into-empty, multi-output cell-content assign, switch
+/// complex/scalar rules, zeros/ones class arg, evalin/assignin/builtin, …),
+/// raising the live total to 627/677 (92.6%). The floor allows a margin for
+/// PRNG-dependent (`rand`/`randn`/`sprandn`/`randi`/`eig`) tests.
+const PASS_FLOOR: usize = 615;
 
 /// **Fast pass-floor guard (gates `cargo test`).** Running the *whole* covered
 /// corpus takes minutes (it spins up a fresh interpreter and re-parses every
