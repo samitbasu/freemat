@@ -49,6 +49,6 @@ pub mod value;
 pub use context::Context;
 pub use error::{Flow, InterpError, Signal};
 pub use function::{BuiltinFn, Function, FunctionTable};
-pub use graphics::GraphicsState;
+pub use graphics::{GraphicsState, ObjKind, ObjLocation, ObjectRecord};
 pub use interp::Interpreter;
 pub use scope::Scope;

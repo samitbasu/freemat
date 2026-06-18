@@ -75,6 +75,65 @@ async fn plot_streams_expected_scene_over_websocket() {
     assert!((y2[0].as_f64().unwrap() - 0.0_f64.cos()).abs() < 1e-12);
 }
 
+/// Stage 7.5 proof: `subplot(2,1,1); plot(...); subplot(2,1,2); plot(...)`
+/// streams a scene with ONE figure holding TWO axes at distinct positions, each
+/// carrying its own line trace.
+#[tokio::test]
+async fn subplot_streams_two_axes_in_one_figure() {
+    let handle = fm_cli::start(0).expect("server starts");
+    let ws_url = format!("ws://{}/ws", handle.addr);
+
+    let mut interp = Interpreter::new();
+    fm_builtins::register_standard_library(&mut interp);
+    interp.set_graphics_sink(Box::new(handle.clone()));
+
+    let (mut ws, _resp) = tokio_tungstenite::connect_async(&ws_url)
+        .await
+        .expect("websocket connects");
+    let _empty = next_scene(&mut ws).await; // initial snapshot
+
+    interp.run("x = 1:5;").expect("range ok");
+    interp
+        .run("subplot(2,1,1); plot(x, x);")
+        .expect("first subplot ok");
+    interp
+        .run("subplot(2,1,2); plot(x, -x);")
+        .expect("second subplot ok");
+
+    // Receive until we see a figure with two axes.
+    let scene = loop {
+        let msg = next_scene(&mut ws).await;
+        let axes = msg["scene"]["figures"][0]["axes"].as_array().cloned();
+        if axes.map(|a| a.len()).unwrap_or(0) == 2 {
+            break msg;
+        }
+    };
+
+    let figures = scene["scene"]["figures"].as_array().unwrap();
+    assert_eq!(figures.len(), 1, "exactly one figure");
+    let axes = figures[0]["axes"].as_array().unwrap();
+    assert_eq!(axes.len(), 2, "two axes in the one figure");
+
+    // Distinct positions: top cell sits above the bottom cell.
+    let pos0 = axes[0]["position"].as_array().unwrap();
+    let pos1 = axes[1]["position"].as_array().unwrap();
+    let bottom0 = pos0[1].as_f64().unwrap();
+    let bottom1 = pos1[1].as_f64().unwrap();
+    assert!((bottom0 - 0.5).abs() < 1e-9, "top axes bottom edge at 0.5");
+    assert!(
+        (bottom1 - 0.0).abs() < 1e-9,
+        "bottom axes bottom edge at 0.0"
+    );
+
+    // Each axes has one line trace; the second is the negated data.
+    assert_eq!(axes[0]["series"][0]["kind"], "line");
+    assert_eq!(axes[1]["series"][0]["kind"], "line");
+    let y0 = axes[0]["series"][0]["y"].as_array().unwrap();
+    let y1 = axes[1]["series"][0]["y"].as_array().unwrap();
+    assert_eq!(y0[0].as_f64().unwrap(), 1.0);
+    assert_eq!(y1[0].as_f64().unwrap(), -1.0);
+}
+
 /// Read the next websocket text frame and parse it as JSON, with a timeout so a
 /// hang fails the test instead of blocking forever.
 async fn next_scene<S>(ws: &mut S) -> serde_json::Value

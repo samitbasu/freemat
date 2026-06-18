@@ -14,7 +14,7 @@ then tick it here and commit. Leave notes for the next session under each stage.
 - [x] **Stage 5 — `fm-linalg` + core math builtins  ·  ★ Milestone 1**
 - [x] **Stage 6 — `fm-builtins`: remaining core functions**
 - [x] **Stage 7 — `fm-graphics` + webserver + Plotly  ·  ★ Milestone 2**
-- [ ] **Stage 7.5 — Graphics handle-property system (set/get, subplot, contour)** — scheduled after Stage 8
+- [x] **Stage 7.5 — Graphics handle-property system (set/get, subplot, contour)**
 - [x] **Stage 8 — `fm-io`: MAT files, file I/O, FFT, regex**
 - [ ] **Stage 9 — Advanced / optional**
 - [ ] **Stage 10 — Debugging & editor integration (DAP + `db*` engine; optional LSP)**
@@ -934,6 +934,101 @@ then tick it here and commit. Leave notes for the next session under each stage.
 - **Verification:** `cargo build --workspace` ✓; `cargo clippy --workspace --all-targets -D
   warnings` clean ✓; `cargo fmt --all --check` ✓; `cargo test --workspace` green ✓ (incl. the 7
   new time tests). Conformance unchanged at **284/637** (time builtins additive, no regression).
+
+### Stage 7.5 — done (graphics handle-property system: set/get, subplot, contour)
+
+- **No new external deps.** Builds on the existing `fm-graphics`/`fm-interp`/`fm-builtins` stack.
+
+- **Handle/property model + where the registry lives.** Graphics objects are addressed by
+  MATLAB-style numeric handles (plain `f64` in user space — no new core type). The registry lives
+  in **`fm-interp/src/graphics.rs` (`GraphicsState`)** alongside the retained scene: a
+  `HashMap<u64, ObjectRecord>` mapping handle → `{ kind: ObjKind, location: ObjLocation, extra:
+  BTreeMap<String,Array> }`. **Figures** use their figure *number* as the handle (small ints);
+  **child objects** (axes/line/surface/image/contour) get ids allocated from `>= 1000`.
+  `ObjLocation` is `Figure{fig}` / `Axes{fig,axes}` / `Series{fig,axes,series}` — an index *into
+  the scene*, so known properties read/write the live scene object; deletions reindex the stored
+  locations. Unknown (non-modeled) properties round-trip verbatim through the per-handle `extra`
+  bag (`set`/`get` echo them). New public exports: `ObjKind`, `ObjLocation`, `ObjectRecord`.
+
+- **Multi-axes scene change (`fm-graphics/src/scene.rs`).** `Figure` now holds `Vec<Axes>` plus a
+  `current_axes: usize` cursor (`gca`/`subplot` target). `Axes` gained `handle: u64` and a
+  normalized `position: [left,bottom,width,height]` (default full-frame `[0,0,1,1]`). New
+  `Series::Contour(ContourSeries{z,x,y,levels,colormap})` variant. All fields `serde`-round-trip;
+  `Axes::with_position` constructs a positioned axes.
+
+- **`subplot`/`contour` behavior** (native Rust builtins in `fm-builtins/src/graphics.rs`).
+  `subplot(m,n,p)` (and the 3-digit `subplot(mnp)` form) computes the cell's normalized position
+  (width `1/n`, height `1/m`, **row-major 1-based, top row first**), then: re-selects an axes
+  already at that exact cell; else deletes any axes whose rectangle *overlaps* the cell (the
+  default full-frame axes, or a coarser cell — mirroring toolbox `subplot.m`'s intersect-delete)
+  and creates a fresh positioned axes, making it current. So `subplot(2,1,1); plot; subplot(2,1,2);
+  plot` ends with **one figure, two non-overlapping axes**. `contour(Z)` / `contour(Z,n)` /
+  `contour(Z,levels)` / `contour(X,Y,Z[,...])` builds a `Contour` series (a scalar `n` expands to
+  `n` evenly spaced levels across the data range).
+
+- **Web subplot-layout change (`web/index.html`).** The frontend now renders **all** axes of a
+  figure as Plotly subplots: each axes gets its own `xaxisN`/`yaxisN` with a `domain` derived from
+  its `position` (a small inner pad keeps stacked titles/labels from colliding), 2-D traces bind to
+  that subplot's `xN`/`yN`, the title becomes a paper-space annotation over the cell, and a
+  `contour` trace type was added (with `contours.start/end/size` from `levels`). Previously it only
+  drew `fig.axes[0]`.
+
+- **Handle builtins implemented:** `set(h,'Prop',val[,...])`, `get(h,'Prop')` / `get(h)` (type),
+  real-handle `gcf`/`gca`/`gco`, `figure(n)`, `axes`/`axes(h)`, `subplot`, `delete(h)`, `cla`,
+  `clf`, `close`/`close all`, `findobj`/`findobj('type',…)`, `ishandle(h[,kind])`, plus `contour`.
+  Existing `plot`/`line`/`surf`/`mesh`/`image`/`semilog*` now target the **current axes** and
+  **register a child handle per series** (returned by `plot`, settable via `set`). Modeled
+  properties handled by `set`/`get`: axes `title`/`xlabel`/`ylabel`/`zlabel`/`xlim`/`ylim`/
+  `xscale`/`yscale`/`grid`/`position`/`outerposition`/`type`; line `color`/`linecolor`/`linestyle`/
+  `marker`/`displayname`/`xdata`/`ydata`/`type`; figure `type`/`number`. Anything else echoes via
+  the `extra` bag.
+  **Deferred:** the full MATLAB property catalogue (ticks, `xdir`/`ydir`, `dataaspectratio`,
+  `nextplot`, `children` as a settable handle list, `clim`, `colormap`/`colorbar`), text/annotation
+  objects as real handles, `linkaxes`, `copyobj`, `print`/export, and wiring the toolbox
+  `graph/*.m` files (they assume a much deeper property model — `hcontour`, `children`, `nextplot`)
+  so `plot`/`subplot`/`contour`/`axis`/`title` remain native Rust, consistent with the Stage 7
+  decision. Documented as a reasonable MATLAB-compatible scope choice.
+
+- **Automated proof.** `fm-cli/tests/milestone2.rs` gained `subplot_streams_two_axes_in_one_figure`
+  — over the real websocket it asserts `subplot(2,1,1); plot(...); subplot(2,1,2); plot(...)` yields
+  **one figure with two axes at distinct positions** (top bottom-edge 0.5, bottom 0.0), each with
+  the right line trace. `fm-graphics` added unit tests for the multi-axes scene→JSON (positions +
+  per-axes traces) and contour round-trip. `fm-builtins` added 7 tests: subplot two-axes, subplot
+  cell re-selection (no extra axes), `set`/`get` round-trip on axes (`title`, numeric `xlim`),
+  unknown-property echo, `ishandle`/`gco`/`delete`, contour series, `close all`.
+
+- **`handle` conformance dir enabled + result.** Copied `test_plot1`/`test_image1`/`test_contour1`
+  into `crates/fm-conformance/data/tests/handle/`, moved `handle` from `DEFERRED` to
+  `COVERED_DIRS`. **handle dir: 3/3 (100%).** (`plot([],[])` / `image([])` / `contour(zeros(10))`
+  + `close all` all run.)
+
+- **Incidental parser fix (noted, as requested).** `test_image1.m` started with an *indented*
+  comment before `function`; `Parser::new` set the initial lookahead via `lexer.next_token()`
+  directly, **bypassing the whitespace-skip** that `refill` applies — so a file beginning with a
+  leading `Space` token misclassified as a script (functions not defined → "undefined function").
+  Fixed by skipping leading insignificant `Space` tokens in `Parser::new` (one localized change, no
+  grammar/precedence change; all 62 `fm-parser` tests still green). This also fixed several
+  previously-erroring tests in other dirs (suite/array/etc.), so the net conformance gain exceeds
+  the 3 handle tests. (The bare-`tic`/`nargout==1` display quirk was not encountered; left as-is.)
+
+- **Conformance: 284/637 (44.6%) → 297/640 (46.4%), Δ +13 passes / +1.8 pp** (the corpus grew by
+  the 3 handle tests; +3 from handle, +10 from the parser whitespace fix across dirs). Per-dir
+  highlights vs the 284 baseline: handle 3/3 (new), array 33, suite 141, plus small gains
+  elsewhere. `PASS_FLOOR` raised 266 → 290; the curated must-pass list gained the 3 handle tests.
+
+- **Manual check (documented).** In `cargo run -p fm-cli` (browser auto-opens to the printed
+  `http://127.0.0.1:<port>`):
+  - `x=0:.1:10; subplot(2,1,1); plot(x,sin(x)); subplot(2,1,2); plot(x,cos(x))` → **one figure, two
+    stacked plots** (sine on top, cosine on the bottom), each its own axes.
+  - `contour(peaks)` (or `contour(rand(20))`) → a filled contour plot as a new trace type.
+  - `h=gca; set(h,'title','Demo'); set(h,'xlim',[0 5]); get(h,'title')` → properties update live and
+    `get` reads them back. Verified non-interactively via the scene→JSON in the new tests (a temp
+    integration check confirmed `figures=1 axes=2`, top `[0,0.5,1,0.5]` line / bottom `[0,0,1,0.5]`
+    contour, then removed to keep the tree clean).
+
+- **Verification:** `cargo build --workspace` ✓; `cargo clippy --workspace --all-targets -D
+  warnings` clean ✓ (no new `#[allow]`); `cargo fmt --all --check` ✓; `cargo test --workspace`
+  green ✓ and still fast (~2 s). Existing `plot`/`surf`/`hold`/`figure`/Milestone-2 path unchanged.
 
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,

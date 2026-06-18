@@ -71,36 +71,79 @@
         return { type: "heatmap", z: s.data, colorscale: s.colormap || "Viridis" };
       }
 
-      function axesToData(ax) {
-        const data = [];
-        (ax.series || []).forEach((s, i) => {
-          if (s.kind === "line") data.push(lineToTrace(s, i));
-          else if (s.kind === "surface") data.push(surfaceToTrace(s));
-          else if (s.kind === "image") data.push(imageToTrace(s));
-        });
-        return data;
+      function contourToTrace(s) {
+        const t = {
+          type: "contour", z: s.z, colorscale: s.colormap || "Viridis",
+          x: s.x && s.x.length ? s.x : undefined,
+          y: s.y && s.y.length ? s.y : undefined,
+        };
+        if (s.levels && s.levels.length) {
+          const lo = Math.min.apply(null, s.levels);
+          const hi = Math.max.apply(null, s.levels);
+          const step = s.levels.length > 1 ? (hi - lo) / (s.levels.length - 1) : (hi - lo) || 1;
+          t.contours = { start: lo, end: hi, size: step || 1 };
+        }
+        return t;
       }
 
-      function axesToLayout(ax) {
-        const layout = {
-          title: ax.title || "",
-          xaxis: { title: ax.xlabel || "", showgrid: !!ax.grid },
-          yaxis: { title: ax.ylabel || "", showgrid: !!ax.grid },
-          showlegend: !!(ax.legend && ax.legend.visible),
-          margin: { l: 50, r: 20, t: 40, b: 40 },
-        };
-        if (ax.xscale === "log") layout.xaxis.type = "log";
-        if (ax.yscale === "log") layout.yaxis.type = "log";
-        if (ax.limits) {
-          layout.xaxis.range = [ax.limits.xmin, ax.limits.xmax];
-          layout.yaxis.range = [ax.limits.ymin, ax.limits.ymax];
+      function seriesToTrace(s, i) {
+        if (s.kind === "line") return lineToTrace(s, i);
+        if (s.kind === "surface") return surfaceToTrace(s);
+        if (s.kind === "image") return imageToTrace(s);
+        if (s.kind === "contour") return contourToTrace(s);
+        return null;
+      }
+
+      // Default full-frame axes position when none is supplied.
+      function axPosition(ax) {
+        const p = ax.position;
+        if (p && p.length === 4) return p;
+        return [0, 0, 1, 1];
+      }
+
+      // Build a Plotly subplot for one axes: its traces (bound to xaxisN/yaxisN)
+      // and the layout entries (axis objects with a `domain` from the position).
+      function addAxesToFigure(ax, n, data, layout) {
+        const suffix = n === 1 ? "" : String(n);
+        const xkey = "xaxis" + suffix, ykey = "yaxis" + suffix;
+        const xref = "x" + suffix, yref = "y" + suffix;
+        const [left, bottom, w, h] = axPosition(ax);
+        // Leave a small inner margin so titles/labels of stacked plots don't
+        // collide.
+        const pad = 0.06;
+        const xdom = [left + pad * w, left + w - pad * w];
+        const ydom = [bottom + pad * h, bottom + h - pad * h];
+
+        const xaxis = { title: ax.xlabel || "", showgrid: !!ax.grid, domain: xdom, anchor: yref };
+        const yaxis = { title: ax.ylabel || "", showgrid: !!ax.grid, domain: ydom, anchor: xref };
+        if (ax.xscale === "log") xaxis.type = "log";
+        if (ax.yscale === "log") yaxis.type = "log";
+        if (ax.limits) { xaxis.range = [ax.limits.xmin, ax.limits.xmax]; yaxis.range = [ax.limits.ymin, ax.limits.ymax]; }
+        if (ax.equal) yaxis.scaleanchor = xref;
+        layout[xkey] = xaxis;
+        layout[ykey] = yaxis;
+
+        const names = (ax.legend && ax.legend.names) || null;
+        (ax.series || []).forEach((s, i) => {
+          const t = seriesToTrace(s, i);
+          if (!t) return;
+          // 2-D traces bind to this subplot's axes; 3-D surface uses scene.
+          if (s.kind === "surface") {
+            t.scene = "scene" + suffix;
+          } else {
+            t.xaxis = xref; t.yaxis = yref;
+          }
+          if (names && names[i]) t.name = names[i];
+          data.push(t);
+        });
+        if ((ax.title || "").length) {
+          layout.annotations = layout.annotations || [];
+          layout.annotations.push({
+            text: ax.title, showarrow: false, xref: "paper", yref: "paper",
+            x: (xdom[0] + xdom[1]) / 2, y: Math.min(1, ydom[1] + 0.03),
+            xanchor: "center", yanchor: "bottom", font: { size: 14 },
+          });
         }
-        if (ax.equal) layout.yaxis.scaleanchor = "x";
-        if (ax.legend && ax.legend.names && ax.legend.names.length) {
-          // Apply explicit legend names to the data traces post-render.
-          layout._legendNames = ax.legend.names;
-        }
-        return layout;
       }
 
       function renderScene(scene) {
@@ -126,12 +169,15 @@
             el.appendChild(plot);
             container.appendChild(el);
           }
-          // Milestone 2 uses a single axes per figure; render the first.
-          const ax = (fig.axes && fig.axes[0]) || { series: [] };
-          const data = axesToData(ax);
-          const layout = axesToLayout(ax);
-          const names = layout._legendNames; delete layout._legendNames;
-          if (names) data.forEach((t, i) => { if (names[i]) t.name = names[i]; });
+          // Render ALL axes of the figure as Plotly subplots, each given its own
+          // xaxisN/yaxisN with a domain derived from its normalized Position.
+          const axesList = (fig.axes && fig.axes.length) ? fig.axes : [{ series: [] }];
+          const data = [];
+          const layout = {
+            showlegend: axesList.some((ax) => ax.legend && ax.legend.visible),
+            margin: { l: 50, r: 20, t: 30, b: 40 },
+          };
+          axesList.forEach((ax, idx) => addAxesToFigure(ax, idx + 1, data, layout));
           Plotly.react("plot-" + fig.id, data, layout, { responsive: true });
         });
 

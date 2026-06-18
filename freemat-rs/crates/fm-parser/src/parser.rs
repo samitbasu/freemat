@@ -99,7 +99,14 @@ impl<'src> Parser<'src> {
     /// Construct a parser over `src`.
     pub fn new(src: &'src str) -> Result<Self> {
         let mut lexer = Lexer::new(src);
-        let lookahead = lexer.next_token()?;
+        // Skip a leading insignificant `Space` (a file that starts with indented
+        // content — e.g. an indented comment before `function` — must classify
+        // the same as one that doesn't). Outside brackets ws is insignificant,
+        // mirroring `refill`'s whitespace handling.
+        let mut lookahead = lexer.next_token()?;
+        while lookahead.kind == TokenKind::Space {
+            lookahead = lexer.next_token()?;
+        }
         Ok(Self {
             lexer,
             lookahead,

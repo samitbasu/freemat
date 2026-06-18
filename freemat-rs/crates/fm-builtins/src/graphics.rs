@@ -1,28 +1,32 @@
-//! Graphics builtins: `figure`, `plot`, `line`, `title`, `xlabel`/`ylabel`/
-//! `zlabel`, `legend`, `hold`, `axis`, `grid`, `clf`, `gcf`/`gca`, `drawnow`,
-//! and basic `surf`/`mesh`/`image`.
+//! Graphics builtins: figure/axes lifecycle, the handle property system
+//! (`set`/`get`/`gcf`/`gca`/`gco`/`figure`/`axes`/`delete`/`cla`/`clf`/`close`/
+//! `findobj`/`ishandle`), the plotting commands (`plot`/`line`/`surf`/`mesh`/
+//! `image`/`contour`/`semilog*`), and the per-axes property setters
+//! (`title`/`xlabel`/`hold`/`axis`/`grid`/`legend`) and grid layout (`subplot`).
 //!
 //! These build the semantic [`fm_graphics`] scene directly in interpreter state
-//! and mark it dirty; the implicit draw at the end of a top-level command (or an
-//! explicit `drawnow`) flushes it through the optional sink. This is the
-//! pragmatic Milestone-2 path — it does **not** reproduce FreeMat's full
-//! handle-property `set`/`get` system (see PROGRESS.md for deferred fidelity).
+//! (via the [`GraphicsState`](fm_interp::GraphicsState) handle registry) and
+//! mark it dirty; the implicit draw at the end of a top-level command (or an
+//! explicit `drawnow`) flushes it through the optional sink.
 
-use fm_core::Array;
+use fm_core::{Array, DataClass};
 use fm_graphics::{
-    AxisLimits, ImageSeries, Legend, LineSeries, Scale, Series, SurfaceSeries, default_color,
-    parse_linespec,
+    AxisLimits, ContourSeries, ImageSeries, Legend, LineSeries, Scale, Series, SurfaceSeries,
+    default_color, parse_linespec,
 };
 use fm_interp::error::Flow;
-use fm_interp::value::to_f64_vec;
-use fm_interp::{FunctionTable, Interpreter};
+use fm_interp::value::{build_real, to_f64_vec};
+use fm_interp::{FunctionTable, Interpreter, ObjKind, ObjLocation};
 
 use crate::util::err;
 
 pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("figure", b_figure);
+    table.add_builtin("axes", b_axes);
+    table.add_builtin("subplot", b_subplot);
     table.add_builtin("plot", b_plot);
     table.add_builtin("line", b_line);
+    table.add_builtin("contour", b_contour);
     table.add_builtin("title", b_title);
     table.add_builtin("xlabel", |i, a, _n| label(i, a, Axis::X));
     table.add_builtin("ylabel", |i, a, _n| label(i, a, Axis::Y));
@@ -31,10 +35,18 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("hold", b_hold);
     table.add_builtin("axis", b_axis);
     table.add_builtin("grid", b_grid);
+    table.add_builtin("cla", b_cla);
     table.add_builtin("clf", b_clf);
+    table.add_builtin("close", b_close);
+    table.add_builtin("delete", b_delete);
     table.add_builtin("gcf", b_gcf);
     table.add_builtin("gca", b_gca);
+    table.add_builtin("gco", b_gco);
     table.add_builtin("drawnow", b_drawnow);
+    table.add_builtin("set", b_set);
+    table.add_builtin("get", b_get);
+    table.add_builtin("ishandle", b_ishandle);
+    table.add_builtin("findobj", b_findobj);
     table.add_builtin("surf", |i, a, _n| surface(i, a, false));
     table.add_builtin("mesh", |i, a, _n| surface(i, a, true));
     table.add_builtin("image", b_image);
@@ -46,12 +58,17 @@ fn str_arg(args: &[Array], i: usize) -> Option<String> {
     args.get(i).and_then(Array::as_string)
 }
 
-/// The figure number, as a scalar `double` array (FreeMat returns the handle).
+/// A scalar `double` array (handles are MATLAB-style doubles).
 fn scalar(v: f64) -> Array {
     Array::Scalar(fm_core::ScalarValue::Double(v))
 }
 
-// ---- figure / gcf / gca / clf -----------------------------------------------
+/// A handle value as a scalar double.
+fn handle(h: u64) -> Array {
+    scalar(h as f64)
+}
+
+// ---- figure / axes / subplot ------------------------------------------------
 
 fn b_figure(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     let id = if let Some(n) = args.first().and_then(Array::as_f64) {
@@ -61,30 +78,447 @@ fn b_figure(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> 
     };
     i.graphics.select_figure(id);
     i.graphics.dirty = true;
-    Ok(vec![scalar(id as f64)])
+    Ok(vec![handle(id)])
 }
 
+/// `axes` (new full-frame axes) / `axes(h)` (select an existing axes).
+fn b_axes(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if let Some(h) = args.first().and_then(Array::as_f64) {
+        let h = h as u64;
+        if i.graphics.select_axes(h) {
+            i.graphics.dirty = true;
+            return Ok(vec![handle(h)]);
+        }
+        return err(format!("axes: {h} is not a valid axes handle"));
+    }
+    let h = i.graphics.create_axes([0.0, 0.0, 1.0, 1.0]);
+    Ok(vec![handle(h)])
+}
+
+/// `subplot(m, n, p)` — create/select the axes for grid cell `p` (1-based,
+/// row-major) and return its handle. The cell's normalized position is
+/// `[left, bottom, width, height]` with width `1/n`, height `1/m`, the top row
+/// first (MATLAB numbering).
+fn b_subplot(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    // Support subplot(mnp) with a single 3-digit number too.
+    let (m, n, p) = if args.len() == 1 {
+        let v = args[0].as_f64().unwrap_or(111.0).round() as i64;
+        if !(111..=999).contains(&v) {
+            return err("subplot: single-argument form needs a 3-digit code (e.g. 211)");
+        }
+        (
+            (v / 100) as usize,
+            (v / 10 % 10) as usize,
+            (v % 10) as usize,
+        )
+    } else if args.len() >= 3 {
+        let m = args[0].as_f64().unwrap_or(1.0).round().max(1.0) as usize;
+        let n = args[1].as_f64().unwrap_or(1.0).round().max(1.0) as usize;
+        let p = args[2].as_f64().unwrap_or(1.0).round().max(1.0) as usize;
+        (m, n, p)
+    } else {
+        return err("subplot: expected subplot(m,n,p)");
+    };
+    if p < 1 || p > m * n {
+        return err(format!(
+            "subplot: index {p} out of range for a {m}x{n} grid"
+        ));
+    }
+    let position = subplot_position(m, n, p);
+    let fig = i.graphics.ensure_figure();
+    // Reuse an axes already occupying this exact cell (re-selecting it),
+    // otherwise delete any axes whose rectangle *overlaps* the new cell (the
+    // default full-frame axes, or a coarser-grid cell) and create a fresh one —
+    // mirroring toolbox `subplot.m`.
+    let existing = i.graphics.scene.figure(fig).and_then(|f| {
+        f.axes
+            .iter()
+            .find(|a| positions_match(a.position, position))
+            .map(|a| a.handle)
+    });
+    let h = if let Some(h) = existing {
+        i.graphics.select_axes(h);
+        h
+    } else {
+        let overlapping: Vec<u64> = i
+            .graphics
+            .scene
+            .figure(fig)
+            .map(|f| {
+                f.axes
+                    .iter()
+                    .filter(|a| positions_overlap(a.position, position))
+                    .map(|a| a.handle)
+                    .collect()
+            })
+            .unwrap_or_default();
+        for h in overlapping {
+            i.graphics.delete(h);
+        }
+        i.graphics.create_axes(position)
+    };
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+/// Normalized `[left, bottom, width, height]` for grid cell `p` of an m×n grid.
+fn subplot_position(m: usize, n: usize, p: usize) -> [f64; 4] {
+    let p0 = p - 1;
+    let row = p0 / n; // 0 = top row
+    let col = p0 % n;
+    let width = 1.0 / n as f64;
+    let height = 1.0 / m as f64;
+    let left = col as f64 * width;
+    // Row 0 is the top, so its bottom edge is the highest.
+    let bottom = 1.0 - (row as f64 + 1.0) * height;
+    [left, bottom, width, height]
+}
+
+/// True if two normalized position rectangles coincide (to a small tolerance).
+fn positions_match(a: [f64; 4], b: [f64; 4]) -> bool {
+    a.iter().zip(b.iter()).all(|(x, y)| (x - y).abs() < 1e-9)
+}
+
+/// True if two `[left, bottom, width, height]` rectangles overlap by a
+/// non-trivial area (the `subplot.m` overlap test).
+fn positions_overlap(a: [f64; 4], b: [f64; 4]) -> bool {
+    let nleft = a[0].max(b[0]);
+    let nbottom = a[1].max(b[1]);
+    let nright = (a[0] + a[2]).min(b[0] + b[2]);
+    let ntop = (a[1] + a[3]).min(b[1] + b[3]);
+    if nright <= nleft || ntop <= nbottom {
+        false
+    } else {
+        (nright - nleft) * (ntop - nbottom) > 0.01
+    }
+}
+
+// ---- gcf / gca / gco / cla / clf / close / delete ---------------------------
+
 fn b_gcf(i: &mut Interpreter, _a: &[Array], _n: usize) -> Flow<Vec<Array>> {
-    let id = i.graphics.ensure_figure();
-    Ok(vec![scalar(id as f64)])
+    let h = i.graphics.current_figure_handle();
+    Ok(vec![handle(h)])
 }
 
 fn b_gca(i: &mut Interpreter, _a: &[Array], _n: usize) -> Flow<Vec<Array>> {
-    // We model a single axes per figure; return the figure handle as a stand-in.
-    let id = i.graphics.ensure_figure();
-    Ok(vec![scalar(id as f64)])
+    let h = i.graphics.current_axes_handle();
+    Ok(vec![handle(h)])
+}
+
+fn b_gco(i: &mut Interpreter, _a: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    Ok(vec![handle(i.graphics.current_object)])
+}
+
+fn b_cla(i: &mut Interpreter, _a: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    ax.series.clear();
+    ax.xscale = Scale::Linear;
+    ax.yscale = Scale::Linear;
+    ax.limits = None;
+    i.graphics.dirty = true;
+    Ok(vec![])
 }
 
 fn b_clf(i: &mut Interpreter, _a: &[Array], _n: usize) -> Flow<Vec<Array>> {
-    let fig = i.graphics.current_figure_mut();
-    fig.axes = vec![fm_graphics::Axes::new()];
+    // Reset the current figure to a single default axes, dropping its children.
+    let fig = i.graphics.current_figure_handle();
+    i.graphics.delete_children_of_figure(fig);
     i.graphics.dirty = true;
+    Ok(vec![])
+}
+
+fn b_close(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    match str_arg(args, 0).as_deref() {
+        Some("all") => i.graphics.close_all(),
+        _ => {
+            let h = args
+                .first()
+                .and_then(Array::as_f64)
+                .map(|v| v as u64)
+                .unwrap_or_else(|| i.graphics.current_figure_handle());
+            i.graphics.delete(h);
+        }
+    }
+    Ok(vec![])
+}
+
+fn b_delete(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    for a in args {
+        for v in to_f64_vec(a) {
+            i.graphics.delete(v as u64);
+        }
+    }
     Ok(vec![])
 }
 
 fn b_drawnow(i: &mut Interpreter, _a: &[Array], _n: usize) -> Flow<Vec<Array>> {
     i.graphics.flush();
     Ok(vec![])
+}
+
+// ---- ishandle / findobj -----------------------------------------------------
+
+fn b_ishandle(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let h = args.first().and_then(Array::as_f64).map(|v| v as u64);
+    let result = match (h, str_arg(args, 1)) {
+        (Some(h), Some(kind)) => i
+            .graphics
+            .kind_of(h)
+            .is_some_and(|k| k.type_name().eq_ignore_ascii_case(&kind)),
+        (Some(h), None) => i.graphics.is_handle(h),
+        _ => false,
+    };
+    Ok(vec![Array::Scalar(fm_core::ScalarValue::Bool(result))])
+}
+
+/// `findobj` / `findobj('type', 'axes')` — return matching handles as a column.
+fn b_findobj(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    // Optional ('Type', name) filter (the common case used by toolbox code).
+    let mut type_filter: Option<String> = None;
+    let mut idx = 0;
+    while idx + 1 < args.len() {
+        if let Some(prop) = str_arg(args, idx)
+            && prop.eq_ignore_ascii_case("type")
+        {
+            type_filter = str_arg(args, idx + 1);
+        }
+        idx += 2;
+    }
+    let handles: Vec<f64> = i
+        .graphics
+        .all_handles()
+        .into_iter()
+        .filter(|&h| match &type_filter {
+            Some(t) => i
+                .graphics
+                .kind_of(h)
+                .is_some_and(|k| k.type_name().eq_ignore_ascii_case(t)),
+            None => true,
+        })
+        .map(|h| h as f64)
+        .collect();
+    let n = handles.len();
+    Ok(vec![build_real(DataClass::Double, &[n, 1], handles)])
+}
+
+// ---- set / get --------------------------------------------------------------
+
+fn b_set(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return err("set: expected a handle");
+    }
+    let h = args[0].as_f64().unwrap_or(0.0) as u64;
+    if !i.graphics.is_handle(h) {
+        return err(format!("set: {h} is not a valid handle"));
+    }
+    // Property/value pairs follow the handle.
+    let mut k = 1;
+    while k + 1 < args.len() + 1 && k < args.len() {
+        let Some(prop) = str_arg(args, k) else {
+            return err("set: expected a property name string");
+        };
+        let Some(value) = args.get(k + 1) else {
+            return err(format!("set: no value given for property '{prop}'"));
+        };
+        apply_property(i, h, &prop, value)?;
+        k += 2;
+    }
+    i.graphics.dirty = true;
+    Ok(vec![])
+}
+
+fn b_get(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return err("get: expected a handle");
+    }
+    let h = args[0].as_f64().unwrap_or(0.0) as u64;
+    if !i.graphics.is_handle(h) {
+        return err(format!("get: {h} is not a valid handle"));
+    }
+    let Some(prop) = str_arg(args, 1) else {
+        // get(h) with no property — return the type string (a minimal summary).
+        let ty = i.graphics.kind_of(h).map(ObjKind::type_name).unwrap_or("");
+        return Ok(vec![Array::char_string(ty)]);
+    };
+    Ok(vec![read_property(i, h, &prop)])
+}
+
+/// Apply a single property/value pair to the handle's object.
+fn apply_property(i: &mut Interpreter, h: u64, prop: &str, value: &Array) -> Flow<()> {
+    let prop = prop.to_ascii_lowercase();
+    let loc = i.graphics.resolve(h);
+    // Axes-level properties.
+    if let Some(loc) = loc
+        && matches!(loc, ObjLocation::Axes { .. })
+        && let Some(ax) = i.graphics.axes_at_mut(loc)
+    {
+        let v = to_f64_vec(value);
+        match prop.as_str() {
+            "title" => ax.title = value.as_string().unwrap_or_default(),
+            "xlabel" => ax.xlabel = value.as_string().unwrap_or_default(),
+            "ylabel" => ax.ylabel = value.as_string().unwrap_or_default(),
+            "zlabel" => ax.zlabel = value.as_string().unwrap_or_default(),
+            "xlim" if v.len() >= 2 => {
+                let mut lim = ax.limits.unwrap_or(AxisLimits {
+                    xmin: v[0],
+                    xmax: v[1],
+                    ymin: 0.0,
+                    ymax: 1.0,
+                });
+                lim.xmin = v[0];
+                lim.xmax = v[1];
+                ax.limits = Some(lim);
+            }
+            "ylim" if v.len() >= 2 => {
+                let mut lim = ax.limits.unwrap_or(AxisLimits {
+                    xmin: 0.0,
+                    xmax: 1.0,
+                    ymin: v[0],
+                    ymax: v[1],
+                });
+                lim.ymin = v[0];
+                lim.ymax = v[1];
+                ax.limits = Some(lim);
+            }
+            "xscale" => ax.xscale = scale_of(&value.as_string().unwrap_or_default()),
+            "yscale" => ax.yscale = scale_of(&value.as_string().unwrap_or_default()),
+            "grid" => ax.grid = on_off(&value.as_string().unwrap_or_default()),
+            "position" | "outerposition" if v.len() >= 4 => {
+                ax.position = [v[0], v[1], v[2], v[3]];
+            }
+            _ => {
+                i.graphics.set_extra(h, &prop, value.clone());
+            }
+        }
+        return Ok(());
+    }
+    // Series-level properties.
+    if let Some(loc) = loc
+        && matches!(loc, ObjLocation::Series { .. })
+        && let Some(Series::Line(line)) = i.graphics.series_at_mut(loc)
+    {
+        match prop.as_str() {
+            "color" | "linecolor" => line.color = value.as_string().unwrap_or_default(),
+            "linestyle" => line.line_style = value.as_string().unwrap_or_default(),
+            "marker" => line.marker = value.as_string().unwrap_or_default(),
+            "displayname" => line.name = value.as_string().unwrap_or_default(),
+            "xdata" => line.x = to_f64_vec(value),
+            "ydata" => line.y = to_f64_vec(value),
+            _ => i.graphics.set_extra(h, &prop, value.clone()),
+        }
+        return Ok(());
+    }
+    // Figure-level / fallback: store in the bag.
+    i.graphics.set_extra(h, &prop, value.clone());
+    Ok(())
+}
+
+/// Read a single property from the handle's object.
+fn read_property(i: &Interpreter, h: u64, prop: &str) -> Array {
+    let prop_l = prop.to_ascii_lowercase();
+    if let Some(loc) = i.graphics.resolve(h) {
+        match loc {
+            ObjLocation::Figure { fig } => {
+                if prop_l == "type" {
+                    return Array::char_string("figure");
+                }
+                if prop_l == "number" {
+                    return scalar(fig as f64);
+                }
+            }
+            ObjLocation::Axes { fig, axes } => {
+                if let Some(ax) = i.graphics.scene.figure(fig).and_then(|f| f.axes.get(axes)) {
+                    match prop_l.as_str() {
+                        "type" => return Array::char_string("axes"),
+                        "title" => return Array::char_string(&ax.title),
+                        "xlabel" => return Array::char_string(&ax.xlabel),
+                        "ylabel" => return Array::char_string(&ax.ylabel),
+                        "zlabel" => return Array::char_string(&ax.zlabel),
+                        "position" | "outerposition" => {
+                            return build_real(DataClass::Double, &[1, 4], ax.position.to_vec());
+                        }
+                        "xscale" => return Array::char_string(scale_name(ax.xscale)),
+                        "yscale" => return Array::char_string(scale_name(ax.yscale)),
+                        "grid" => return Array::char_string(if ax.grid { "on" } else { "off" }),
+                        "xlim" => {
+                            if let Some(l) = ax.limits {
+                                return build_real(
+                                    DataClass::Double,
+                                    &[1, 2],
+                                    vec![l.xmin, l.xmax],
+                                );
+                            }
+                        }
+                        "ylim" => {
+                            if let Some(l) = ax.limits {
+                                return build_real(
+                                    DataClass::Double,
+                                    &[1, 2],
+                                    vec![l.ymin, l.ymax],
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            ObjLocation::Series { fig, axes, series } => {
+                if let Some(Series::Line(line)) = i
+                    .graphics
+                    .scene
+                    .figure(fig)
+                    .and_then(|f| f.axes.get(axes))
+                    .and_then(|a| a.series.get(series))
+                {
+                    match prop_l.as_str() {
+                        "type" => return Array::char_string("line"),
+                        "color" | "linecolor" => return Array::char_string(&line.color),
+                        "linestyle" => return Array::char_string(&line.line_style),
+                        "marker" => return Array::char_string(&line.marker),
+                        "displayname" => return Array::char_string(&line.name),
+                        "xdata" => {
+                            return build_real(
+                                DataClass::Double,
+                                &[1, line.x.len()],
+                                line.x.clone(),
+                            );
+                        }
+                        "ydata" => {
+                            return build_real(
+                                DataClass::Double,
+                                &[1, line.y.len()],
+                                line.y.clone(),
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    // Unknown / free-form: echo from the bag, or empty.
+    i.graphics
+        .get_extra(h, prop)
+        .unwrap_or_else(|| build_real(DataClass::Double, &[0, 0], Vec::new()))
+}
+
+fn scale_of(s: &str) -> Scale {
+    if s.eq_ignore_ascii_case("log") {
+        Scale::Log
+    } else {
+        Scale::Linear
+    }
+}
+
+fn scale_name(s: Scale) -> &'static str {
+    match s {
+        Scale::Log => "log",
+        Scale::Linear => "linear",
+    }
+}
+
+fn on_off(s: &str) -> bool {
+    s.eq_ignore_ascii_case("on")
 }
 
 // ---- plot / line ------------------------------------------------------------
@@ -94,27 +528,17 @@ fn b_plot(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
         return err("plot: not enough arguments");
     }
     // newplot semantics: unless `hold on`, clear the current axes' series.
-    {
-        let fig = i.graphics.current_figure_mut();
-        let ax = fig.current_axes_mut();
-        if !ax.hold {
-            ax.series.clear();
-        }
-    }
-    // Parse the (x?, y, linespec?) argument groups, MATLAB-style.
+    clear_current_series_unless_hold(i);
+    let mut handles: Vec<f64> = Vec::new();
     let mut idx = 0;
     while idx < args.len() {
-        // Determine x, y for this group.
         let (x, y, mut next) = if idx + 1 < args.len() && !args[idx + 1].is_char() {
-            // plot(x, y, ...)
             (to_f64_vec(&args[idx]), to_f64_vec(&args[idx + 1]), idx + 2)
         } else {
-            // plot(y, ...) — implicit x = 1:n
             let y = to_f64_vec(&args[idx]);
             let x: Vec<f64> = (1..=y.len()).map(|k| k as f64).collect();
             (x, y, idx + 1)
         };
-        // Optional trailing linespec string for this group.
         let mut spec = fm_graphics::LineSpec::default();
         if let Some(s) = args.get(next).and_then(Array::as_string) {
             let parsed = parse_linespec(&s);
@@ -123,20 +547,29 @@ fn b_plot(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
                 next += 1;
             }
         }
-        add_line(i, x, y, &spec);
+        handles.push(add_line(i, x, y, &spec) as f64);
         idx = next;
     }
     i.graphics.dirty = true;
-    let id = i.graphics.current_figure;
-    Ok(vec![scalar(id as f64)])
+    let n = handles.len();
+    Ok(vec![build_real(DataClass::Double, &[n, 1], handles)])
 }
 
-/// Append a line series to the current axes, defaulting style/color.
-fn add_line(i: &mut Interpreter, x: Vec<f64>, y: Vec<f64>, spec: &fm_graphics::LineSpec) {
+/// Clear the current axes' series unless it is in `hold on` mode.
+fn clear_current_series_unless_hold(i: &mut Interpreter) {
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    if !ax.hold {
+        ax.series.clear();
+    }
+}
+
+/// Append a line series to the current axes; return its handle.
+fn add_line(i: &mut Interpreter, x: Vec<f64>, y: Vec<f64>, spec: &fm_graphics::LineSpec) -> u64 {
+    let (fig, axes_idx) = current_axes_loc(i);
     let ax = i.graphics.current_figure_mut().current_axes_mut();
     let series_index = ax.series.len();
     let line_style = if spec.line_style.is_empty() && spec.marker.is_empty() {
-        "-".to_string() // default solid line
+        "-".to_string()
     } else {
         spec.line_style.clone()
     };
@@ -153,13 +586,25 @@ fn add_line(i: &mut Interpreter, x: Vec<f64>, y: Vec<f64>, spec: &fm_graphics::L
         color,
         name: String::new(),
     }));
+    i.graphics.register_series(fig, axes_idx, ObjKind::Line)
+}
+
+/// The (figure id, current-axes index) of the current axes.
+fn current_axes_loc(i: &mut Interpreter) -> (u64, usize) {
+    let fig = i.graphics.ensure_figure();
+    let axes = i
+        .graphics
+        .scene
+        .figure(fig)
+        .map(|f| f.current_axes)
+        .unwrap_or(0);
+    (fig, axes)
 }
 
 fn b_line(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     if args.len() < 2 {
         return err("line: expected x and y vectors");
     }
-    // `line` always adds (never clears), regardless of hold.
     let x = to_f64_vec(&args[0]);
     let y = to_f64_vec(&args[1]);
     let mut spec = fm_graphics::LineSpec::default();
@@ -169,10 +614,74 @@ fn b_line(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
             spec = parsed;
         }
     }
-    add_line(i, x, y, &spec);
+    let h = add_line(i, x, y, &spec);
     i.graphics.dirty = true;
-    let id = i.graphics.current_figure;
-    Ok(vec![scalar(id as f64)])
+    Ok(vec![handle(h)])
+}
+
+// ---- contour ----------------------------------------------------------------
+
+/// `contour(Z)` / `contour(Z, n)` / `contour(Z, levels)` /
+/// `contour(X, Y, Z[, ...])`.
+fn b_contour(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return err("contour: expected a Z matrix");
+    }
+    // Decide whether the first three args are X, Y, Z.
+    let (z_arg, x, y, level_arg) =
+        if args.len() >= 3 && args[2].dims().iter().product::<usize>() > 1 {
+            (
+                &args[2],
+                to_f64_vec(&args[0]),
+                to_f64_vec(&args[1]),
+                args.get(3),
+            )
+        } else {
+            (&args[0], Vec::new(), Vec::new(), args.get(1))
+        };
+    let (z, _r, _c) = grid_of(z_arg);
+    let levels = match level_arg {
+        Some(a) => {
+            let v = to_f64_vec(a);
+            if v.len() == 1 {
+                // A scalar count → that many evenly spaced levels.
+                let count = v[0].max(1.0) as usize;
+                let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+                for row in &z {
+                    for &val in row {
+                        lo = lo.min(val);
+                        hi = hi.max(val);
+                    }
+                }
+                if lo.is_finite() && hi.is_finite() && count > 1 {
+                    (0..count)
+                        .map(|k| lo + (hi - lo) * k as f64 / (count as f64 - 1.0))
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                v
+            }
+        }
+        None => Vec::new(),
+    };
+    clear_current_series_unless_hold(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    i.graphics
+        .current_figure_mut()
+        .current_axes_mut()
+        .series
+        .push(Series::Contour(ContourSeries {
+            z,
+            x,
+            y,
+            levels,
+            colormap: "Viridis".into(),
+        }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Contour);
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
 }
 
 // ---- labels / title ---------------------------------------------------------
@@ -205,7 +714,6 @@ fn b_title(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
 // ---- legend / hold / grid / axis --------------------------------------------
 
 fn b_legend(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
-    // `legend off` hides; `legend(...)` with strings sets entry names + shows.
     let first = str_arg(args, 0);
     let ax = i.graphics.current_figure_mut().current_axes_mut();
     if first.as_deref() == Some("off") {
@@ -229,7 +737,6 @@ fn b_hold(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     match str_arg(args, 0).as_deref() {
         Some("on") => ax.hold = true,
         Some("off") => ax.hold = false,
-        // `hold` with no argument toggles.
         _ => ax.hold = !ax.hold,
     }
     Ok(vec![])
@@ -255,7 +762,7 @@ fn b_axis(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
                 ax.equal = false;
                 ax.limits = None;
             }
-            "tight" | "square" => {} // accepted; no-op for now
+            "tight" | "square" => {}
             _ => {}
         }
     } else if let Some(a) = args.first() {
@@ -280,7 +787,7 @@ fn grid_of(a: &Array) -> (Vec<Vec<f64>>, usize, usize) {
     let dims = a.dims();
     let rows = dims.first().copied().unwrap_or(0);
     let cols = dims.get(1).copied().unwrap_or(1);
-    let col_major = to_f64_vec(a); // column-major flat
+    let col_major = to_f64_vec(a);
     let mut grid = vec![vec![0.0; cols]; rows];
     for c in 0..cols {
         for r in 0..rows {
@@ -294,29 +801,28 @@ fn surface(i: &mut Interpreter, args: &[Array], wireframe: bool) -> Flow<Vec<Arr
     if args.is_empty() {
         return err("surf/mesh: expected a Z matrix");
     }
-    // surf(Z) or surf(X, Y, Z).
     let (z_arg, x, y) = if args.len() >= 3 {
         (&args[2], to_f64_vec(&args[0]), to_f64_vec(&args[1]))
     } else {
         (&args[0], Vec::new(), Vec::new())
     };
     let (z, _r, _c) = grid_of(z_arg);
-    {
-        let ax = i.graphics.current_figure_mut().current_axes_mut();
-        if !ax.hold {
-            ax.series.clear();
-        }
-        ax.series.push(Series::Surface(SurfaceSeries {
+    clear_current_series_unless_hold(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    i.graphics
+        .current_figure_mut()
+        .current_axes_mut()
+        .series
+        .push(Series::Surface(SurfaceSeries {
             z,
             x,
             y,
             colormap: "Viridis".into(),
             wireframe,
         }));
-    }
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Surface);
     i.graphics.dirty = true;
-    let id = i.graphics.current_figure;
-    Ok(vec![scalar(id as f64)])
+    Ok(vec![handle(h)])
 }
 
 fn b_image(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
@@ -324,19 +830,19 @@ fn b_image(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
         return err("image: expected a data matrix");
     }
     let (data, _r, _c) = grid_of(&args[0]);
-    {
-        let ax = i.graphics.current_figure_mut().current_axes_mut();
-        if !ax.hold {
-            ax.series.clear();
-        }
-        ax.series.push(Series::Image(ImageSeries {
+    clear_current_series_unless_hold(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    i.graphics
+        .current_figure_mut()
+        .current_axes_mut()
+        .series
+        .push(Series::Image(ImageSeries {
             data,
             colormap: "Viridis".into(),
         }));
-    }
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Image);
     i.graphics.dirty = true;
-    let id = i.graphics.current_figure;
-    Ok(vec![scalar(id as f64)])
+    Ok(vec![handle(h)])
 }
 
 // `semilogx`/`semilogy`/`loglog` set the scale then delegate to plot.

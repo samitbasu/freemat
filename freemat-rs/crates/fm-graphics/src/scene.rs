@@ -69,33 +69,51 @@ pub enum WireMessage<'a> {
 pub struct Figure {
     /// Stable figure id (FreeMat figure number; 1-based).
     pub id: u64,
-    /// The axes contained in this figure (Milestone 2 uses a single axes).
+    /// The axes contained in this figure (Stage 7.5: N axes for `subplot`).
     pub axes: Vec<Axes>,
+    /// Index of the current axes within `axes` (`gca` target). Defaults to the
+    /// last axes; `subplot`/`axes` switch it.
+    #[serde(default)]
+    pub current_axes: usize,
 }
 
 impl Figure {
-    /// A new empty figure with a single default axes.
+    /// A new empty figure with a single default full-frame axes.
     #[must_use]
     pub fn new(id: u64) -> Self {
         Figure {
             id,
             axes: vec![Axes::new()],
+            current_axes: 0,
         }
     }
 
-    /// The current (last) axes, creating one if absent.
+    /// The current axes (the `subplot`/`axes`-selected one), creating one if
+    /// the figure somehow has none.
     pub fn current_axes_mut(&mut self) -> &mut Axes {
         if self.axes.is_empty() {
             self.axes.push(Axes::new());
+            self.current_axes = 0;
         }
-        self.axes.last_mut().unwrap()
+        let idx = self.current_axes.min(self.axes.len() - 1);
+        self.current_axes = idx;
+        &mut self.axes[idx]
     }
 }
 
 /// A coordinate-system: data limits, scales, labels, title, grid, and the
 /// series (lines / surfaces / images) drawn into it.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Axes {
+    /// Stable handle id assigned by the interpreter's registry (`gca`, `set`,
+    /// `get` all key off this). `0` for an axes not yet registered.
+    #[serde(default)]
+    pub handle: u64,
+    /// Normalized position rectangle `[left, bottom, width, height]` in figure
+    /// coordinates (0..1). Drives the Plotly subplot domain. Default is the
+    /// full frame, matching a single-axes figure.
+    #[serde(default = "full_position")]
+    pub position: [f64; 4],
     /// The data series drawn in this axes, in z-order.
     pub series: Vec<Series>,
     /// Axes title (empty = none).
@@ -133,12 +151,48 @@ pub struct Axes {
     pub equal: bool,
 }
 
+impl Default for Axes {
+    fn default() -> Self {
+        Axes {
+            handle: 0,
+            position: full_position(),
+            series: Vec::new(),
+            title: String::new(),
+            xlabel: String::new(),
+            ylabel: String::new(),
+            zlabel: String::new(),
+            limits: None,
+            xscale: Scale::Linear,
+            yscale: Scale::Linear,
+            grid: false,
+            legend: None,
+            hold: false,
+            equal: false,
+        }
+    }
+}
+
 impl Axes {
-    /// A fresh empty axes.
+    /// A fresh empty full-frame axes.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// A fresh axes occupying the given normalized `[left, bottom, w, h]`.
+    #[must_use]
+    pub fn with_position(position: [f64; 4]) -> Self {
+        Axes {
+            position,
+            ..Self::default()
+        }
+    }
+}
+
+/// The default full-frame axes position `[left, bottom, width, height]`.
+#[must_use]
+fn full_position() -> [f64; 4] {
+    [0.0, 0.0, 1.0, 1.0]
 }
 
 /// Explicit axis limits set via `axis([xmin xmax ymin ymax])`.
@@ -193,6 +247,8 @@ pub enum Series {
     Surface(SurfaceSeries),
     /// A 2-D image / heatmap (`image`, `imagesc`).
     Image(ImageSeries),
+    /// A 2-D contour plot (`contour`).
+    Contour(ContourSeries),
 }
 
 /// A 2-D line series: x/y data plus style/color/marker/legend.
@@ -233,6 +289,25 @@ pub struct SurfaceSeries {
     /// `true` = wireframe (`mesh`), `false` = filled (`surf`).
     #[serde(default, skip_serializing_if = "is_false")]
     pub wireframe: bool,
+}
+
+/// A 2-D contour plot: a Z grid, optional x/y vectors, optional explicit levels.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ContourSeries {
+    /// Z values as rows (`z[row][col]`).
+    pub z: Vec<Vec<f64>>,
+    /// Optional x coordinates (length = number of columns).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub x: Vec<f64>,
+    /// Optional y coordinates (length = number of rows).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub y: Vec<f64>,
+    /// Explicit contour levels (empty = let the frontend auto-pick).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub levels: Vec<f64>,
+    /// Colormap name (Plotly colorscale).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub colormap: String,
 }
 
 /// A 2-D image / heatmap: a value grid.

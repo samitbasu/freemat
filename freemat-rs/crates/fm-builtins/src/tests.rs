@@ -528,6 +528,128 @@ fn figure_selects_new_figure() {
     assert_eq!(i.graphics.scene.figures.len(), 2);
 }
 
+// ---- Stage 7.5: handle property system, subplot, contour --------------------
+
+#[test]
+fn subplot_makes_two_axes_in_one_figure() {
+    let mut i = interp();
+    i.run("subplot(2,1,1); plot(1:3, [1 2 3]);").unwrap();
+    i.run("subplot(2,1,2); plot(1:3, [3 2 1]);").unwrap();
+    assert_eq!(i.graphics.scene.figures.len(), 1, "one figure");
+    let fig = i.graphics.scene.figure(1).unwrap();
+    assert_eq!(fig.axes.len(), 2, "two axes");
+    // Distinct positions: top cell is the upper half, bottom cell the lower.
+    let top = fig.axes[0].position;
+    let bottom = fig.axes[1].position;
+    assert!((top[1] - 0.5).abs() < 1e-9, "top axes bottom edge at 0.5");
+    assert!((bottom[1] - 0.0).abs() < 1e-9, "bottom axes at 0.0");
+    assert_ne!(top, bottom);
+    // Each axes has its own single line series.
+    assert_eq!(fig.axes[0].series.len(), 1);
+    assert_eq!(fig.axes[1].series.len(), 1);
+}
+
+#[test]
+fn subplot_reselects_existing_cell() {
+    let mut i = interp();
+    i.run("subplot(1,2,1); plot(1:3,[1 2 3]); subplot(1,2,2); plot(1:3,[3 2 1]);")
+        .unwrap();
+    // Re-selecting cell 1 must target the SAME axes, not create a third.
+    i.run("subplot(1,2,1); plot(1:3,[2 2 2]);").unwrap();
+    let fig = i.graphics.scene.figure(1).unwrap();
+    assert_eq!(fig.axes.len(), 2, "no extra axes created");
+}
+
+#[test]
+fn set_get_roundtrip_on_axes() {
+    let mut i = interp();
+    i.run("h = gca;").unwrap();
+    i.run("set(h, 'title', 'Hello');").unwrap();
+    i.run("t = get(h, 'title');").unwrap();
+    let t = i.context.lookup("t").and_then(|a| a.as_string()).unwrap();
+    assert_eq!(t, "Hello");
+    // xlim round-trip (numeric vector property).
+    i.run("set(h, 'xlim', [2 8]);").unwrap();
+    i.run("xl = get(h, 'xlim');").unwrap();
+    let xl = fm_interp::value::to_f64_vec(i.context.lookup("xl").unwrap());
+    assert_eq!(xl, vec![2.0, 8.0]);
+}
+
+#[test]
+fn set_get_unknown_property_echoes() {
+    let mut i = interp();
+    i.run("h = gca; set(h, 'MyTag', 42); v = get(h, 'MyTag');")
+        .unwrap();
+    let v = i
+        .context
+        .lookup("v")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+    assert_eq!(v, 42.0);
+}
+
+#[test]
+fn ishandle_and_gco_and_delete() {
+    let mut i = interp();
+    i.run("h = plot(1:3, [1 2 3]);").unwrap();
+    i.run("ok = ishandle(h); is_line = ishandle(h, 'line');")
+        .unwrap();
+    assert!(
+        i.context
+            .lookup("ok")
+            .and_then(fm_core::Array::as_f64)
+            .unwrap()
+            != 0.0
+    );
+    assert!(
+        i.context
+            .lookup("is_line")
+            .and_then(fm_core::Array::as_f64)
+            .unwrap()
+            != 0.0
+    );
+    // gco is the most recently created object (the line).
+    i.run("c = gco;").unwrap();
+    assert_eq!(
+        i.context.lookup("c").and_then(fm_core::Array::as_f64),
+        i.context.lookup("h").and_then(fm_core::Array::as_f64)
+    );
+    // Deleting the line removes the only series.
+    i.run("delete(h);").unwrap();
+    assert_eq!(i.graphics.scene.figure(1).unwrap().axes[0].series.len(), 0);
+    i.run("gone = ishandle(h);").unwrap();
+    assert!(
+        i.context
+            .lookup("gone")
+            .and_then(fm_core::Array::as_f64)
+            .unwrap()
+            == 0.0
+    );
+}
+
+#[test]
+fn contour_builds_a_contour_series() {
+    use fm_graphics::Series;
+    let mut i = interp();
+    i.run("contour(zeros(5));").unwrap();
+    let ax = &i.graphics.scene.figure(1).unwrap().axes[0];
+    assert_eq!(ax.series.len(), 1);
+    let Series::Contour(c) = &ax.series[0] else {
+        panic!("expected a contour series");
+    };
+    assert_eq!(c.z.len(), 5);
+    assert_eq!(c.z[0].len(), 5);
+}
+
+#[test]
+fn close_all_clears_figures_and_handles() {
+    let mut i = interp();
+    i.run("plot(1:3,[1 2 3]); figure; plot(1:3,[3 2 1]); close all;")
+        .unwrap();
+    assert_eq!(i.graphics.scene.figures.len(), 0);
+    assert!(i.graphics.all_handles().is_empty());
+}
+
 #[test]
 fn drawnow_flushes_through_sink() {
     use fm_graphics::{GraphicsSink, Scene};
