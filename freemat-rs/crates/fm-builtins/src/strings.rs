@@ -31,6 +31,41 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("printf", b_printf);
     table.add_builtin("num2str", b_num2str);
     table.add_builtin("mat2str", b_mat2str);
+    table.add_builtin("fileparts", b_fileparts);
+}
+
+/// `[path, name, ext, ver] = fileparts(filename)` — split a path into its
+/// directory, base name, and extension. Mirrors FreeMat's `FilePartsFunction`
+/// (Qt `QFileInfo`): `path` is the directory (no trailing slash), `name` is the
+/// complete base name (everything before the LAST `.`), `ext` is the last
+/// extension *including* the dot (or `''`), and `ver` is always an empty string
+/// (MATLAB compatibility). A leading-dot file (e.g. `.bashrc`) is treated as a
+/// name with no extension, matching Qt.
+fn b_fileparts(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "fileparts")?;
+    let full = str_of(&args[0]);
+
+    // Split off the directory at the last path separator (accept both `/` and
+    // platform separators; the corpus uses `/`).
+    let sep = full.rfind(['/', '\\']);
+    let (dir, file) = match sep {
+        Some(i) => (&full[..i], &full[i + 1..]),
+        None => ("", full.as_str()),
+    };
+
+    // Within the file portion, the extension is everything after the LAST dot,
+    // unless that dot is the first character (a dotfile has no extension).
+    let (name, ext) = match file.rfind('.') {
+        Some(i) if i > 0 => (&file[..i], &file[i..]),
+        _ => (file, ""),
+    };
+
+    Ok(vec![
+        Array::char_string(dir),
+        Array::char_string(name),
+        Array::char_string(ext),
+        Array::char_string(""),
+    ])
 }
 
 fn str_of(a: &Array) -> String {

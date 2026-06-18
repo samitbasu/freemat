@@ -364,7 +364,7 @@ impl<'src> Parser<'src> {
             }
             TokenKind::Break => self.keyword_stmt(KeywordStmt::Break, start),
             TokenKind::Continue => self.keyword_stmt(KeywordStmt::Continue, start),
-            TokenKind::Return => self.keyword_stmt(KeywordStmt::Return, start),
+            TokenKind::Return => self.return_stmt(start),
             TokenKind::Retall => self.keyword_stmt(KeywordStmt::Retall, start),
             TokenKind::Keyboard => self.keyword_stmt(KeywordStmt::Keyboard, start),
             TokenKind::Quit => self.keyword_stmt(KeywordStmt::Quit, start),
@@ -383,6 +383,27 @@ impl<'src> Parser<'src> {
     fn keyword_stmt(&mut self, kw: KeywordStmt, start: Span) -> Result<(StmtKind, Span)> {
         self.bump()?;
         Ok((StmtKind::Keyword(kw), start))
+    }
+
+    /// `return` (FreeMat allows a trailing expression, e.g. `return (p==q);`).
+    ///
+    /// FreeMat parses `return` as a singleton statement and `return` exits the
+    /// function immediately, so any trailing expression on the same line is dead
+    /// code. We accept and discard it so files like `tests/io/test_file1.m`
+    /// (which end in `return (p==q);`) load. If no expression follows, this is a
+    /// plain `return`.
+    fn return_stmt(&mut self, start: Span) -> Result<(StmtKind, Span)> {
+        self.bump()?;
+        // A terminator / end-of-block means a bare `return`.
+        if !matches!(
+            self.peek(),
+            TokenKind::Semicolon | TokenKind::Comma | TokenKind::Newline
+        ) && !self.block_terminator()
+        {
+            // Parse and discard the trailing expression (dead code after return).
+            let _ = self.expression()?;
+        }
+        Ok((StmtKind::Keyword(KeywordStmt::Return), start))
     }
 
     fn declaration(&mut self, global: bool) -> Result<(StmtKind, Span)> {

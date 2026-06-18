@@ -375,6 +375,26 @@ fn keyword_statements() {
 }
 
 #[test]
+fn return_with_trailing_expression() {
+    // FreeMat accepts `return (expr);` (the expression is dead code after the
+    // return, but must parse): tests/io/test_file1.m ends with `return (p==q);`.
+    assert!(matches!(
+        only_stmt("return (p==q);"),
+        StmtKind::Keyword(KeywordStmt::Return)
+    ));
+    assert!(matches!(
+        only_stmt("return x + 1"),
+        StmtKind::Keyword(KeywordStmt::Return)
+    ));
+    // A whole function body ending in `return (expr);` parses.
+    let prog = parse_program("function y = f(p,q)\n  y = 1;\n  return (p==q);\n");
+    assert!(
+        prog.is_ok(),
+        "function with trailing return-expr failed: {prog:?}"
+    );
+}
+
+#[test]
 fn global_persistent_declarations() {
     assert!(matches!(only_stmt("global a b c"), StmtKind::Global(ref v) if v.len() == 3));
     assert!(matches!(only_stmt("persistent p q"), StmtKind::Persistent(ref v) if v.len() == 2));

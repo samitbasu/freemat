@@ -162,6 +162,72 @@ fn eig_symmetric() {
     approx(&Array::double_matrix(&[2, 1], vals), &[2.0, 3.0]);
 }
 
+/// Max-abs of the flat (column-major) read of an Array.
+fn max_abs(a: &Array) -> f64 {
+    to_f64(a).iter().fold(0.0_f64, |m, &v| m.max(v.abs()))
+}
+
+#[test]
+fn eig_gen_eigenvalues_match_and_residual_small() {
+    // General real pencil (A, B). The generalized eigenvalues are the standard
+    // eigenvalues of B\A; the eigenvectors satisfy A*V = B*V*D.
+    let a = mat(3, 3, &[4.0, 1.0, 0.0, 2.0, 3.0, 1.0, 1.0, 0.0, 5.0]);
+    let b = mat(3, 3, &[2.0, 0.0, 0.0, 0.0, 3.0, 0.0, 1.0, 0.0, 4.0]);
+
+    // Eigenvalues-only form equals eig(B\A).
+    let g = eig_gen(&a, &b, 1).unwrap();
+    let m = mldivide(&b, &a).unwrap();
+    let std = eig(&m, 1).unwrap();
+    let mut gv = to_f64(&g[0]);
+    let mut sv = to_f64(&std[0]);
+    gv.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    sv.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    for (x, y) in gv.iter().zip(&sv) {
+        assert!((x - y).abs() < 1e-9, "eigenvalue mismatch {gv:?} vs {sv:?}");
+    }
+
+    // [V,D] residual: norm(A*V - B*V*D) within ~8*max|d|*eps*n.
+    let vd = eig_gen(&a, &b, 2).unwrap();
+    let (v, d) = (&vd[0], &vd[1]);
+    let av = mtimes(&a, v).unwrap();
+    let bv = mtimes(&b, v).unwrap();
+    let bvd = mtimes(&bv, d).unwrap();
+    // residual = A*V - B*V*D
+    let avv = to_f64(&av);
+    let bvdv = to_f64(&bvd);
+    let er = avv
+        .iter()
+        .zip(&bvdv)
+        .fold(0.0_f64, |m, (x, y)| m.max((x - y).abs()));
+    let maxd = max_abs(d);
+    let bnd = 8.0 * maxd * f64::EPSILON * 3.0;
+    assert!(er < bnd.max(1e-12), "residual {er} exceeds bound {bnd}");
+}
+
+#[test]
+fn eig_gen_symmetric_definite_residual_small() {
+    // Symmetric A, SPD B (B = C*C').
+    let a = mat(3, 3, &[2.0, -1.0, 0.0, -1.0, 2.0, -1.0, 0.0, -1.0, 2.0]);
+    let c = mat(3, 3, &[3.0, 1.0, 0.0, 1.0, 4.0, 1.0, 0.0, 1.0, 5.0]);
+    let ct = super::transpose(&c).unwrap();
+    let b = mtimes(&c, &ct).unwrap(); // SPD
+
+    let vd = eig_gen(&a, &b, 2).unwrap();
+    let (v, d) = (&vd[0], &vd[1]);
+    let av = mtimes(&a, v).unwrap();
+    let bv = mtimes(&b, v).unwrap();
+    let bvd = mtimes(&bv, d).unwrap();
+    let avv = to_f64(&av);
+    let bvdv = to_f64(&bvd);
+    let er = avv
+        .iter()
+        .zip(&bvdv)
+        .fold(0.0_f64, |m, (x, y)| m.max((x - y).abs()));
+    let maxd = max_abs(d);
+    let bnd = 10.0 * max_abs(&eig(&b, 1).unwrap()[0]) * maxd * f64::EPSILON * 3.0;
+    assert!(er < bnd.max(1e-12), "residual {er} exceeds bound {bnd}");
+}
+
 #[test]
 fn chol_upper() {
     // A = [4 2; 2 3] (SPD). R'*R = A, R upper triangular.

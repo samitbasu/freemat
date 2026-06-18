@@ -1370,9 +1370,12 @@ impl Interpreter {
             if let Some(v) = self.context.lookup(oname) {
                 out.push(v.clone());
             } else if i < want {
-                return Err(Signal::Error(InterpError::msg(format!(
-                    "output argument '{oname}' is not assigned"
-                ))));
+                // FreeMat (`FunctionDef.cpp` `evaluateFunc`) does not error when
+                // a requested output is unassigned — it fills it with an empty
+                // array and only warns ("one or more outputs not assigned").
+                // Match that: return `[]` so e.g. `return (expr)` dead-code files
+                // behave as in FreeMat (the empty value reads as false downstream).
+                out.push(Array::empty());
             } else {
                 break;
             }

@@ -81,6 +81,12 @@ const CURATED: &[&str] = &[
     // Stage-8 — transforms (linalg + fft), now enabled
     "transforms/test_eig3",
     "transforms/test_svd1",
+    // Tier-1 harness fix — file's public function differs from the filename
+    // (`test_resize5.m` defines `test_resize4`, etc.); now invoked correctly.
+    "array/test_resize5",
+    "array/test_resize8",
+    // Tier-1 — `wbtest_near` whitebox helper loaded + `conv2` complex path.
+    "signal/test_conv2_1",
     // typecast — uint64 round trip
     "typecast/test_uint64_1",
     // suite — assignment, control flow, subsetting, matrix concat, persistents
@@ -208,7 +214,13 @@ fn curated_subset_passes() {
 /// expansion; pass-by-reference `&x`; `conv2`/`dlmread`/`dlmwrite`/`which`/
 /// `dir`/`pwd`/`cd`) raised the live total to 650/677 (96.0%). The floor allows
 /// a margin for PRNG-dependent (`rand`/`randn`/`sprandn`/`randi`/`eig`) tests.
-const PASS_FLOOR: usize = 645;
+///
+/// The Tier-1 + generalized-eig pass (harness invokes the file's public function
+/// regardless of filename; `wbtest_near` helper loaded; `fileparts`/`xnrm2`
+/// builtins; `return (expr)` parse; unassigned outputs return `[]` like FreeMat;
+/// `eig(A,B)` via QZ + inverse-iteration refinement) raised the live total to
+/// 658/677 (97.2%).
+const PASS_FLOOR: usize = 653;
 
 /// **Fast pass-floor guard (gates `cargo test`).** Running the *whole* covered
 /// corpus takes minutes (it spins up a fresh interpreter and re-parses every

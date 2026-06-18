@@ -18,6 +18,7 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("qr", b_qr);
     table.add_builtin("chol", b_chol);
     table.add_builtin("norm", b_norm);
+    table.add_builtin("xnrm2", b_xnrm2);
     table.add_builtin("rank", b_rank);
     table.add_builtin("pinv", b_pinv);
     table.add_builtin("trace", b_trace);
@@ -89,6 +90,14 @@ fn b_det(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
 
 fn b_eig(_i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
     need(args, 1, "eig")?;
+    // `eig(A, B)` — generalized eigenproblem of the pencil (A, B) — but only when
+    // the second argument is a numeric matrix. A char second argument is an
+    // option string (e.g. `eig(A, 'nobalance')`), handled by the standard path.
+    if let Some(b) = args.get(1)
+        && b.class() != DataClass::Char
+    {
+        return fm_linalg::eig_gen(&args[0], b, nargout).map_err(wrap);
+    }
     fm_linalg::eig(&args[0], nargout).map_err(wrap)
 }
 
@@ -143,6 +152,16 @@ fn b_norm(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
         }
     };
     Ok(vec![fm_linalg::norm(&args[0], kind).map_err(wrap)?])
+}
+
+/// `xnrm2(A)` — Euclidean (2-)norm of the flattened array (FreeMat's BLAS
+/// `?nrm2` wrapper, used by the `wbtest_near` whitebox helper). Equivalent to
+/// `norm(A(:))` / the Frobenius norm; real for real input.
+fn b_xnrm2(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "xnrm2")?;
+    Ok(vec![
+        fm_linalg::norm(&args[0], NormKind::Fro).map_err(wrap)?,
+    ])
 }
 
 fn b_rank(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {

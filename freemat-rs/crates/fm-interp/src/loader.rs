@@ -20,10 +20,28 @@ impl Interpreter {
     /// # Errors
     /// Returns an [`InterpError`] if the file cannot be read or parsed.
     pub fn load_file(&mut self, path: impl AsRef<Path>) -> Result<(), InterpError> {
+        self.load_file_main(path).map(|_| ())
+    }
+
+    /// Like [`Self::load_file`], but returns the name of the public (first
+    /// top-level) function the file defined, if any.
+    ///
+    /// In FreeMat a function file's *public* function is the first top-level
+    /// `function` in the file, and its name may differ from the filename (the
+    /// corpus has several such cases, e.g. `array/test_resize5.m` defines
+    /// `test_resize4`). Callers that want to invoke the defined function rather
+    /// than guess from the filename use this entry point.
+    ///
+    /// # Errors
+    /// Returns an [`InterpError`] if the file cannot be read or parsed.
+    pub fn load_file_main(
+        &mut self,
+        path: impl AsRef<Path>,
+    ) -> Result<Option<String>, InterpError> {
         let path = path.as_ref();
         let src = std::fs::read_to_string(path)
             .map_err(|e| InterpError::msg(format!("cannot read '{}': {e}", path.display())))?;
-        self.define_source(&src)
+        self.define_source_main(&src)
     }
 
     /// Parse `src` and register any function definitions it contains (the
@@ -32,10 +50,21 @@ impl Interpreter {
     /// # Errors
     /// Returns an [`InterpError`] if `src` fails to parse.
     pub fn define_source(&mut self, src: &str) -> Result<(), InterpError> {
+        self.define_source_main(src).map(|_| ())
+    }
+
+    /// Like [`Self::define_source`], returning the public function's name.
+    ///
+    /// # Errors
+    /// Returns an [`InterpError`] if `src` fails to parse.
+    pub fn define_source_main(&mut self, src: &str) -> Result<Option<String>, InterpError> {
         let program = parse_program(src).map_err(|e| InterpError::msg(e.to_string()))?;
         if let Program::Functions(defs) = program {
+            let main = defs.first().map(|d| d.name.clone());
             self.load_functions(defs, src);
+            Ok(main)
+        } else {
+            Ok(None)
         }
-        Ok(())
     }
 }

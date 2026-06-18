@@ -21,7 +21,7 @@
 //!   `eig`: [`faer::linalg::solvers::Eigen`], `chol`: [`Llt::new`].
 //! - norms: `MatRef::norm_l2` / `norm_l1` / `norm_max`.
 
-use faer::linalg::solvers::{Eigen, Llt, Solve, SolveLstsq, Svd};
+use faer::linalg::solvers::{Eigen, GeneralizedEigen, Llt, Solve, SolveLstsq, Svd};
 use faer::{Mat, MatRef, Side, c64};
 use fm_core::{Array, C64};
 
@@ -508,6 +508,149 @@ pub fn eig(a: &Array, nargout: usize) -> Result<Vec<Array>> {
         for i in 0..n {
             vdata.push(u[(i, j)]);
         }
+    }
+    let v_arr = build_from_c64(n, n, vdata);
+    let mut ddata = vec![c64::new(0.0, 0.0); n * n];
+    for (i, &e) in evals.iter().enumerate() {
+        ddata[i + i * n] = e;
+    }
+    let d_arr = build_from_c64(n, n, ddata);
+    Ok(vec![v_arr, d_arr])
+}
+
+/// Generalized eigenvalues / eigenvectors of the pencil `(A, B)`.
+///
+/// With `<2` outputs returns the column vector of generalized eigenvalues; with
+/// `>=2` returns `[V, D]` such that `A*V = B*V*D` (eigenvectors in the columns
+/// of `V`, eigenvalues on the diagonal of `D`).
+///
+/// **Method.** We use faer's QZ-algorithm generalized eigensolver
+/// ([`GeneralizedEigen`], the analogue of LAPACK `dggev`/`zggev` that FreeMat
+/// itself calls). It returns eigenvectors `U` and the pencil factors `S_a`,
+/// `S_b`; the generalized eigenvalues are `lambda_i = S_a[i] / S_b[i]` and the
+/// eigenvectors satisfy `A*U = B*U*diag(lambda)`. This is backward-stable and
+/// meets the conformance tolerance (`~8*max|d|*eps*n`) for the general,
+/// symmetric-definite, real/single, and complex cases uniformly — unlike a
+/// `B\A`-then-standard-`eig` reduction, whose accuracy degrades with the
+/// conditioning of `B` and of `M`'s eigenvectors at the larger sizes the suite
+/// exercises (up to 100×100).
+///
+/// 2-norm of a complex vector.
+fn cnorm(v: &[c64]) -> f64 {
+    v.iter()
+        .map(num_complex::Complex::norm_sqr)
+        .sum::<f64>()
+        .sqrt()
+}
+
+/// Residual `||A*v - lambda*B*v||_2` for one eigenpair (column-major `a`, `b`).
+fn pencil_residual(a: &Mat<c64>, b: &Mat<c64>, n: usize, v: &[c64], lambda: c64) -> f64 {
+    let vc = Mat::<c64>::from_fn(n, 1, |i, _| v[i]);
+    let r = a * &vc - (b * &vc) * faer::Scale(lambda);
+    (0..n).map(|i| r[(i, 0)].norm_sqr()).sum::<f64>().sqrt()
+}
+
+/// One inverse-iteration refinement step of a generalized eigenpair `(v, lambda)`
+/// of the pencil `(A, B)`: `w = (A - lambda*B) \ (B*v)`, renormalize, and update
+/// `lambda` by the generalized Rayleigh quotient `(w* A w)/(w* B w)`. The update
+/// is kept only if it reduces the residual `||A*w - lambda*B*w||`.
+fn refine_eigenpair(a: &Mat<c64>, b: &Mat<c64>, n: usize, v: &mut Vec<c64>, lambda: &mut c64) {
+    let before = pencil_residual(a, b, n, v, *lambda);
+    if before == 0.0 {
+        return;
+    }
+    // Shifted matrix A - lambda*B.
+    let shifted = a - b * faer::Scale(*lambda);
+    let bv = Mat::<c64>::from_fn(n, 1, |i, _| v[i]);
+    let mut rhs = b * &bv;
+    // Solve (A - lambda*B) w = B v via LU; if it fails, leave the pair as-is.
+    let lu = shifted.partial_piv_lu();
+    lu.solve_in_place(rhs.as_mut());
+    let mut w: Vec<c64> = (0..n).map(|i| rhs[(i, 0)]).collect();
+    let wn = cnorm(&w);
+    if !wn.is_finite() || wn == 0.0 {
+        return;
+    }
+    for x in &mut w {
+        *x /= wn;
+    }
+    // Generalized Rayleigh quotient: lambda = (w^H A w) / (w^H B w).
+    let wc = Mat::<c64>::from_fn(n, 1, |i, _| w[i]);
+    let aw = a * &wc;
+    let bw = b * &wc;
+    let mut num = c64::new(0.0, 0.0);
+    let mut den = c64::new(0.0, 0.0);
+    for i in 0..n {
+        let wconj = w[i].conj();
+        num += wconj * aw[(i, 0)];
+        den += wconj * bw[(i, 0)];
+    }
+    let new_lambda = if den.norm_sqr() > 0.0 {
+        num / den
+    } else {
+        *lambda
+    };
+    let after = pencil_residual(a, b, n, &w, new_lambda);
+    if after.is_finite() && after < before {
+        *v = w;
+        *lambda = new_lambda;
+    }
+}
+
+/// # Errors
+/// Returns [`LinalgError`] if `A`/`B` are not square or of mismatched size, or
+/// if the decomposition fails to converge.
+pub fn eig_gen(a: &Array, b: &Array, nargout: usize) -> Result<Vec<Array>> {
+    let am = MatData::from_array(a)?;
+    let bm = MatData::from_array(b)?;
+    if am.rows != am.cols || bm.rows != bm.cols {
+        return Err(LinalgError::new("matrices for eig must be square"));
+    }
+    if am.rows != bm.rows {
+        return Err(LinalgError::new("eig(A,B): A and B must be the same size"));
+    }
+    let n = am.rows;
+
+    // Always solve in the complex domain (the eigenvalues / eigenvectors are
+    // complex in general); `build_from_c64` narrows real results back to double.
+    let decomp = GeneralizedEigen::<f64>::new(am.view(), bm.view())
+        .map_err(|_| LinalgError::new("eig(A,B) failed to converge"))?;
+
+    let s_a = decomp.S_a();
+    let s_b = decomp.S_b();
+    let mut evals: Vec<c64> = (0..n).map(|i| s_a[i] / s_b[i]).collect();
+    let u = decomp.U();
+
+    // Refine each (eigenvector, eigenvalue) pair with one step of inverse
+    // iteration against the pencil. faer's QZ is backward-stable but, at the
+    // larger sizes the conformance suite exercises (up to 100x100), a moderately
+    // ill-conditioned eigenvector occasionally leaves the residual
+    // `||A*v - lambda*B*v||` a small factor above the tight test tolerance
+    // (`8*max|d|*eps*n`). One inverse-iteration step — `w = (A - lambda*B) \ (B*v)`,
+    // renormalized, with `lambda` updated by the generalized Rayleigh quotient —
+    // is quadratically convergent and reliably brings the residual under the
+    // bound, matching the accuracy LAPACK's `?ggev` gives FreeMat. The step is
+    // accepted per-column only if it does not increase the residual (a guard for
+    // pathological/defective columns).
+    //
+    // We always refine (even for the eigenvalues-only form) so the single-output
+    // `g = eig(A,B)` and the diagonal of the two-output `[V,D] = eig(A,B)` return
+    // the *same* refined eigenvalues — the suite cross-checks `sort(g)` against
+    // `sort(diag(D))` to the same tolerance.
+    let a_mat = Mat::<c64>::from_fn(n, n, |i, j| am.data[i + j * n]);
+    let b_mat = Mat::<c64>::from_fn(n, n, |i, j| bm.data[i + j * n]);
+    let mut vdata = Vec::with_capacity(n * n);
+    for j in 0..n {
+        let mut v: Vec<c64> = (0..n).map(|i| u[(i, j)]).collect();
+        let mut lambda = evals[j];
+        if lambda.is_finite() {
+            refine_eigenpair(&a_mat, &b_mat, n, &mut v, &mut lambda);
+        }
+        evals[j] = lambda;
+        vdata.extend_from_slice(&v);
+    }
+    if nargout < 2 {
+        return Ok(vec![build_from_c64(n, 1, evals)]);
     }
     let v_arr = build_from_c64(n, n, vdata);
     let mut ddata = vec![c64::new(0.0, 0.0); n * n];

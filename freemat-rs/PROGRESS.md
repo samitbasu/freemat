@@ -1328,15 +1328,73 @@ PRNG/eig tests). Curated must-pass list gained `fptr1`, `call3/4`, `matcat2/3`,
   `conv2`).
 - **New dep:** `fm-core → fm-parser` (path dep, for the closure body AST). No new
   external crates.
-- **Deferred (documented, not done):** generalized eigenvalue `eig(a,b)` (test_eig4/5 —
-  needs a QZ/generalized solver, larger), sparse `lu` must-error-on-`inf`
-  (test_sparse75), `imwrite`/`imread` (needs an image lib), `eigs` (ARPACK),
-  `fitfun`/`gausfit` (curvefit — Stage 9), `wbtest_near`/`fileparts`/`source` (toolbox
-  helpers the conformance harness does not load, so test_conv2_1/test_source still
-  error despite `conv2`/`which` working), `int2bin`/`bin2int` N-D round-trip
-  (test_bin2int1, also a filename≠function corpus quirk), and a handful of FreeMat
-  corpus files whose filename ≠ defined function name (test_resize5/8, test_file1's
-  `return (expr)` form).
+- **Deferred at the time (most now resolved in the Tier-1 + generalized-eig pass
+  below):** generalized `eig(a,b)` (now done — QZ + inverse-iteration), `wbtest_near`/
+  `fileparts`/filename≠function corpus quirks / `return (expr)` (now done). Still
+  open: sparse `lu` must-error-on-`inf` (test_sparse75), `imwrite`/`imread`,
+  `eigs` (ARPACK), `fitfun`/`gausfit` (curvefit), `source`, `int2bin`/`bin2int`
+  N-D round-trip (test_bin2int1).
+
+### Tier-1 (harness/parser/corpus quirks) + generalized eig — done
+
+Closed the highest-leverage remaining gaps: test-infra quirks that masked working
+behavior, three small interpreter/parser/builtin fixes, and the generalized
+eigenproblem `eig(A,B)`. **Conformance 650/677 (96.0%) → 658/677 (97.2%), Δ +8.**
+
+- **Harness invokes the file's *public* function, not the filename.** Several
+  FreeMat corpus files define a function whose name ≠ the filename (e.g.
+  `array/test_resize5.m` defines `test_resize4`; `suite/test_bin2int1.m` defines
+  `bin2int1`). `Interpreter::load_file_main`/`define_source_main` now return the
+  first top-level function's name; the harness (`fm-conformance/src/lib.rs`) calls
+  *that* instead of guessing from the stem (falling back to the stem if the file
+  failed to load). No regression — the public name equals the stem for every other
+  file. Flipped `array/test_resize5`,`test_resize8`; surfaced the real (non-quirk)
+  failures behind `test_bin2int1`/`test_file1` (now honest FAILs, see below).
+- **Whitebox helper loaded + `xnrm2`.** Copied `toolbox/util/wbtest_near.m` into
+  the self-contained `data/tests/_helpers/`, and added the `xnrm2` builtin it needs
+  (FreeMat's BLAS `?nrm2` = Frobenius/2-norm of the flattened array). Flipped
+  `signal/test_conv2_1` and `suite/test_conv2_1`.
+- **`fileparts` builtin** (`fm-builtins/strings.rs`): `[path,name,ext,ver] =
+  fileparts(f)`, mirroring FreeMat's Qt-`QFileInfo` semantics (dir / complete base
+  name / last-extension-with-dot / empty version; dotfiles have no extension). Real
+  Rust builtin (no Qt). `freemat/test_source` now gets past `fileparts` but still
+  needs `source` (out of scope) — left failing.
+- **`return (expr)` parse gap** (`fm-parser`): FreeMat parses `return` as a
+  singleton statement; a trailing parenthesized expression on the same line is dead
+  code. The parser now accepts and discards an optional trailing expression after
+  `return`, so `suite/io test_file1.m` (ends `return (p==q);`) loads. Parser test
+  added. Note `test_file1` then runs to a bare `return` with `test_val` unassigned —
+  which exposed that FreeMat (`FunctionDef.cpp` `evaluateFunc`) returns `[]` (with a
+  warning), *not* an error, for an unassigned output. Matched that in
+  `collect_outputs` (was erroring "output not assigned"). `test_file1` is therefore
+  a buggy corpus test that returns `[]` ⇒ honest FAIL in both FreeMat and here.
+- **Generalized eigenvalues `eig(A,B)`** (`fm-linalg::eig_gen`, wired into the `eig`
+  builtin's 2-arg numeric form; a *char* second arg stays the `'nobalance'` option
+  path, so `test_eig3` is unaffected). Method: faer 0.24's QZ generalized
+  eigensolver (`GeneralizedEigen`, the `dggev`/`zggev` analogue FreeMat itself uses),
+  λ = S_a/S_b, eigenvectors in `U`. faer's QZ alone was *marginally* over the very
+  tight test bound (`8*max|d|*eps*n`) at the largest sizes (≈1.4–3.2× at n=82–100),
+  so each eigenpair gets **one inverse-iteration refinement step**
+  (`w=(A−λB)\(Bv)`, renormalize, λ←generalized Rayleigh quotient, accepted only if
+  the residual drops) — quadratically convergent, dropping the worst-case ratio to
+  ≈0.1 (0/40 outliers over many random trials at n=90, real & complex). Both the
+  1-output `g=eig(A,B)` and the diagonal of `[V,D]=eig(A,B)` share the refinement
+  loop so the suite's `sort(g)==sort(diag(D))` cross-check holds. Handles
+  real/single/complex/`dcomplex` uniformly (everything narrows back from c64).
+  Flipped `suite/test_eig4`,`test_eig5` and `transforms/test_eig4`,`test_eig5`.
+  Unit tests: eigenvalue match + `||A*V−B*V*D||` residual bound for a small real and
+  a small symmetric-definite case.
+- **New pass-floor:** `PASS_FLOOR` 645 → **653** (live 658; margin for PRNG-dependent
+  `rand`/`randn`/`eig` tests, now robust). Curated must-pass gained
+  `array/test_resize5`,`test_resize8`,`signal/test_conv2_1`.
+- **New deps:** none external. `eig(A,B)` uses faer's already-present `gevd` module
+  (`GeneralizedEigen`, `Scale`); `num_complex` already a `fm-linalg` dep.
+- **Still failing in these clusters (out of scope):** `test_bin2int1` (FAIL — the
+  underlying `int2bin`/`bin2int` don't handle the test's 3-D input), `test_file1`
+  (FAIL — buggy dead-code corpus test, matches FreeMat), `test_source` (needs
+  `source`), `test_imwrite_imread` (`imwrite`), `test_sparse45` (`eigs`/ARPACK),
+  `test_fitfun*`/`test_gausfit1` (curvefit), `test_parallel_fft1` (threading),
+  `test_ctype1` (C-FFI), `test_sparse75` (sparse-LU must-error-on-inf).
 
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,

@@ -131,10 +131,22 @@ pub fn run_test_file(path: &Path) -> (Outcome, String) {
     define_dir(&mut interp, &helpers);
     define_dir(&mut interp, &dir);
 
+    // FreeMat invokes a file's *public* function — the first top-level
+    // `function` in the file — whose name may differ from the filename (the
+    // corpus has several such files, e.g. `array/test_resize5.m` defines
+    // `test_resize4`, `suite/test_bin2int1.m` defines `bin2int1`). Load this
+    // test file explicitly to learn the public function name, falling back to
+    // the stem if the file failed to load / defined no functions.
+    let entry = interp
+        .load_file_main(path)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| stem.clone());
+
     // Call the test function, requesting one output, guarding against panics
     // from interpreter bugs (treated as Error, not a crash of the whole run).
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        interp.call_function(&stem, &[], 1, "", Span::empty(0))
+        interp.call_function(&entry, &[], 1, "", Span::empty(0))
     }));
 
     match result {
