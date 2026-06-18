@@ -1119,6 +1119,14 @@ fn switch_matches(value: &Array, label: &Array) -> bool {
 
 /// Element-wise transpose (2-D only); `conjugate` negates imaginary parts.
 fn transpose(v: &Array, conjugate: bool) -> Flow<Array> {
+    // Sparse transpose stays sparse (CSC transpose). Conjugate transpose of a
+    // complex sparse would negate the imaginary part; the corpus only transposes
+    // real sparse, so densify the rare conjugate-complex case for fidelity.
+    if let Some(s) = v.as_sparse()
+        && !(conjugate && s.is_complex())
+    {
+        return Ok(Array::sparse(s.transpose()));
+    }
     let dims = v.dims();
     if dims.len() != 2 {
         return Err(Signal::Error(InterpError::msg(

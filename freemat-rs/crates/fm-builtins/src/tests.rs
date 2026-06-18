@@ -1036,3 +1036,108 @@ fn seed_reproduces_sequence() {
         .unwrap();
     assert_eq!(i.context.lookup("s").unwrap().as_f64(), Some(1.0));
 }
+
+// ---- Stage 9: sparse matrices -----------------------------------------------
+
+#[test]
+fn sparse_full_round_trip() {
+    // sparse(dense) then full() recovers the original.
+    let orig = vec_of("a = [0 0 2; 1 0 0; 0 3 0];", "a");
+    let back = vec_of("a = [0 0 2; 1 0 0; 0 3 0]; b = full(sparse(a));", "b");
+    assert_eq!(orig, back);
+}
+
+#[test]
+fn issparse_and_nnz() {
+    let mut i = interp();
+    i.run("A = sparse([0 0 2; 1 0 0; 0 3 0]); is = issparse(A); n = nnz(A);")
+        .unwrap();
+    assert_eq!(i.context.lookup("is").unwrap().as_f64(), Some(1.0));
+    assert_eq!(i.context.lookup("n").unwrap().as_f64(), Some(3.0));
+    // A dense matrix is not sparse.
+    i.run("d = issparse([1 2 3]);").unwrap();
+    assert_eq!(i.context.lookup("d").unwrap().as_f64(), Some(0.0));
+}
+
+#[test]
+fn speye_full() {
+    let v = vec_of("e = full(speye(3));", "e");
+    assert_eq!(v, vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
+}
+
+#[test]
+fn spdiags_diagonal() {
+    // spdiags of a length-3 column on the main diagonal of a 3x3.
+    let v = vec_of("S = spdiags([1;2;3], 0, 3, 3); f = full(S);", "f");
+    assert_eq!(v, vec![1.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 3.0]);
+}
+
+#[test]
+fn sparse_find_triplets() {
+    // [i,j,v] = find(sparse(...)) then rebuild via sparse(i,j,v).
+    let v = vec_of(
+        "a = [0 0 2; 1 0 0; 0 3 0]; A = sparse(a); \
+         [i,j,s] = find(A); B = sparse(i,j,s,3,3); f = full(B);",
+        "f",
+    );
+    assert_eq!(v, vec![0.0, 1.0, 0.0, 0.0, 0.0, 3.0, 2.0, 0.0, 0.0]);
+}
+
+#[test]
+fn sparse_add_and_scale() {
+    // (sparse + sparse) and (scalar * sparse) stay correct vs dense.
+    let v = vec_of(
+        "a = [1 0; 0 2]; b = [0 3; 4 0]; \
+         C = sparse(a) + sparse(b); f = full(2 * C);",
+        "f",
+    );
+    // a+b = [1 3; 4 2]; 2*(a+b) = [2 6; 8 4], column-major.
+    assert_eq!(v, vec![2.0, 8.0, 6.0, 4.0]);
+}
+
+#[test]
+fn sparse_matmul() {
+    // sparse * sparse, compared to the dense product.
+    let dense = vec_of("a=[1 0 3; 0 2 0]; b=[1 0;0 1;1 0]; c = a*b;", "c");
+    let sp = vec_of(
+        "a=[1 0 3; 0 2 0]; b=[1 0;0 1;1 0]; C = sparse(a)*sparse(b); c = full(C);",
+        "c",
+    );
+    assert_eq!(dense, sp);
+}
+
+#[test]
+fn sparse_index_read() {
+    // A(i,j) and A(linear) read the right values from a sparse matrix.
+    let mut i = interp();
+    i.run("a=[1 2 0 0 4;3 2 0 0 5;0 0 3 0 2]; A = sparse(a); x = A(2,5); y = A(7);")
+        .unwrap();
+    assert_eq!(i.context.lookup("x").unwrap().as_f64(), Some(5.0));
+    // linear index 7 (column-major) into a 3x5: row 1, col 3 → 0.
+    assert_eq!(i.context.lookup("y").unwrap().as_f64(), Some(0.0));
+}
+
+#[test]
+fn sparse_transpose() {
+    let v = vec_of("a=[1 0 3;0 2 0]; A = sparse(a); f = full(A');", "f");
+    // transpose of [1 0 3;0 2 0] is [1 0;0 2;3 0], column-major.
+    assert_eq!(v, vec![1.0, 0.0, 3.0, 0.0, 2.0, 0.0]);
+}
+
+#[test]
+fn sparse_display_triplets() {
+    use fm_core::FormatMode;
+    let mut i = interp();
+    i.run("A = sparse([0 0; 5 0]);").unwrap();
+    let s = i.context.lookup("A").unwrap().format(FormatMode::Short);
+    // (2,1)  5 in the body.
+    assert!(s.contains("(2,1)"), "display was: {s}");
+    assert!(s.contains('5'), "display was: {s}");
+}
+
+#[test]
+fn sparse_solve_known_system() {
+    // A \ b with a sparse A densifies to a correct solve.
+    let v = vec_of("A = sparse([2 0;0 4]); b = [2;8]; x = A\\b;", "x");
+    assert_eq!(v, vec![1.0, 2.0]);
+}

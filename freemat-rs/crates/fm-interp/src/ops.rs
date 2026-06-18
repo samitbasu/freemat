@@ -45,6 +45,19 @@ pub fn binary(op: BinaryOp, lhs: &Array, rhs: &Array) -> Flow<Array> {
         ShortAnd, ShortOr, Sub,
     };
 
+    // Sparse operands: keep genuinely sparse paths for matrix `*`, scalar·A,
+    // and A±B so large sparse matrices never densify (which would blow up
+    // memory). All other ops densify on demand (correct, and what `full()`-based
+    // comparisons expect).
+    if lhs.is_sparse() || rhs.is_sparse() {
+        if let Some(out) = sparse_binary(op, lhs, rhs)? {
+            return Ok(out);
+        }
+        let ld = crate::value::densify(lhs);
+        let rd = crate::value::densify(rhs);
+        return binary(op, &ld, &rd);
+    }
+
     match op {
         Add => elementwise_arith(lhs, rhs, |a, b| a + b, |a, b| a + b),
         Sub => elementwise_arith(lhs, rhs, |a, b| a - b, |a, b| a - b),
@@ -68,6 +81,76 @@ pub fn binary(op: BinaryOp, lhs: &Array, rhs: &Array) -> Flow<Array> {
         ShortAnd | ShortOr => Err(Signal::Error(InterpError::msg(
             "short-circuit operator reached operator dispatch",
         ))),
+    }
+}
+
+/// Handle the binary ops that have a genuinely sparse implementation (so the
+/// result stays sparse and large matrices never densify). Returns `Ok(None)` if
+/// the op should fall through to the densify path.
+fn sparse_binary(op: BinaryOp, lhs: &Array, rhs: &Array) -> Flow<Option<Array>> {
+    use BinaryOp::{Add, ElMul, Mul, Sub};
+    let l_sp = lhs.as_sparse();
+    let r_sp = rhs.as_sparse();
+    let l_scalar = lhs.as_scalar();
+    let r_scalar = rhs.as_scalar();
+
+    let scale = |s: &fm_core::SparseMatrix, sv: ScalarValue| -> Array {
+        if sv.is_complex() {
+            let c = scalar_c64(sv);
+            Array::sparse(s.scale_complex(c.re, c.im))
+        } else {
+            Array::sparse(s.scale_real(sv.as_f64()))
+        }
+    };
+
+    match op {
+        // sparse · sparse (matrix multiply), keeping the result sparse — but a
+        // 1×1 sparse operand acts as a scalar scale.
+        Mul => match (l_sp, r_sp) {
+            (Some(a), Some(b)) => {
+                if a.rows() == 1 && a.cols() == 1 {
+                    let v = a.get(0, 0);
+                    Ok(Some(scale(b, scalar_from_pair(v))))
+                } else if b.rows() == 1 && b.cols() == 1 {
+                    let v = b.get(0, 0);
+                    Ok(Some(scale(a, scalar_from_pair(v))))
+                } else {
+                    a.matmul(b)
+                        .map(|m| Some(Array::sparse(m)))
+                        .map_err(|e| Signal::Error(InterpError::msg(e)))
+                }
+            }
+            // scalar · sparse → scaled sparse.
+            (None, Some(b)) if l_scalar.is_some() => Ok(Some(scale(b, l_scalar.unwrap()))),
+            (Some(a), None) if r_scalar.is_some() => Ok(Some(scale(a, r_scalar.unwrap()))),
+            _ => Ok(None),
+        },
+        // scalar .* sparse → scaled sparse.
+        ElMul => match (l_sp, r_sp) {
+            (None, Some(b)) if l_scalar.is_some() => Ok(Some(scale(b, l_scalar.unwrap()))),
+            (Some(a), None) if r_scalar.is_some() => Ok(Some(scale(a, r_scalar.unwrap()))),
+            _ => Ok(None),
+        },
+        // sparse ± sparse → sparse.
+        Add | Sub => {
+            if let (Some(a), Some(b)) = (l_sp, r_sp) {
+                a.add_sub(b, matches!(op, Sub))
+                    .map(|m| Some(Array::sparse(m)))
+                    .map_err(|e| Signal::Error(InterpError::msg(e)))
+            } else {
+                Ok(None)
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
+/// A [`ScalarValue`] from a sparse `(re, im)` entry.
+fn scalar_from_pair((re, im): (f64, f64)) -> ScalarValue {
+    if im != 0.0 {
+        ScalarValue::Complex64(C64::new(re, im))
+    } else {
+        ScalarValue::Double(re)
     }
 }
 

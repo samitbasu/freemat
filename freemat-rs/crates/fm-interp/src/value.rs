@@ -57,6 +57,7 @@ pub fn to_f64_vec(a: &Array) -> Vec<f64> {
             .map(|&c| f64::from(u32::from(c)))
             .collect(),
         Array::Cell(_) | Array::Struct(_) => Vec::new(),
+        Array::Sparse(s) => s.to_dense_cols().0,
     }
 }
 
@@ -72,6 +73,13 @@ pub fn to_c64_vec(a: &Array) -> Vec<C64> {
             .iter()
             .map(|v| C64::new(f64::from(v.re), f64::from(v.im)))
             .collect(),
+        Array::Sparse(s) => {
+            let (re, im) = s.to_dense_cols();
+            match im {
+                Some(iv) => re.iter().zip(iv).map(|(&r, m)| C64::new(r, m)).collect(),
+                None => re.into_iter().map(|r| C64::new(r, 0.0)).collect(),
+            }
+        }
         _ => to_f64_vec(a)
             .into_iter()
             .map(|r| C64::new(r, 0.0))
@@ -113,6 +121,71 @@ pub fn build_complex(dims: &[usize], data: Vec<C64>) -> Array {
         return Array::Scalar(ScalarValue::Complex64(data[0]));
     }
     Array::complex64_matrix(dims, data)
+}
+
+/// Convert a sparse [`Array::Sparse`] to its equivalent **dense** [`Array`],
+/// restoring the stored element class. Non-sparse inputs are returned unchanged
+/// (cloned). This is the densify-on-demand path: any operation that does not
+/// have a genuinely sparse implementation densifies first.
+pub fn densify(a: &Array) -> Array {
+    let Some(s) = a.as_sparse() else {
+        return a.clone();
+    };
+    let dims = [s.rows(), s.cols()];
+    let (re, im) = s.to_dense_cols();
+    match im {
+        Some(iv) => {
+            let data: Vec<C64> = re.iter().zip(iv).map(|(&r, m)| C64::new(r, m)).collect();
+            // Preserve single-vs-double width via the class.
+            if s.class() == DataClass::Float {
+                let c32: Vec<fm_core::C32> = data
+                    .iter()
+                    .map(|c| fm_core::C32::new(c.re as f32, c.im as f32))
+                    .collect();
+                use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+                use std::sync::Arc;
+                Array::Complex32(Arc::new(
+                    ArrayD::from_shape_vec(IxDyn(&dims).f(), c32).expect("dims match"),
+                ))
+            } else {
+                build_complex(&dims, data)
+            }
+        }
+        None => build_real(s.class(), &dims, re),
+    }
+}
+
+/// Build a sparse [`Array`] from a dense (or scalar) value, reading its
+/// column-major data and class. Char/cell/struct fall back to densify-noop
+/// (sparse is numeric only).
+pub fn sparsify(a: &Array) -> Array {
+    if a.is_sparse() {
+        return a.clone();
+    }
+    let dims = a.shape();
+    let (rows, cols) = if dims.len() >= 2 {
+        (dims[0], dims[1..].iter().product())
+    } else {
+        (dims.first().copied().unwrap_or(0), 1)
+    };
+    let class = a.class();
+    if a.is_complex() {
+        let cv = to_c64_vec(a);
+        let re: Vec<f64> = cv.iter().map(|c| c.re).collect();
+        let im: Vec<f64> = cv.iter().map(|c| c.im).collect();
+        Array::sparse(fm_core::SparseMatrix::from_dense_cols(
+            rows,
+            cols,
+            class,
+            &re,
+            Some(&im),
+        ))
+    } else {
+        let re = to_f64_vec(a);
+        Array::sparse(fm_core::SparseMatrix::from_dense_cols(
+            rows, cols, class, &re, None,
+        ))
+    }
 }
 
 /// A char array from a column-major char vector (handles the scalar case).

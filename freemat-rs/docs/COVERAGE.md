@@ -1,7 +1,7 @@
 # FreeMat-rs builtin coverage
 
-> **Generated snapshot** regenerated after the builtin gap-fill pass (HEAD
-> `d93455450`, rust-port branch; `--list-builtins` now reports **318**). This is a
+> **Generated snapshot** regenerated after Stage 9 (sparse matrices)
+> (rust-port branch; `--list-builtins` now reports **331**). This is a
 > point-in-time diff of the **real freemat-rs registration table** against the
 > FreeMat 4.2 builtin surface — *not* a grep of the source tree. A prior
 > grep-based inventory was wrong (it falsely reported `pi`/`eps` as missing);
@@ -48,9 +48,9 @@ The FreeMat 4.2 side is taken from:
 
 | metric | count |
 |---|---:|
-| freemat-rs registered builtins (`--list-builtins`) | **318** |
+| freemat-rs registered builtins (`--list-builtins`) | **331** |
 | freemat-rs evaluator constants (`pi`/`eps`/`i`/`true`/…) | 13 |
-| **freemat-rs total implemented** | **~330** |
+| **freemat-rs total implemented** | **~344** |
 | FreeMat C++ builtins (all directive types) | 330 |
 |  — of which dropped (ITK/VTK/GL image primitives) | 44 |
 | FreeMat toolbox `.m` (excl. help/test stubs) | ~219 |
@@ -99,12 +99,12 @@ FreeMat names in that category (excluding dropped ITK/GL and help/test stubs);
 | graphics | 83 | 21 | 25% | `subplot` `axes` `set`/`get` `contour` `colorbar`/`colormap` `xlim`/`ylim` `patch` `plot3` (Stage 7.5) |
 | time | 5 | 4 | 80% | `clocktotime` (`tic`/`toc`/`clock`/`etime` ✓; rs adds `cputime`/`pause`/`now`) |
 | debug | 11 | 1 | 9% | `dbstop`/`dbstep`/`dblist`/`dbstack` `lasterr` `warning` (Stage 10) |
-| sparse | 7 | 0 | 0% | `sparse` `full` `speye` `spones` `nnz` `spy` (Stage 9) |
+| sparse | 7 | 7 | 100% | — (`sparse`/`full`/`speye`/`spones`/`sprand`/`sprandn`/`spy` ✓; rs adds `spdiags`/`spzeros`/`nnz`/`nonzeros`/`nzmax`/`issparse`) |
 | polynomial | 6 | 6 | 100% | — (`polyval`/`polyfit`/`roots`/`poly`/`polyder`/`polyint`/`conv`/`deconv` ✓) |
 | ODE | 13 | 5 | 38% | `ode45` `odeset` `deval` `trapz`/`cumtrapz` |
 | system / OS | 26 | 0 | 0% | `cd` `pwd` `dir`/`ls` `getenv` `system` `mkdir` `fileparts` `path` `help` |
 | misc | 70 | 26 | 37% | `conv2` `interp2` `func2str`/`str2func` `fullfile` `getenv` (`diff`/`dot`/`cross`/`conv`/`rcond` ✓) |
-| **TOTAL** | **505** | **~265** | **~52%** | |
+| **TOTAL** | **505** | **~278** | **~55%** | |
 
 Notes on the table:
 - **math/trig** is high-value but partial: the elementary functions are all
@@ -114,9 +114,8 @@ Notes on the table:
   property system: `plot`/`surf`/`mesh`/`image`/`title`/`axis`/`grid`/`hold`/
   `legend`/`semilog*`/`loglog` work, but everything that needs real handles +
   `set`/`get` (`subplot`, `axes`, `contour`, `colorbar`, limits) is **Stage 7.5**.
-- **logical/relational 0%, sparse 0%, polynomial 0%, system/OS 0%** are the
-  cleanest large wins still open: bit ops, the sparse type (Stage 9), polynomial
-  functions, and OS/filesystem builtins.
+- **system/OS 0%** is the cleanest large win still open (OS/filesystem builtins).
+  bit ops, the sparse type (Stage 9), and polynomial functions are now done.
 - freemat-rs also ships ~50 MATLAB-standard names FreeMat lacks under the same
   spelling (e.g. `chol`, `gcd`/`lcm`, `mesh`, `union`/`intersect`/`setdiff`/
   `ismember`, `flip`, `mat2str`, `cputime`/`pause`/`now`) — these are net
@@ -142,7 +141,7 @@ category. (Dropped ITK/VTK/GL primitives and help/test stubs are omitted.)
 - **graphics** (62): `axes`, `cla`, `clabel`, `clim`, `close`, `colorbar`, `colormap`, `colorset`, `completeprops`, `contour`, `contour3`, `copper`, `copy`, `datacursormanager`, `datacursormode`, `figlower`, `figraise`, `get`, `gray`, `hcontour`, `himage`, `hist`, `hline`, `hpatch`, `hpoint`, `hrawplot`, `htext`, `htextbitmap`, `imread`, `imwrite`, `is2dview`, `islinespec`, `markerset`, `matchit`, `newplot`, `parseit`, `patch`, `pcolor`, `plot3`, `point`, `print`, `pvalid`, `quiver`, `set`, `sizefig`, `stcmp`, `styleset`, `subplot`, `surface`, `testtube`, `text`, `tubeplot`, `uicontrol`, `view`, `volrender`, `vtkfigure`, `winlev`, `xlim`, `ylim`, `zlim`, `zoom`, `zplane`
 - **time** (1): `clocktotime`
 - **debug** (10): `dbauto`, `dbdelete`, `dblist`, `dbstop`, `errorcount`, `fdump`, `jitcontrol`, `jitstat`, `lasterr`, `warning`
-- **sparse** (7): `full`, `sparse`, `speye`, `spones`, `sprand`, `sprandn`, `spy`
+- **sparse** (0): `full`/`sparse`/`speye`/`spones`/`sprand`/`sprandn`/`spy` now ✓ (+ `spdiags`/`spzeros`/`nnz`/`nonzeros`/`nzmax`/`issparse`)
 - **polynomial** (0): `poly`/`polyder`/`polyfit`/`polyint`/`polyval`/`roots` (+ `conv`/`deconv`) now ✓
 - **ODE** (8): `cumtrapz`, `deval`, `idiv`, `mpower`, `ode45`, `odeset`, `teps`, `trapz`
 - **system / OS** (26): `blaslib`, `cd`, `copyfile`, `delete`, `dir`, `dirsep`, `fileattrib`, `fileparts`, `getpath`, `help`, `helpwin`, `htmlread`, `import`, `loadlib`, `ls`, `mkdir`, `mkdir_core`, `pathtool`, `pwd`, `rmdir`, `setpath`, `urlwrite`, `wavplay`, `wavrecord`, `what`, `xmlread`
@@ -160,6 +159,6 @@ is a *capability inventory*, not a runnability score.
 
 The authoritative runnability signal is the **conformance suite** (`cargo run
 --release -q -p fm-conformance`), which actually executes the FreeMat `test_*.m`
-cases. After the builtin gap-fill pass it stands at **309 / 640 ≈ 48.3%** — that is the honest
+cases. After Stage 9 (sparse matrices) it stands at **402 / 677 ≈ 59.4%** — that is the honest
 "how much actually works end to end" number; the table above is the "how much of
 the API surface exists" number.

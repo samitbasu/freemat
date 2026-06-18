@@ -29,6 +29,7 @@ mod polynomial;
 mod random;
 mod reductions;
 mod setops;
+mod sparse;
 mod strings;
 mod time;
 mod trig;
@@ -62,6 +63,9 @@ pub fn register_into(table: &mut FunctionTable) {
     baseconv::register(table);
     polynomial::register(table);
     misc::register(table);
+    // Sparse builtins. Registered after the dense modules so `find`/`full`
+    // become sparse-aware (they shadow the dense versions).
+    sparse::register(table);
     graphics::register(table);
     graphics::register_log_plots(table);
     // Stage 8: MAT save/load, file I/O, FFT, regex. Registered last so its

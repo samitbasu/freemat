@@ -62,6 +62,9 @@ impl Array {
         if let Some(st) = self.as_struct() {
             return format_struct(st);
         }
+        if let Some(sp) = self.as_sparse() {
+            return format_sparse(sp, mode);
+        }
         format_matrix(self, mode)
     }
 
@@ -266,8 +269,38 @@ fn scalar_at(a: &Array, flat: usize) -> Option<ScalarValue> {
         Array::Complex32(x) => at!(x, ScalarValue::Complex32),
         Array::Complex64(x) => at!(x, ScalarValue::Complex64),
         Array::Char(x) => at!(x, ScalarValue::Char),
-        Array::Cell(_) | Array::Struct(_) => None,
+        Array::Cell(_) | Array::Struct(_) | Array::Sparse(_) => None,
     }
+}
+
+/// Format a sparse matrix the way MATLAB/FreeMat does: a list of
+/// `(i,j)  value` triplets in column-major order (1-based indices).
+fn format_sparse(s: &crate::sparse::SparseMatrix, mode: FormatMode) -> String {
+    let (i, j, v, im) = s.find_triplets();
+    if i.is_empty() {
+        return format!("All zero sparse: {}-by-{}", s.rows(), s.cols());
+    }
+    let label_w = i
+        .iter()
+        .zip(&j)
+        .map(|(&ii, &jj)| format!("({},{})", ii as usize, jj as usize).len())
+        .max()
+        .unwrap_or(0);
+    let mut out = String::new();
+    for k in 0..i.len() {
+        let label = format!("({},{})", i[k] as usize, j[k] as usize);
+        let val = if let Some(iv) = &im {
+            format_scalar(ScalarValue::Complex64(crate::C64::new(v[k], iv[k])), mode)
+        } else {
+            format_scalar(ScalarValue::Double(v[k]), mode)
+        };
+        let _ = writeln!(out, "  {label:<label_w$}      {val}");
+    }
+    // Drop the trailing newline to match the value-body convention.
+    if out.ends_with('\n') {
+        out.pop();
+    }
+    out
 }
 
 /// Column-major flat indices `0..numel` for the given `dims`. Because storage

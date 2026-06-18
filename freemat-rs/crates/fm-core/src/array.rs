@@ -24,6 +24,7 @@ pub type Dims = SmallVec<[usize; 4]>;
 use crate::class::DataClass;
 use crate::complex::{C32, C64};
 use crate::scalar::ScalarValue;
+use crate::sparse::SparseMatrix;
 use crate::struct_array::{StructArray, StructHandle};
 
 /// A shared, copy-on-write dense buffer of element type `T`, column-major.
@@ -69,6 +70,10 @@ pub enum Array {
     Cell(Dense<Array>),
     /// Struct array — named fields.
     Struct(StructHandle),
+
+    /// Sparse matrix (CSC). Purely additive — dense variants and their COW are
+    /// unchanged. The element class is tracked inside [`SparseMatrix`].
+    Sparse(Arc<SparseMatrix>),
 }
 
 /// Build a new column-major (F-order) `ArrayD` from `dims` + a column-major
@@ -226,6 +231,7 @@ impl Array {
             Array::Char(_) => DataClass::Char,
             Array::Cell(_) => DataClass::Cell,
             Array::Struct(_) => DataClass::Struct,
+            Array::Sparse(s) => s.class(),
         }
     }
 
@@ -262,6 +268,7 @@ impl Array {
             Array::Char(a) => a.shape(),
             Array::Cell(a) => a.shape(),
             Array::Struct(s) => s.dims(),
+            Array::Sparse(s) => s.dims_slice(),
         }
     }
 
@@ -306,6 +313,28 @@ impl Array {
     pub fn is_complex(&self) -> bool {
         matches!(self, Array::Complex32(_) | Array::Complex64(_))
             || matches!(self, Array::Scalar(s) if s.is_complex())
+            || matches!(self, Array::Sparse(s) if s.is_complex())
+    }
+
+    /// Whether this value is a sparse matrix.
+    #[must_use]
+    pub fn is_sparse(&self) -> bool {
+        matches!(self, Array::Sparse(_))
+    }
+
+    /// Borrow the sparse matrix, if this is one.
+    #[must_use]
+    pub fn as_sparse(&self) -> Option<&SparseMatrix> {
+        match self {
+            Array::Sparse(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Wrap a [`SparseMatrix`] as an [`Array`].
+    #[must_use]
+    pub fn sparse(s: SparseMatrix) -> Self {
+        Array::Sparse(Arc::new(s))
     }
 
     /// Whether this is a string (char) value.
@@ -352,6 +381,14 @@ impl Array {
             Array::Complex64(a) => first!(a, ScalarValue::Complex64),
             Array::Char(a) => first!(a, ScalarValue::Char),
             Array::Cell(_) | Array::Struct(_) => None,
+            Array::Sparse(s) => {
+                let (re, im) = s.get_linear(0);
+                if im != 0.0 {
+                    Some(ScalarValue::Complex64(C64::new(re, im)))
+                } else {
+                    Some(ScalarValue::Double(re))
+                }
+            }
         }
     }
 
@@ -421,6 +458,7 @@ impl Array {
             Array::Char(a) => one!(a),
             Array::Cell(a) => one!(a),
             Array::Struct(a) => one!(a),
+            Array::Sparse(a) => one!(a),
         }
     }
 }

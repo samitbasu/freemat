@@ -16,7 +16,8 @@ then tick it here and commit. Leave notes for the next session under each stage.
 - [x] **Stage 7 — `fm-graphics` + webserver + Plotly  ·  ★ Milestone 2**
 - [x] **Stage 7.5 — Graphics handle-property system (set/get, subplot, contour)**
 - [x] **Stage 8 — `fm-io`: MAT files, file I/O, FFT, regex**
-- [ ] **Stage 9 — Advanced / optional**
+- [x] **Stage 9 — Advanced / optional (sparse matrices)** — sparse done; special
+      functions / optimization / audio / cranelift remain for a future pass.
 - [ ] **Stage 10 — Debugging & editor integration (DAP + `db*` engine; optional LSP)**
 
 ## Definition of Done (every stage)
@@ -1086,6 +1087,117 @@ then tick it here and commit. Leave notes for the next session under each stage.
 - **Verification:** `cargo build --workspace` ✓; `cargo clippy --workspace --all-targets
   -D warnings` clean ✓ (no new `#[allow]`); `cargo fmt --all --check` ✓; `cargo test --workspace`
   green ✓ and fast (~2 s).
+
+### Stage 9 — done (sparse matrices)
+
+- **Representation chosen: custom CSC (compressed sparse column), `f64` values + an
+  optional parallel `f64` imaginary buffer, tracking the original `DataClass`.**
+  Lives in `fm-core/src/sparse.rs` as `SparseMatrix { rows, cols, dims_cache,
+  class, col_ptr, row_idx, re, im }`. **Why custom over faer-sparse / sprs:** the
+  conformance corpus exercises *all* FreeMat sparse classes (real double/single,
+  int32, logical, **and complex** — 41 of the 113 suite tests are complex) and the
+  oracle (`testeq`) always compares via `full(a)-full(b)`. A single CSC-of-`f64`
+  (plus optional imaginary) collapses every class into one storage path, matching
+  FreeMat's own templated-CCS-collapsed-to-`double` trick, and round-trips losslessly
+  for the magnitudes the corpus uses. faer-sparse/sprs are real-only and would force
+  a second complex code path plus a heavier dependency for no extra passes. CSC
+  matches FreeMat's CCS exactly, so `find`/concat/transpose/matmul map cleanly.
+  Real `double` + logical + integer + complex sparse all work; **complex sparse
+  eigensolvers (ARPACK / `eigs`) are DEFERRED** (no corpus pass depends on a sparse
+  eig — `test_sparse45` needs `eigs`, left failing).
+
+- **Additive core change (dense + COW UNCHANGED, confirmed).** Added one variant
+  `Array::Sparse(Arc<SparseMatrix>)` to the `fm-core::Array` enum. The 14 dense
+  variants, their `Arc` COW, and every `make_mut_*` accessor are **byte-for-byte
+  unchanged** — sparse is purely additive (own `Arc`, COW like dense). Updated only
+  the genuinely-exhaustive `match self` arms (`class`/`shape`/`numel` (had `_`)/
+  `is_complex`/`is_unique`/`as_scalar`/`first_scalar`, plus `format::scalar_at`,
+  `value::{to_f64_vec,to_c64_vec}`, `linalg::to_f64`, `index::scalar_at`/
+  `gather_unchecked`). `shape()` borrows a cached `[rows,cols]` (the only field added
+  for that). New accessors: `Array::{is_sparse,as_sparse,sparse}`. `class(sparse
+  double)` returns `'double'` (FreeMat semantics); `issparse` is the separate flag.
+  **All previously-passing tests stay green** (100 fm-core, all fm-interp, etc.).
+
+- **Densify-on-demand + genuinely-sparse fast paths.** `value::{densify,sparsify}`
+  convert between representations. Element-wise arithmetic / relational / logical /
+  unary already densify for free (they go through `to_f64_vec`/`to_c64_vec`, now
+  sparse-aware). **Genuinely sparse paths kept** (so big sparse matrices never blow
+  up memory): `binary` routes sparse·sparse `*` → `SparseMatrix::matmul`, scalar·A
+  and A.*scalar → `scale_real`/`scale_complex`, A±B → `add_sub` (merge-by-row), all
+  staying sparse. Transpose of sparse stays sparse (`SparseMatrix::transpose`).
+  Indexing reads (`A(b)`, `A(i,j)`, linear) read CSC directly (complex-aware).
+  Assignment into sparse (`A(p)=v`) densifies via the existing `scatter` fallback
+  (the in-place fast path bails on `is_sparse()`). Concatenation densifies each
+  operand. **Critical fix:** `suite/test_sparse117` builds 250000×250000 sparse
+  matrices and does `a*sparse(...)`/`m3+m3'` — without the sparse scalar-scale and
+  sparse-add paths this densified to a 500 GB alloc and aborted the whole run; the
+  sparse paths fixed it.
+
+- **Sparse builtins (`fm-builtins/src/sparse.rs`, registered after the dense modules
+  so `find`/`full` shadow the dense versions):** `sparse` (from dense / from
+  triplets `sparse(i,j,s,m,n)` **summing duplicates** / `sparse(m,n)`), `full`,
+  `speye`, `spzeros`, `spones`, `spdiags` (`spdiags(B,d,m,n)`), `sprand`/`sprandn`
+  (density form + pattern-of-S form), `nnz`, `nonzeros`, `nzmax`, `issparse`,
+  `spy` (no-op→`nnz`; a real plot deferred), and a sparse-aware **`find`** with the
+  1-output (linear), 2-output (`[i,j]`), and **3-output (`[i,j,v]`)** forms for both
+  sparse and dense inputs. **Sparse display** (`format::format_sparse`) prints
+  MATLAB-style `(i,j)  value` triplets, column-major.
+
+- **Sparse linalg:** sparse `\` and `lu`/`chol`/`eig` densify through `fm-linalg`
+  (its `to_f64`/`to_c64` now read sparse) — the densify-fallback the plan allows;
+  correct, exercised by a sparse `\` unit test. faer-sparse LU/QR not wired (custom
+  rep; densify suffices for the corpus). **Deferred:** sparse eig/`eigs` (ARPACK),
+  complex-sparse heavy linalg.
+
+- **`sparse` dir enabled + result: 35/37 (94.6%).** The 2 misses: `test_sparse29`
+  (a *pre-existing* dense bug — linear-index grow `a(p)=…` past bounds on a 2-D
+  matrix panics for **both** dense and sparse; not a regression) and `test_sparse45`
+  (`eigs`, deferred). Copied the `sparse/` dir + `sparse_test_mat.m` (also into
+  `suite/`, which already held 113 `test_sparse*` that were erroring) into the
+  conformance data dir; moved `sparse` from DEFERRED to COVERED_DIRS.
+
+- **Conformance: 309/640 (48.3%) → 402/677 (59.4%), Δ +93 passes (+11.1 pp).** The
+  denominator grew by the 37 enabled `sparse`-dir tests. Per-dir gains vs the 309
+  baseline: **operators 9→55** (+46 — sparse-gated relational/scalar-compare tests),
+  **array 33→40**, **suite 151→156**, **sparse 0→35** (new), transforms 18→19,
+  string 1→3. **No dense regression** — every previously-passing dir held or rose.
+  Per-dir (total/pass/fail/error): array 68/40/7/21, binary 3/3, constants 1/1,
+  elementary 7/6, flow 22/20/2, freemat 11/4/4/3, functions 9/5/3/1, handle 3/3,
+  inspection 20/15/3/2, io 6/3/0/3, operators 66/55/2/9, random 1/1, signal 1/0/0/1,
+  sparse 37/35/0/2, string 3/3, suite 337/156/37/144, transforms 34/19/7/8,
+  typecast 5/3/0/2, variables 43/30/7/6.
+
+- **Pass-floor raised 305 → 395** (`curated.rs::PASS_FLOOR`; live 402, margin for
+  PRNG-dependent `rand`/`randn`/`sprandn`/`eig`). The curated must-pass list gained
+  8 deterministic sparse tests (`sparse/test_sparse{1,2,3,7,15,18,27,28}` — round-trip,
+  concat, complex indexing, linear-index read/assign).
+
+- **Tests added:** 6 `fm-core` sparse unit tests (dense round-trip, triplet
+  dup-summing, eye/nnz, transpose, matmul-vs-dense, find-triplets column-major) +
+  11 `fm-builtins` sparse integration tests (full round-trip, issparse/nnz, speye,
+  spdiags, find→sparse rebuild, add+scale, matmul, index read, transpose, display
+  triplets, `\` solve vs a known system).
+
+- **New deps:** **none** (reused `rand`/`rand_distr` for `sprand`/`sprandn`). The
+  core `Array` enum, its `Arc` COW, and `make_mut_*` accessors were not modified
+  beyond the additive `Sparse` variant + new accessors.
+
+- **Verification:** `cargo build --workspace` ✓; `cargo clippy --workspace
+  --all-targets -D warnings` clean ✓ (no new `#[allow]`); `cargo fmt --all --check`
+  ✓; `cargo test --workspace` green ✓ and fast (~2 s); `docs/COVERAGE.md`
+  regenerated (registered builtins 318 → **331**; sparse category 0% → 100%;
+  conformance line updated to 402/677 ≈ 59.4%).
+
+- **Decisions / deferrals (MATLAB-compatible where ambiguous):**
+  - Sparse results densify after element-wise/relational/indexing/concat/assignment
+    ops (the result is dense but value-correct; `testeq` fulls both sides). Only
+    `*`/scalar-scale/`±`/transpose/construction keep genuine sparseness.
+  - `sparse(i,j,s,m,n)` sums duplicate `(i,j)` (MATLAB), drops explicit zeros.
+  - `class(sparse double)` = `'double'`; the sparse-ness is queried via `issparse`.
+  - Sparse single-element reads return a `double` scalar (class lost on the scalar,
+    but the value is exact — `full` comparison unaffected).
+  - `test_sparse29` (dense + sparse linear-index grow-past-bounds) and `eigs`
+    (sparse eig / ARPACK) left as honest failures, documented above.
 
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,

@@ -21,6 +21,7 @@ pub mod error;
 pub mod format;
 pub mod promote;
 pub mod scalar;
+pub mod sparse;
 pub mod struct_array;
 
 pub use array::{Array, Dims};
@@ -30,4 +31,5 @@ pub use error::{CoreError, Result};
 pub use format::FormatMode;
 pub use promote::promote;
 pub use scalar::ScalarValue;
+pub use sparse::SparseMatrix;
 pub use struct_array::StructArray;

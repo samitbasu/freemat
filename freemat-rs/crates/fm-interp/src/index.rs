@@ -375,6 +375,14 @@ fn scalar_at(base: &Array, i: usize) -> Option<ScalarValue> {
         Array::Complex64(d) => at!(d, ScalarValue::Complex64),
         Array::Char(d) => at!(d, ScalarValue::Char),
         Array::Cell(_) | Array::Struct(_) => None,
+        Array::Sparse(s) => {
+            let (re, im) = s.get_linear(i);
+            if im != 0.0 {
+                Some(ScalarValue::Complex64(fm_core::C64::new(re, im)))
+            } else {
+                Some(ScalarValue::Double(re))
+            }
+        }
     }
 }
 
@@ -443,6 +451,23 @@ fn gather_unchecked(base: &Array, linear: &[usize], result_dims: &[usize]) -> Ar
                 .collect();
             Array::struct_array(StructArray::from_fields(result_dims.to_vec(), fields))
         }
+        Array::Sparse(s) => {
+            // Gather from a sparse matrix by column-major linear position. The
+            // result is dense (correct; comparisons go through `full`).
+            if s.is_complex() {
+                let data: Vec<fm_core::C64> = linear
+                    .iter()
+                    .map(|&i| {
+                        let (re, im) = s.get_linear(i);
+                        fm_core::C64::new(re, im)
+                    })
+                    .collect();
+                crate::value::build_complex(result_dims, data)
+            } else {
+                let data: Vec<f64> = linear.iter().map(|&i| s.get_linear(i).0).collect();
+                crate::value::build_real(s.class(), result_dims, data)
+            }
+        }
         // Other integer/complex32 classes: route through f64 (loses nothing for
         // integers; complex32 handled via the dedicated arm above for c64).
         _ => {
@@ -508,6 +533,10 @@ fn try_scatter_in_place(target: &mut Array, plan: &IndexPlan, rhs: &Array) -> Fl
     if matches!(target, Array::Cell(_) | Array::Struct(_))
         || matches!(rhs, Array::Cell(_) | Array::Struct(_))
     {
+        return Ok(None);
+    }
+    // Sparse target: no in-place buffer accessor — rebuild path densifies it.
+    if target.is_sparse() {
         return Ok(None);
     }
     if target.is_complex() || rhs.is_complex() {

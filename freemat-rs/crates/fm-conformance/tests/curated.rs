@@ -115,6 +115,15 @@ const CURATED: &[&str] = &[
     "handle/test_plot1",
     "handle/test_image1",
     "handle/test_contour1",
+    // Stage 9 — sparse matrices (deterministic, no PRNG)
+    "sparse/test_sparse1",  // sparse↔full round-trip, all classes
+    "sparse/test_sparse2",  // sparse concatenation [A;B], [C,D]
+    "sparse/test_sparse3",  // sparse concatenation (single)
+    "sparse/test_sparse7",  // sparse linear indexing A(b)
+    "sparse/test_sparse15", // sparse 2-D indexing A(i,j)
+    "sparse/test_sparse18", // complex sparse 2-D indexing
+    "sparse/test_sparse27", // sparse linear-index assignment A(p) = scalar
+    "sparse/test_sparse28", // sparse linear-index assignment A(p) = vector
 ];
 
 /// The corpus must be checked into the crate (self-contained, no `../FreeMat`).
@@ -153,9 +162,11 @@ fn curated_subset_passes() {
 /// (41.5%); Stage 8 to 284/637 (with the `transforms` + `io` gains); Stage 7.5
 /// to 297/640 (handle dir + a parser leading-whitespace fix). The builtin
 /// gap-fill pass (bit ops, base conversion, polynomial, linalg extras, trig
-/// gaps, `eps`/`seed`) raised the live total to 309/640 (48.3%). The floor
-/// allows a small margin for PRNG-dependent (`rand`/`randn`/`eig`) tests.
-const PASS_FLOOR: usize = 305;
+/// gaps, `eps`/`seed`) raised the live total to 309/640 (48.3%). Stage 9
+/// (sparse matrices: CSC `Array::Sparse`, sparse builtins + the enabled `sparse`
+/// dir) raised it to 402/677 (59.4%). The floor allows a margin for
+/// PRNG-dependent (`rand`/`randn`/`sprandn`/`eig`) tests.
+const PASS_FLOOR: usize = 395;
 
 /// **Fast pass-floor guard (gates `cargo test`).** Running the *whole* covered
 /// corpus takes minutes (it spins up a fresh interpreter and re-parses every
