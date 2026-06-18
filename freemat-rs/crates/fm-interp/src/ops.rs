@@ -17,7 +17,26 @@ use fm_core::{Array, C64, DataClass, ScalarValue, promote};
 use fm_parser::ast::{BinaryOp, UnaryOp};
 
 use crate::error::{Flow, InterpError, Signal};
-use crate::value::{build_complex, build_real, to_c64_vec, to_f64_vec};
+use crate::value::{build_complex, build_real, cast_scalar, to_c64_vec, to_f64_vec};
+
+/// If both operands are inline scalars, read their `(f64, c64, is_complex)`
+/// forms without touching the heap. Returns `None` if either is not an inline
+/// scalar (so the caller takes the general array path).
+fn scalar_pair(lhs: &Array, rhs: &Array) -> Option<(ScalarValue, ScalarValue)> {
+    match (lhs, rhs) {
+        (Array::Scalar(a), Array::Scalar(b)) => Some((*a, *b)),
+        _ => None,
+    }
+}
+
+/// Complex value of a scalar (real scalars get a zero imaginary part).
+fn scalar_c64(s: ScalarValue) -> C64 {
+    match s {
+        ScalarValue::Complex64(c) => c,
+        ScalarValue::Complex32(c) => C64::new(f64::from(c.re), f64::from(c.im)),
+        other => C64::new(other.as_f64(), 0.0),
+    }
+}
 
 /// Apply a binary operator to two evaluated values.
 pub fn binary(op: BinaryOp, lhs: &Array, rhs: &Array) -> Flow<Array> {
@@ -57,21 +76,31 @@ pub fn unary(op: UnaryOp, v: &Array) -> Flow<Array> {
     match op {
         UnaryOp::Plus => Ok(v.clone()),
         UnaryOp::Minus => {
+            if let Array::Scalar(s) = v {
+                // Scalar negate inline (no `dims()`/`to_*_vec` allocations).
+                if s.is_complex() {
+                    return Ok(build_complex(&[1, 1], vec![-scalar_c64(*s)]));
+                }
+                return Ok(Array::Scalar(cast_scalar(
+                    arith_class(v.class()),
+                    -s.as_f64(),
+                )));
+            }
             if v.is_complex() {
-                let dims = v.dims();
                 let data = to_c64_vec(v).into_iter().map(|c| -c).collect();
-                Ok(build_complex(&dims, data))
+                Ok(build_complex(v.shape(), data))
             } else {
                 let class = arith_class(v.class());
-                let dims = v.dims();
                 let data = to_f64_vec(v).into_iter().map(|x| -x).collect();
-                Ok(build_real(class, &dims, data))
+                Ok(build_real(class, v.shape(), data))
             }
         }
         UnaryOp::Not => {
-            let dims = v.dims();
+            if let Array::Scalar(s) = v {
+                return Ok(Array::bool(s.as_f64() == 0.0));
+            }
             let data: Vec<bool> = to_f64_vec(v).into_iter().map(|x| x == 0.0).collect();
-            Ok(make_logical(&dims, data))
+            Ok(make_logical(v.shape(), data))
         }
     }
 }
@@ -163,9 +192,26 @@ fn elementwise_arith(
     check_numeric(lhs, rhs)?;
     let result_class = promote(lhs.class(), rhs.class())
         .map_err(|e| Signal::Error(InterpError::msg(e.to_string())))?;
-    let ld = lhs.dims();
-    let rd = rhs.dims();
-    let out = broadcast_dims(&ld, &rd)?;
+
+    // Scalar ⊕ scalar fast path: compute inline (no `dims()`/`to_f64_vec`/
+    // result-`Vec` allocations) and return an inline `Array::Scalar`. This
+    // mirrors the general path exactly: a complex operand routes through `cf`
+    // and `build_complex` (which narrows back to real if the imaginary part
+    // vanishes), otherwise `rf` + `cast_scalar` casts to `result_class`.
+    if let Some((a, b)) = scalar_pair(lhs, rhs) {
+        if a.is_complex() || b.is_complex() {
+            let r = cf(scalar_c64(a), scalar_c64(b));
+            return Ok(build_complex(&[1, 1], vec![r]));
+        }
+        return Ok(Array::Scalar(cast_scalar(
+            result_class,
+            rf(a.as_f64(), b.as_f64()),
+        )));
+    }
+
+    let ld = lhs.shape();
+    let rd = rhs.shape();
+    let out = broadcast_dims(ld, rd)?;
     let n: usize = out.iter().product();
 
     if lhs.is_complex() || rhs.is_complex() {
@@ -173,8 +219,8 @@ fn elementwise_arith(
         let ra = to_c64_vec(rhs);
         let mut data = Vec::with_capacity(n);
         for i in 0..n {
-            let a = la[broadcast_src_index(i, &out, &ld)];
-            let b = ra[broadcast_src_index(i, &out, &rd)];
+            let a = la[broadcast_src_index(i, &out, ld)];
+            let b = ra[broadcast_src_index(i, &out, rd)];
             data.push(cf(a, b));
         }
         return Ok(build_complex(&out, data));
@@ -184,8 +230,8 @@ fn elementwise_arith(
     let ra = to_f64_vec(rhs);
     let mut data = Vec::with_capacity(n);
     for i in 0..n {
-        let a = la[broadcast_src_index(i, &out, &ld)];
-        let b = ra[broadcast_src_index(i, &out, &rd)];
+        let a = la[broadcast_src_index(i, &out, ld)];
+        let b = ra[broadcast_src_index(i, &out, rd)];
         data.push(rf(a, b));
     }
     Ok(build_real(result_class, &out, data))
@@ -194,21 +240,21 @@ fn elementwise_arith(
 /// Element-wise power `.^` (promotes to complex on negative-base/frac-exp).
 fn elementwise_pow(lhs: &Array, rhs: &Array) -> Flow<Array> {
     check_numeric(lhs, rhs)?;
-    let ld = lhs.dims();
-    let rd = rhs.dims();
-    let out = broadcast_dims(&ld, &rd)?;
+    let ld = lhs.shape();
+    let rd = rhs.shape();
+    let out = broadcast_dims(ld, rd)?;
     let n: usize = out.iter().product();
     let la = to_f64_vec(lhs);
     let ra = to_f64_vec(rhs);
     let needs_complex =
-        lhs.is_complex() || rhs.is_complex() || powers_need_complex(&la, &ra, &out, &ld, &rd);
+        lhs.is_complex() || rhs.is_complex() || powers_need_complex(&la, &ra, &out, ld, rd);
     if needs_complex {
         let lc = to_c64_vec(lhs);
         let rc = to_c64_vec(rhs);
         let mut data = Vec::with_capacity(n);
         for i in 0..n {
-            let a = lc[broadcast_src_index(i, &out, &ld)];
-            let b = rc[broadcast_src_index(i, &out, &rd)];
+            let a = lc[broadcast_src_index(i, &out, ld)];
+            let b = rc[broadcast_src_index(i, &out, rd)];
             data.push(a.powc(b));
         }
         return Ok(build_complex(&out, data));
@@ -217,8 +263,8 @@ fn elementwise_pow(lhs: &Array, rhs: &Array) -> Flow<Array> {
         .map_err(|e| Signal::Error(InterpError::msg(e.to_string())))?;
     let mut data = Vec::with_capacity(n);
     for i in 0..n {
-        let a = la[broadcast_src_index(i, &out, &ld)];
-        let b = ra[broadcast_src_index(i, &out, &rd)];
+        let a = la[broadcast_src_index(i, &out, ld)];
+        let b = ra[broadcast_src_index(i, &out, rd)];
         data.push(a.powf(b));
     }
     Ok(build_real(result_class, &out, data))
@@ -236,16 +282,20 @@ fn powers_need_complex(la: &[f64], ra: &[f64], out: &[usize], ld: &[usize], rd: 
 /// Relational op → logical, with broadcasting (compares real parts / magnitude).
 fn relational(lhs: &Array, rhs: &Array, f: impl Fn(f64, f64) -> bool) -> Flow<Array> {
     check_numeric(lhs, rhs)?;
-    let ld = lhs.dims();
-    let rd = rhs.dims();
-    let out = broadcast_dims(&ld, &rd)?;
+    // Scalar ⊕ scalar: compare real parts inline, return a logical scalar.
+    if let Some((a, b)) = scalar_pair(lhs, rhs) {
+        return Ok(Array::bool(f(a.as_f64(), b.as_f64())));
+    }
+    let ld = lhs.shape();
+    let rd = rhs.shape();
+    let out = broadcast_dims(ld, rd)?;
     let n: usize = out.iter().product();
     let la = to_f64_vec(lhs);
     let ra = to_f64_vec(rhs);
     let mut data = Vec::with_capacity(n);
     for i in 0..n {
-        let a = la[broadcast_src_index(i, &out, &ld)];
-        let b = ra[broadcast_src_index(i, &out, &rd)];
+        let a = la[broadcast_src_index(i, &out, ld)];
+        let b = ra[broadcast_src_index(i, &out, rd)];
         data.push(f(a, b));
     }
     Ok(make_logical(&out, data))
@@ -253,25 +303,35 @@ fn relational(lhs: &Array, rhs: &Array, f: impl Fn(f64, f64) -> bool) -> Flow<Ar
 
 /// `==` / `~=` → logical, with broadcasting (complex compares both parts).
 fn equality(lhs: &Array, rhs: &Array, want_equal: bool) -> Flow<Array> {
-    let ld = lhs.dims();
-    let rd = rhs.dims();
-    let out = broadcast_dims(&ld, &rd)?;
+    // Scalar ⊕ scalar: compare inline (complex compares both parts), return a
+    // logical scalar.
+    if let Some((a, b)) = scalar_pair(lhs, rhs) {
+        let eq = if a.is_complex() || b.is_complex() {
+            scalar_c64(a) == scalar_c64(b)
+        } else {
+            a.as_f64() == b.as_f64()
+        };
+        return Ok(Array::bool(eq == want_equal));
+    }
+    let ld = lhs.shape();
+    let rd = rhs.shape();
+    let out = broadcast_dims(ld, rd)?;
     let n: usize = out.iter().product();
     let mut data = Vec::with_capacity(n);
     if lhs.is_complex() || rhs.is_complex() {
         let la = to_c64_vec(lhs);
         let ra = to_c64_vec(rhs);
         for i in 0..n {
-            let a = la[broadcast_src_index(i, &out, &ld)];
-            let b = ra[broadcast_src_index(i, &out, &rd)];
+            let a = la[broadcast_src_index(i, &out, ld)];
+            let b = ra[broadcast_src_index(i, &out, rd)];
             data.push((a == b) == want_equal);
         }
     } else {
         let la = to_f64_vec(lhs);
         let ra = to_f64_vec(rhs);
         for i in 0..n {
-            let a = la[broadcast_src_index(i, &out, &ld)];
-            let b = ra[broadcast_src_index(i, &out, &rd)];
+            let a = la[broadcast_src_index(i, &out, ld)];
+            let b = ra[broadcast_src_index(i, &out, rd)];
             data.push((a == b) == want_equal);
         }
     }
@@ -280,16 +340,20 @@ fn equality(lhs: &Array, rhs: &Array, want_equal: bool) -> Flow<Array> {
 
 /// `&` / `|` → logical (non-zero is true), with broadcasting.
 fn logical(lhs: &Array, rhs: &Array, f: impl Fn(bool, bool) -> bool) -> Flow<Array> {
-    let ld = lhs.dims();
-    let rd = rhs.dims();
-    let out = broadcast_dims(&ld, &rd)?;
+    // Scalar ⊕ scalar: combine inline (non-zero is true), return a logical scalar.
+    if let Some((a, b)) = scalar_pair(lhs, rhs) {
+        return Ok(Array::bool(f(a.as_f64() != 0.0, b.as_f64() != 0.0)));
+    }
+    let ld = lhs.shape();
+    let rd = rhs.shape();
+    let out = broadcast_dims(ld, rd)?;
     let n: usize = out.iter().product();
     let la = to_f64_vec(lhs);
     let ra = to_f64_vec(rhs);
     let mut data = Vec::with_capacity(n);
     for i in 0..n {
-        let a = la[broadcast_src_index(i, &out, &ld)] != 0.0;
-        let b = ra[broadcast_src_index(i, &out, &rd)] != 0.0;
+        let a = la[broadcast_src_index(i, &out, ld)] != 0.0;
+        let b = ra[broadcast_src_index(i, &out, rd)] != 0.0;
         data.push(f(a, b));
     }
     Ok(make_logical(&out, data))
@@ -306,7 +370,7 @@ fn mul(lhs: &Array, rhs: &Array) -> Flow<Array> {
         return elementwise_arith(lhs, rhs, |a, b| a * b, |a, b| a * b);
     }
     check_numeric(lhs, rhs)?;
-    if lhs.dims().len() != 2 || rhs.dims().len() != 2 {
+    if lhs.shape().len() != 2 || rhs.shape().len() != 2 {
         return Err(Signal::Error(InterpError::msg(
             "matrix multiply requires 2-D operands",
         )));

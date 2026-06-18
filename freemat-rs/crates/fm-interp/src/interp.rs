@@ -12,11 +12,12 @@
 
 use std::sync::Arc;
 
-use fm_core::{Array, C64, DataClass, FormatMode, ScalarValue};
+use fm_core::{Array, C64, DataClass, Dims, FormatMode, ScalarValue};
 use fm_parser::ast::{
     BinaryOp, Case, Expr, ExprKind, FunctionDef, Program, Stmt, StmtKind, Terminator,
 };
 use fm_parser::{Span, parse_program};
+use smallvec::SmallVec;
 
 use crate::context::Context;
 use crate::error::{Flow, InterpError, Signal};
@@ -393,24 +394,29 @@ impl Interpreter {
                 if let ExprKind::Ident(name) = &base.kind {
                     // Build the plan FIRST, while the variable is still bound:
                     // the index expression may reference the variable itself
-                    // (e.g. `v(v > 2) = 0`, `A(end) = ...`). `plan_for` only
-                    // needs the target's dims, so read them without cloning the
-                    // data, then evaluate the index args.
-                    // Missing variable → grow-from-nothing: use the empty
-                    // array's dims (`[0, 0]`), matching the old lvalue path so
-                    // the plan grows the target identically.
-                    let dims = self
+                    // (e.g. `v(v > 2) = 0`, `A(end) = ...`). It needs `&mut self`
+                    // to evaluate `i`,`j`, so it must complete *before* the slot
+                    // is borrowed. Read the target's dims without cloning data
+                    // (`shape()`). Missing variable → grow-from-nothing: use the
+                    // empty array's `[0, 0]` dims so the plan grows identically.
+                    let dims: Dims = self
                         .context
                         .lookup(name)
-                        .map_or_else(|| Array::empty().dims(), Array::dims);
+                        .map_or_else(|| SmallVec::from_slice(&[0, 0]), Array::dims_smallvec);
                     let plan = self.plan_for_dims(&dims, args, src)?;
-                    // Now TAKE the array out (Arc unshared if not aliased),
-                    // scatter IN PLACE (COW deep-copies only when shared), and
-                    // PUT it back.
-                    let mut current = self.context.take(name).unwrap_or_else(Array::empty);
-                    let result = index::scatter_into(&mut current, &plan, &value);
-                    self.context.set(name, current);
-                    result?;
+                    // Now borrow the slot MUTABLY and scatter IN PLACE — no map
+                    // remove/insert, no key realloc. COW stays correct:
+                    // `scatter_into` → `make_mut_*` deep-copies only when the
+                    // backing `Arc` is shared (`B = A`). Growth/retype reassigns
+                    // `*slot` through the `&mut Array`. A brand-new variable
+                    // (`get_mut` → None) falls back to insert-via-`set`.
+                    if let Some(slot) = self.context.get_mut(name) {
+                        index::scatter_into(slot, &plan, &value)?;
+                    } else {
+                        let mut current = Array::empty();
+                        index::scatter_into(&mut current, &plan, &value)?;
+                        self.context.set(name, current);
+                    }
                     return Ok(name.clone());
                 }
                 // Nested l-value (`a.b(2)`, `a(1).b(3)`): keep the existing
@@ -496,14 +502,66 @@ impl Interpreter {
     // ---- Expression evaluation ----------------------------------------------
 
     /// Evaluate an expression to a single value.
+    ///
+    /// The single-value expression kinds are handled **directly here**, returning
+    /// the `Array` by value with no intermediate `vec![..]` — this is the hot
+    /// path (every operand of every arithmetic op, every index subscript). Only
+    /// the genuinely multi-valued kinds (a bare identifier that may be a
+    /// zero-arg function call, paren-indexing that may be a function call, and
+    /// brace cell-content indexing) delegate to [`eval_multi`](Self::eval_multi)
+    /// and take its first result.
     pub fn eval(&mut self, e: &Expr, src: &str) -> Flow<Array> {
-        let vals = self.eval_multi(e, 1, src)?;
-        vals.into_iter().next().ok_or_else(|| {
-            Signal::Error(
-                InterpError::msg("expression produced no value where one was required")
+        match &e.kind {
+            ExprKind::Real { text, single } => real_literal(text, *single),
+            ExprKind::Imag { text, single } => imag_literal(text, *single),
+            ExprKind::Str(s) => Ok(Array::char_string(s)),
+            ExprKind::End => Err(Signal::Error(InterpError::msg(
+                "'end' used outside of an index context",
+            ))),
+            ExprKind::Colon => Err(Signal::Error(InterpError::msg(
+                "':' used outside of an index context",
+            ))),
+            ExprKind::Unary { op, operand } => {
+                let v = self.eval(operand, src)?;
+                ops::unary(*op, &v)
+            }
+            ExprKind::Binary { op, lhs, rhs } => self.eval_binary(*op, lhs, rhs, src),
+            ExprKind::Range { start, step, stop } => {
+                self.eval_range(start, step.as_deref(), stop, src)
+            }
+            ExprKind::Transpose { operand, conjugate } => {
+                let v = self.eval(operand, src)?;
+                transpose(&v, *conjugate)
+            }
+            ExprKind::Field { base, name } => {
+                let b = self.eval(base, src)?;
+                index::field_read(&b, name)
+            }
+            ExprKind::DynField { base, name } => {
+                let b = self.eval(base, src)?;
+                let fname = self.eval(name, src)?;
+                let field = fname.as_string().ok_or_else(|| {
+                    Signal::Error(InterpError::msg("dynamic field name must be a string"))
+                })?;
+                index::field_read(&b, &field)
+            }
+            ExprKind::Matrix(rows) => self.eval_matrix(rows, src),
+            ExprKind::Cell(rows) => self.eval_cell(rows, src),
+            ExprKind::FuncHandle(_) | ExprKind::AnonFunc { .. } => Err(Signal::Error(
+                InterpError::msg("function handles are not yet implemented (Stage 5/6)")
                     .located(src, e.span),
-            )
-        })
+            )),
+            // Possibly multi-valued (function call / cell-content): take first.
+            ExprKind::Ident(_) | ExprKind::Index { .. } | ExprKind::CellIndex { .. } => {
+                let vals = self.eval_multi(e, 1, src)?;
+                vals.into_iter().next().ok_or_else(|| {
+                    Signal::Error(
+                        InterpError::msg("expression produced no value where one was required")
+                            .located(src, e.span),
+                    )
+                })
+            }
+        }
     }
 
     /// Evaluate an expression that may yield multiple values (function calls,
@@ -687,7 +745,9 @@ impl Interpreter {
     /// arguments are evaluated **while the target variable is still bound** (the
     /// index may reference the variable itself, e.g. `v(v > 2) = 0`).
     fn plan_for_dims(&mut self, dims: &[usize], args: &[Expr], src: &str) -> Flow<IndexPlan> {
-        let mut resolved = Vec::with_capacity(args.len());
+        // Stack-allocate the resolved subscripts for the common low-arity case
+        // (`A(i)` / `A(i,j)`) — no heap for one or two subscripts.
+        let mut resolved: SmallVec<[IndexArg; 2]> = SmallVec::with_capacity(args.len());
         let nargs = args.len();
         for (pos, arg) in args.iter().enumerate() {
             if matches!(arg.kind, ExprKind::Colon) {
@@ -1015,7 +1075,7 @@ fn build_range(start: f64, step: f64, stop: f64) -> Array {
 
 /// The columns of a value, each as an [`Array`] (for `for` iteration).
 fn columns_of(v: &Array) -> Vec<Array> {
-    let dims = v.dims();
+    let dims = v.shape();
     if dims.len() < 2 {
         return vec![v.clone()];
     }
@@ -1024,12 +1084,13 @@ fn columns_of(v: &Array) -> Vec<Array> {
     if v.numel() == 0 {
         return Vec::new();
     }
+    let needed_dims = Dims::from_slice(dims);
     let mut out = Vec::with_capacity(cols);
     for c in 0..cols {
-        let positions: Vec<usize> = (0..rows).map(|r| r + c * rows).collect();
+        let positions: SmallVec<[usize; 4]> = (0..rows).map(|r| r + c * rows).collect();
         let plan = IndexPlan {
-            result_dims: vec![rows, 1],
-            needed_dims: dims.clone(),
+            result_dims: SmallVec::from_slice(&[rows, 1]),
+            needed_dims: needed_dims.clone(),
             linear: positions,
             deleted_axis: None,
         };
@@ -1062,22 +1123,17 @@ fn transpose(v: &Array, conjugate: bool) -> Flow<Array> {
         )));
     }
     let (r, c) = (dims[0], dims[1]);
-    let positions: Vec<usize> = (0..r)
-        .flat_map(|i| (0..c).map(move |j| j * r + i))
-        .collect();
-    // The above yields row-major order of the transpose; map into column-major
-    // of the [c, r] result.
-    let mut linear = vec![0usize; r * c];
+    // Map the [c, r] transpose result into column-major source positions:
+    // result[new_i, new_j] = source[new_j, new_i].
+    let mut linear: SmallVec<[usize; 4]> = SmallVec::from_elem(0usize, r * c);
     for new_j in 0..r {
         for new_i in 0..c {
-            // result[new_i, new_j] = source[new_j, new_i]
             linear[new_i + new_j * c] = new_j + new_i * r;
         }
     }
-    let _ = positions;
     let plan = IndexPlan {
-        result_dims: vec![c, r],
-        needed_dims: vec![c, r],
+        result_dims: SmallVec::from_slice(&[c, r]),
+        needed_dims: SmallVec::from_slice(&[c, r]),
         linear,
         deleted_axis: None,
     };

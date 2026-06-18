@@ -23,7 +23,7 @@ pub mod promote;
 pub mod scalar;
 pub mod struct_array;
 
-pub use array::Array;
+pub use array::{Array, Dims};
 pub use class::DataClass;
 pub use complex::{C32, C64};
 pub use error::{CoreError, Result};

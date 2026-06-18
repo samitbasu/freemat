@@ -14,6 +14,12 @@
 use std::sync::Arc;
 
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+use smallvec::SmallVec;
+
+/// A shape / index buffer that stays on the stack for the common low-rank case
+/// (rank ≤ 4) and spills to the heap only for higher ranks. Used to read a
+/// value's dimensions without a `Vec` allocation on the hot path.
+pub type Dims = SmallVec<[usize; 4]>;
 
 use crate::class::DataClass;
 use crate::complex::{C32, C64};
@@ -229,28 +235,48 @@ impl Array {
         self.class().name()
     }
 
-    /// Dimensions of this value (column-major). Scalars report `[1, 1]`.
+    /// Borrow this value's dimensions (column-major) **without allocating**.
+    ///
+    /// Scalars report a static `[1, 1]`. This is the zero-alloc shape accessor
+    /// for hot paths; use [`dims`](Self::dims) only when an owned `Vec` is
+    /// actually needed.
+    #[must_use]
+    pub fn shape(&self) -> &[usize] {
+        /// Shared static so a scalar's `[1, 1]` can be borrowed.
+        const SCALAR_SHAPE: [usize; 2] = [1, 1];
+        match self {
+            Array::Scalar(_) => &SCALAR_SHAPE,
+            Array::Bool(a) => a.shape(),
+            Array::Int8(a) => a.shape(),
+            Array::UInt8(a) => a.shape(),
+            Array::Int16(a) => a.shape(),
+            Array::UInt16(a) => a.shape(),
+            Array::Int32(a) => a.shape(),
+            Array::UInt32(a) => a.shape(),
+            Array::Int64(a) => a.shape(),
+            Array::UInt64(a) => a.shape(),
+            Array::Float(a) => a.shape(),
+            Array::Double(a) => a.shape(),
+            Array::Complex32(a) => a.shape(),
+            Array::Complex64(a) => a.shape(),
+            Array::Char(a) => a.shape(),
+            Array::Cell(a) => a.shape(),
+            Array::Struct(s) => s.dims(),
+        }
+    }
+
+    /// Dimensions of this value as a stack-friendly [`Dims`] (no heap for the
+    /// common low-rank case). Scalars report `[1, 1]`.
+    #[must_use]
+    pub fn dims_smallvec(&self) -> Dims {
+        Dims::from_slice(self.shape())
+    }
+
+    /// Dimensions of this value (column-major) as an owned `Vec`. Scalars report
+    /// `[1, 1]`. Prefer [`shape`](Self::shape) on hot paths (no allocation).
     #[must_use]
     pub fn dims(&self) -> Vec<usize> {
-        match self {
-            Array::Scalar(_) => vec![1, 1],
-            Array::Bool(a) => a.shape().to_vec(),
-            Array::Int8(a) => a.shape().to_vec(),
-            Array::UInt8(a) => a.shape().to_vec(),
-            Array::Int16(a) => a.shape().to_vec(),
-            Array::UInt16(a) => a.shape().to_vec(),
-            Array::Int32(a) => a.shape().to_vec(),
-            Array::UInt32(a) => a.shape().to_vec(),
-            Array::Int64(a) => a.shape().to_vec(),
-            Array::UInt64(a) => a.shape().to_vec(),
-            Array::Float(a) => a.shape().to_vec(),
-            Array::Double(a) => a.shape().to_vec(),
-            Array::Complex32(a) => a.shape().to_vec(),
-            Array::Complex64(a) => a.shape().to_vec(),
-            Array::Char(a) => a.shape().to_vec(),
-            Array::Cell(a) => a.shape().to_vec(),
-            Array::Struct(s) => s.dims().to_vec(),
-        }
+        self.shape().to_vec()
     }
 
     /// Number of elements.
@@ -259,7 +285,7 @@ impl Array {
         match self {
             Array::Scalar(_) => 1,
             Array::Struct(s) => s.numel(),
-            _ => self.dims().iter().product(),
+            _ => self.shape().iter().product(),
         }
     }
 

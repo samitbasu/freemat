@@ -714,6 +714,60 @@ then tick it here and commit. Leave notes for the next session under each stage.
   enum, its `Arc` COW model, and the `make_mut_*` accessors were **not** modified — this was purely
   an interpreter hot-path change that finally *uses* the COW accessors that already existed.
 
+### Perf round 2 (before Stage 8) — kill per-iteration heap traffic
+
+- **Symptom / root cause.** A callgrind profile of the same `A(i,j)=i+j` loop showed it was
+  **allocator-bound**: ~35 heap allocations *per iteration*, ~38% of instructions in `malloc`/`free`.
+  The in-place fast path from round 1 removed the O(N) rebuild, but every iteration still churned
+  short `Vec`s (shape reads, index plans, scalar buffers) and — the big one — the `for` loop
+  variable and every 1-element index read were materialised as **1×1 dense `ArrayD`s** instead of
+  inline scalars, so the scalar fast paths in arithmetic and indexing never fired.
+
+- **What changed (items 1–6; `fm-core::Array` enum / `Arc` COW / `make_mut_*` untouched — only
+  additive zero-alloc accessors).**
+  1. **Zero-alloc shape reads.** Added `Array::shape() -> &[usize]` (scalars borrow a static
+     `[1,1]`), `Array::dims_smallvec() -> Dims`, and a `Dims = SmallVec<[usize;4]>` alias.
+     `dims()` now just `shape().to_vec()`; `numel()` products `shape()` (no Vec). Hot callers
+     (`plan_for`/`plan_for_dims`, `columns_of`, `elementwise_arith`/`relational`/`equality`/
+     `logical`/`pow`, `unary`, `mul`) read `shape()` instead of allocating a `dims()` Vec.
+  2. **SmallVec index plans + scalar subscript fast path.** `IndexPlan.linear`/`result_dims`/
+     `needed_dims` and the internal `strides`/`per_dim`/`needed`/`eff` are now `SmallVec`. New
+     `plan_scalar`: when every subscript is a single in-bounds integer (`A(i)` / `A(i,j)`), it
+     computes the one linear offset with **no per-dimension vectors at all**.
+  3. **In-place scatter with no map mutation.** Added `Context::get_mut(name) -> Option<&mut Array>`
+     (honours global/persistent). `assign_to`'s plain-variable index branch now builds the plan
+     FIRST (it needs `&mut self` to evaluate `i`,`j`), THEN borrows the slot mutably and
+     `scatter_into(slot, …)` — **zero map remove/insert, zero key realloc**. Brand-new variables
+     fall back to insert-via-`set`; grow/retype reassigns `*slot` through the `&mut`. COW is
+     automatic (`make_mut_*` clones once when the `Arc` is shared).
+  4. **Scalar ⊕ scalar fast path.** `elementwise_arith`/`relational`/`equality`/`logical` and unary
+     minus/not short-circuit when both operands are inline `Array::Scalar`: compute via
+     `ScalarValue` + `cast_scalar` and return an `Array::Scalar` — **zero allocs**, speeding *all*
+     scalar arithmetic. (`add_scalar` left as-is; the promotion-correct path reuses `cast_scalar`.)
+  5. **Scalar RHS read without a buffer.** `scatter_into` reads a scalar rhs via `as_f64()` (no
+     `to_f64_vec` Vec); only a multi-element rhs materialises.
+  6. **`eval` no longer wraps in `vec![..]`.** `eval` handles the single-value expr kinds directly
+     (returning `Array` by value); only the genuinely multi-valued kinds (bare ident, paren-index,
+     brace-index — all possible function calls) delegate to `eval_multi`. `plan_for_dims`'s resolved
+     subscripts are a `SmallVec<[IndexArg;2]>`.
+  - **The decisive fix:** `gather_unchecked` now returns an inline `Array::Scalar` (new
+    `scalar_at`) when the result is a single element — so `for i=1:N` loop variables and 1×1
+    subexpressions stay scalar, and items 2 & 4's fast paths actually fire. This is also correct
+    MATLAB semantics (a single-element index yields a scalar).
+
+- **Benchmark (release, `fm --no-gfx`, wall-clock, 1e6 writes).** Round-1 baseline **~0.98s** →
+  **~0.43s** (result `A(1000,1000)=2000` correct) — **beats the C++ FreeMat reference (~0.78s)** and
+  the ~0.5s target. **Allocs/iter** (callgrind, N=200): the round-1 profile was ~35/iter (38% in
+  malloc/free); after, malloc/free is ~18% of instructions and `to_f64_vec` dropped from 4×/iter to
+  ~0 (the scalar paths bypass it). The remaining traffic is the unavoidable single COW write.
+
+- **Conformance: 262/603 (43.4%)** — up from 260, **no regression**. COW/aliasing tests
+  (`inplace_assign.rs`, incl. `cow_alias_not_disturbed_by_indexed_assign`) still pass.
+
+- **New dep:** `smallvec = "1"` (workspace; `fm-core` + `fm-interp` opt in). The core
+  `fm-core::Array` enum, its `Arc` COW model, and the `make_mut_*` accessors were **not** modified —
+  the new `shape()`/`dims_smallvec()`/`Dims` are purely additive accessors.
+
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,
   no GUI. Debug *engine* lives in `fm-interp`; new crates `fm-dap` (+ optional `fm-lsp`).

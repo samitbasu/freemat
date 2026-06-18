@@ -17,6 +17,7 @@ ndarray.workspace = true
 miette.workspace = true
 thiserror.workspace = true
 rustc-hash.workspace = true
+smallvec.workspace = true
 
 [dev-dependencies]
 # Render annotated diagnostics in error-path tests.

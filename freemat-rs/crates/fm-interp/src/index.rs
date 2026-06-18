@@ -6,10 +6,15 @@
 //! a list of 0-based linear element positions ([`IndexPlan`]); reads gather,
 //! writes scatter (growing the target if a position is out of bounds).
 
-use fm_core::{Array, C64, DataClass, ScalarValue, StructArray};
+use fm_core::{Array, C64, DataClass, Dims, ScalarValue, StructArray};
+use smallvec::SmallVec;
 
 use crate::error::{Flow, InterpError, Signal};
 use crate::value::{to_f64_vec, to_index};
+
+/// A short list of 0-based linear positions, kept on the stack for the common
+/// case (a handful of indexed elements, e.g. `A(i,j)`).
+type Linear = SmallVec<[usize; 4]>;
 
 /// Whether `rhs` is the empty `[]` value that triggers element deletion in a
 /// paren-assignment `x(idx) = []`.
@@ -22,12 +27,12 @@ fn is_deletion(rhs: &Array) -> bool {
 /// shape the *result* should take.
 pub struct IndexPlan {
     /// Linear (column-major) positions to gather/scatter, in result order.
-    pub linear: Vec<usize>,
+    pub linear: Linear,
     /// The shape of the result of a *read* with this plan.
-    pub result_dims: Vec<usize>,
+    pub result_dims: Dims,
     /// The dims the *target* must have to hold every position (grow target to
     /// at least this on assignment).
-    pub needed_dims: Vec<usize>,
+    pub needed_dims: Dims,
     /// For a 2-D subscript with exactly one non-colon axis (`x(i, :)` /
     /// `x(:, j)`), the axis (0 = rows, 1 = cols) the index selects. Used by
     /// `x(i,:) = []` row/column deletion to know which dimension to collapse.
@@ -43,8 +48,8 @@ pub enum IndexArg {
 }
 
 /// Build column-major strides for `dims`.
-fn strides(dims: &[usize]) -> Vec<usize> {
-    let mut s = vec![1usize; dims.len().max(1)];
+fn strides(dims: &[usize]) -> Dims {
+    let mut s: Dims = SmallVec::from_elem(1usize, dims.len().max(1));
     for i in 1..dims.len() {
         s[i] = s[i - 1] * dims[i - 1];
     }
@@ -54,14 +59,14 @@ fn strides(dims: &[usize]) -> Vec<usize> {
 /// Convert a per-dimension subscript value into 0-based positions along that
 /// dimension; `dim_len` is the current length of the dimension (for `:` /
 /// logical). Returns the chosen positions and the max position + 1 (for growth).
-fn resolve_dim(arg: &IndexArg, dim_len: usize) -> Flow<Vec<usize>> {
+fn resolve_dim(arg: &IndexArg, dim_len: usize) -> Flow<Linear> {
     match arg {
         IndexArg::Colon => Ok((0..dim_len).collect()),
         IndexArg::Value(v) => {
             if v.class() == DataClass::Bool {
                 // Logical mask along this dimension.
                 let mask = to_f64_vec(v);
-                let mut out = Vec::new();
+                let mut out = Linear::new();
                 for (i, &m) in mask.iter().enumerate() {
                     if m != 0.0 {
                         out.push(i);
@@ -75,6 +80,56 @@ fn resolve_dim(arg: &IndexArg, dim_len: usize) -> Flow<Vec<usize>> {
     }
 }
 
+/// Try the scalar subscript fast path: every argument resolves to exactly one
+/// in-bounds integer (the common `A(i)` / `A(i,j)` write/read). Computes the
+/// single linear offset with **no `Vec`/`SmallVec` growth beyond one element**.
+/// Returns `None` if any argument is `:`, logical, non-scalar, out of bounds, or
+/// otherwise needs the general path (so the caller falls through).
+fn plan_scalar(dims: &[usize], args: &[IndexArg]) -> Option<IndexPlan> {
+    // Resolve each subscript to a single 0-based, in-bounds coordinate, and
+    // accumulate the column-major linear offset on the fly.
+    let n = args.len();
+    let mut lin = 0usize;
+    let mut stride = 1usize;
+    for (axis, arg) in args.iter().enumerate() {
+        let IndexArg::Value(v) = arg else {
+            return None; // `:` — not the scalar path.
+        };
+        // Inline scalar, numeric (not logical), positive integer only.
+        let s = match v {
+            Array::Scalar(s) if !matches!(s, ScalarValue::Bool(_)) => *s,
+            _ => return None,
+        };
+        let f = s.as_f64();
+        if f < 1.0 || f.fract() != 0.0 {
+            return None;
+        }
+        let coord = (f as usize) - 1;
+        // Current extent of this axis (last subscript folds the trailing dims;
+        // an empty product is 1, matching `plan_subscript`'s `eff`).
+        let extent = if axis + 1 == n {
+            dims.iter().skip(axis).product::<usize>()
+        } else {
+            dims.get(axis).copied().unwrap_or(1)
+        };
+        if coord >= extent {
+            return None; // out of bounds → would grow; let the general path handle it.
+        }
+        lin += coord * stride;
+        stride *= extent;
+    }
+    let mut needed = Dims::from_slice(dims);
+    while needed.len() < 2 {
+        needed.push(1);
+    }
+    Some(IndexPlan {
+        linear: SmallVec::from_elem(lin, 1),
+        result_dims: SmallVec::from_slice(&[1, 1]),
+        needed_dims: needed,
+        deleted_axis: None,
+    })
+}
+
 /// Resolve a list of index arguments against a target of shape `dims` into an
 /// [`IndexPlan`]. Handles linear (1 arg) and subscript (N args) indexing.
 pub fn plan_index(dims: &[usize], args: &[IndexArg]) -> Flow<IndexPlan> {
@@ -82,6 +137,12 @@ pub fn plan_index(dims: &[usize], args: &[IndexArg]) -> Flow<IndexPlan> {
         return Err(Signal::Error(InterpError::msg("empty index")));
     }
     let total: usize = dims.iter().product();
+
+    // Scalar fast path: `A(i)` / `A(i,j)` with single in-bounds integer
+    // subscripts — one linear offset, no per-dimension vectors.
+    if let Some(plan) = plan_scalar(dims, args) {
+        return Ok(plan);
+    }
 
     if args.len() == 1 {
         return plan_linear(dims, total, &args[0]);
@@ -94,10 +155,10 @@ fn plan_linear(dims: &[usize], total: usize, arg: &IndexArg) -> Flow<IndexPlan> 
     match arg {
         IndexArg::Colon => {
             // `A(:)` → column vector of all elements.
-            let linear: Vec<usize> = (0..total).collect();
+            let linear: Linear = (0..total).collect();
             Ok(IndexPlan {
-                result_dims: vec![total, 1],
-                needed_dims: dims.to_vec(),
+                result_dims: SmallVec::from_slice(&[total, 1]),
+                needed_dims: Dims::from_slice(dims),
                 linear,
                 deleted_axis: None,
             })
@@ -105,7 +166,7 @@ fn plan_linear(dims: &[usize], total: usize, arg: &IndexArg) -> Flow<IndexPlan> 
         IndexArg::Value(v) => {
             if v.class() == DataClass::Bool {
                 let mask = to_f64_vec(v);
-                let linear: Vec<usize> = mask
+                let linear: Linear = mask
                     .iter()
                     .enumerate()
                     .filter_map(|(i, &m)| (m != 0.0).then_some(i))
@@ -114,22 +175,19 @@ fn plan_linear(dims: &[usize], total: usize, arg: &IndexArg) -> Flow<IndexPlan> 
                 // Logical linear indexing returns a column vector (row stays row
                 // if the source is a row vector — MATLAB orients to the source).
                 let result_dims = if dims.len() == 2 && dims[0] == 1 {
-                    vec![1, n]
+                    SmallVec::from_slice(&[1, n])
                 } else {
-                    vec![n, 1]
+                    SmallVec::from_slice(&[n, 1])
                 };
                 Ok(IndexPlan {
-                    needed_dims: dims.to_vec(),
+                    needed_dims: Dims::from_slice(dims),
                     linear,
                     result_dims,
                     deleted_axis: None,
                 })
             } else {
                 let idx = to_f64_vec(v);
-                let linear: Vec<usize> = idx
-                    .iter()
-                    .map(|&x| to_index(x))
-                    .collect::<Flow<Vec<usize>>>()?;
+                let linear: Linear = idx.iter().map(|&x| to_index(x)).collect::<Flow<Linear>>()?;
                 let max = linear.iter().copied().max().map_or(0, |m| m + 1);
                 // Result shape follows the index's shape, except a vector source
                 // indexed by a vector keeps the source orientation.
@@ -137,7 +195,7 @@ fn plan_linear(dims: &[usize], total: usize, arg: &IndexArg) -> Flow<IndexPlan> 
                 let needed_dims = if max > total {
                     grow_linear_dims(dims, max)
                 } else {
-                    dims.to_vec()
+                    Dims::from_slice(dims)
                 };
                 Ok(IndexPlan {
                     linear,
@@ -151,31 +209,35 @@ fn plan_linear(dims: &[usize], total: usize, arg: &IndexArg) -> Flow<IndexPlan> 
 }
 
 /// Result shape for numeric linear indexing of `dims` by index value `v`.
-fn linear_result_dims(dims: &[usize], v: &Array) -> Vec<usize> {
-    let vd = v.dims();
+fn linear_result_dims(dims: &[usize], v: &Array) -> Dims {
+    let vd = v.shape();
     let is_row_src = dims.len() == 2 && dims[0] == 1;
     let is_col_src = dims.len() == 2 && dims[1] == 1;
     let idx_is_vec = vd.len() == 2 && (vd[0] == 1 || vd[1] == 1);
     if (is_row_src || is_col_src) && idx_is_vec {
         // Vector source indexed by a vector → orient like the source.
         let n: usize = vd.iter().product();
-        if is_row_src { vec![1, n] } else { vec![n, 1] }
+        if is_row_src {
+            SmallVec::from_slice(&[1, n])
+        } else {
+            SmallVec::from_slice(&[n, 1])
+        }
     } else {
         // Otherwise the result takes the index's shape.
-        vd
+        Dims::from_slice(vd)
     }
 }
 
 /// Grow a shape so a linear position `max-1` fits (only vectors grow linearly).
-fn grow_linear_dims(dims: &[usize], needed: usize) -> Vec<usize> {
+fn grow_linear_dims(dims: &[usize], needed: usize) -> Dims {
     if dims.len() == 2 && dims[0] <= 1 {
-        vec![1, needed]
+        SmallVec::from_slice(&[1, needed])
     } else if dims.len() == 2 && dims[1] == 1 {
-        vec![needed, 1]
+        SmallVec::from_slice(&[needed, 1])
     } else {
         // Growing a non-vector by linear index is disallowed in MATLAB; we keep
         // dims and let the caller error if a position is out of range.
-        dims.to_vec()
+        Dims::from_slice(dims)
     }
 }
 
@@ -183,7 +245,7 @@ fn grow_linear_dims(dims: &[usize], needed: usize) -> Vec<usize> {
 fn plan_subscript(dims: &[usize], args: &[IndexArg]) -> Flow<IndexPlan> {
     let n = args.len();
     // Effective target dims padded/merged to `n` axes.
-    let mut eff = vec![1usize; n];
+    let mut eff: Dims = SmallVec::from_elem(1usize, n);
     for (i, slot) in eff.iter_mut().enumerate() {
         if i + 1 == n {
             // Last subscript collapses the remaining dimensions.
@@ -197,7 +259,7 @@ fn plan_subscript(dims: &[usize], args: &[IndexArg]) -> Flow<IndexPlan> {
     }
 
     // Resolve each dimension's positions.
-    let mut per_dim: Vec<Vec<usize>> = Vec::with_capacity(n);
+    let mut per_dim: SmallVec<[Linear; 4]> = SmallVec::with_capacity(n);
     for (i, arg) in args.iter().enumerate() {
         per_dim.push(resolve_dim(arg, eff[i])?);
     }
@@ -210,10 +272,10 @@ fn plan_subscript(dims: &[usize], args: &[IndexArg]) -> Flow<IndexPlan> {
     }
 
     // Generate linear positions in column-major (first index fastest) order.
-    let result_dims: Vec<usize> = per_dim.iter().map(Vec::len).collect();
+    let result_dims: Dims = per_dim.iter().map(SmallVec::len).collect();
     let nstr = strides(&needed);
-    let mut linear = Vec::with_capacity(result_dims.iter().product());
     let total_out: usize = result_dims.iter().product();
+    let mut linear: Linear = SmallVec::with_capacity(total_out);
     let out_str = strides(&result_dims);
     for out_lin in 0..total_out {
         let mut pos = 0usize;
@@ -230,8 +292,9 @@ fn plan_subscript(dims: &[usize], args: &[IndexArg]) -> Flow<IndexPlan> {
     let needed_dims = merge_needed(dims, &needed, n);
     // Detect the single selected axis for `x(i,:)` / `x(:,j)` deletion.
     let deleted_axis = if n == 2 {
-        let colons: Vec<bool> = args.iter().map(|a| matches!(a, IndexArg::Colon)).collect();
-        match (colons[0], colons[1]) {
+        let c0 = matches!(args[0], IndexArg::Colon);
+        let c1 = matches!(args[1], IndexArg::Colon);
+        match (c0, c1) {
             (false, true) => Some(0),
             (true, false) => Some(1),
             _ => None,
@@ -248,13 +311,13 @@ fn plan_subscript(dims: &[usize], args: &[IndexArg]) -> Flow<IndexPlan> {
 }
 
 /// Build the target's needed dims from a subscript's per-axis extents.
-fn merge_needed(orig: &[usize], needed: &[usize], n: usize) -> Vec<usize> {
+fn merge_needed(orig: &[usize], needed: &[usize], n: usize) -> Dims {
     if n == orig.len() {
-        return needed.to_vec();
+        return Dims::from_slice(needed);
     }
     // When fewer subscripts than dims, the last subscript indexes the flattened
     // tail; growth there is uncommon — keep the original tail dims if unchanged.
-    let mut out = needed.to_vec();
+    let mut out = Dims::from_slice(needed);
     while out.len() < 2 {
         out.push(1);
     }
@@ -262,7 +325,7 @@ fn merge_needed(orig: &[usize], needed: &[usize], n: usize) -> Vec<usize> {
 }
 
 /// Drop trailing singleton dims beyond rank 2 (MATLAB keeps ≥2 dims).
-fn squeeze_result(mut d: Vec<usize>) -> Vec<usize> {
+fn squeeze_result(mut d: Dims) -> Dims {
     while d.len() > 2 && *d.last().unwrap() == 1 {
         d.pop();
     }
@@ -286,9 +349,49 @@ pub fn gather(base: &Array, plan: &IndexPlan) -> Flow<Array> {
     Ok(gather_unchecked(base, &plan.linear, &plan.result_dims))
 }
 
+/// Read a single element at column-major linear position `i` as a
+/// [`ScalarValue`], without allocating. Returns `None` for cell/struct (which
+/// have no scalar form) so the caller takes the general gather path.
+fn scalar_at(base: &Array, i: usize) -> Option<ScalarValue> {
+    macro_rules! at {
+        ($d:expr, $ctor:path) => {
+            $d.as_slice_memory_order().map(|s| $ctor(s[i]))
+        };
+    }
+    match base {
+        Array::Scalar(s) => Some(*s),
+        Array::Bool(d) => at!(d, ScalarValue::Bool),
+        Array::Int8(d) => at!(d, ScalarValue::Int8),
+        Array::UInt8(d) => at!(d, ScalarValue::UInt8),
+        Array::Int16(d) => at!(d, ScalarValue::Int16),
+        Array::UInt16(d) => at!(d, ScalarValue::UInt16),
+        Array::Int32(d) => at!(d, ScalarValue::Int32),
+        Array::UInt32(d) => at!(d, ScalarValue::UInt32),
+        Array::Int64(d) => at!(d, ScalarValue::Int64),
+        Array::UInt64(d) => at!(d, ScalarValue::UInt64),
+        Array::Float(d) => at!(d, ScalarValue::Float),
+        Array::Double(d) => at!(d, ScalarValue::Double),
+        Array::Complex32(d) => at!(d, ScalarValue::Complex32),
+        Array::Complex64(d) => at!(d, ScalarValue::Complex64),
+        Array::Char(d) => at!(d, ScalarValue::Char),
+        Array::Cell(_) | Array::Struct(_) => None,
+    }
+}
+
 /// Gather without bounds-checking (callers pre-validate). All reads are in
 /// column-major (memory) order so linear positions line up.
 fn gather_unchecked(base: &Array, linear: &[usize], result_dims: &[usize]) -> Array {
+    // Single-element gather → an inline `Array::Scalar` (no heap, no `ArrayD`).
+    // This is the common `A(i,j)` read and, crucially, how a `for` loop variable
+    // and any 1×1 subexpression stay on the scalar fast path (so subsequent
+    // arithmetic / indexing never re-materialises a 1-element array). Mirrors
+    // MATLAB: a single-subscript result is a scalar.
+    if linear.len() == 1
+        && result_dims.iter().product::<usize>() == 1
+        && let Some(s) = scalar_at(base, linear[0])
+    {
+        return Array::Scalar(s);
+    }
     // Pick elements at `linear` straight from the column-major memory buffer:
     // O(count), no whole-array clone. `mem_order` (which copies the entire
     // buffer) is only used as a fallback for the rare non-contiguous view.
@@ -430,14 +533,27 @@ fn try_scatter_in_place(target: &mut Array, plan: &IndexPlan, rhs: &Array) -> Fl
     }
 
     let count = plan.linear.len();
-    let rhs_vals = to_f64_vec(rhs);
-    if rhs_vals.len() != 1 && rhs_vals.len() != count {
+    // Read the rhs without allocating a `Vec` when it is an inline scalar (the
+    // overwhelmingly common `A(i,j) = scalar` case): `as_f64()` reads the single
+    // value straight from the inline `ScalarValue`. A multi-element rhs still
+    // materialises its values once, as before.
+    let scalar_val = rhs.as_f64();
+    let rhs_vals = if scalar_val.is_some() {
+        Vec::new()
+    } else {
+        to_f64_vec(rhs)
+    };
+    let rhs_len = if scalar_val.is_some() {
+        1
+    } else {
+        rhs_vals.len()
+    };
+    if rhs_len != 1 && rhs_len != count {
         return Err(Signal::Error(InterpError::msg(format!(
-            "assignment size mismatch: {} elements into {count} positions",
-            rhs_vals.len()
+            "assignment size mismatch: {rhs_len} elements into {count} positions"
         ))));
     }
-    let scalar = rhs_vals.len() == 1;
+    let scalar = rhs_len == 1;
 
     // Write only the indexed positions into the target's column-major buffer.
     macro_rules! write_in_place {
@@ -448,7 +564,13 @@ fn try_scatter_in_place(target: &mut Array, plan: &IndexPlan, rhs: &Array) -> Fl
                 .as_slice_memory_order_mut()
                 .expect("dense F-order buffer is contiguous");
             for (i, &p) in plan.linear.iter().enumerate() {
-                let v = if scalar { rhs_vals[0] } else { rhs_vals[i] };
+                // `scalar` ⇒ `scalar_val` is `Some` (a numel-1 rhs); otherwise
+                // `rhs_vals` holds one value per indexed position.
+                let v = if scalar {
+                    scalar_val.expect("scalar rhs has a single value")
+                } else {
+                    rhs_vals[i]
+                };
                 buf[p] = $conv(v);
             }
         }};
@@ -502,10 +624,10 @@ pub fn scatter(base: &Array, plan: &IndexPlan, rhs: &Array) -> Flow<Array> {
     }
 
     let needed: usize = plan.needed_dims.iter().product();
-    let needed_dims = if plan.needed_dims.iter().product::<usize>() >= base.numel() {
+    let needed_dims: Dims = if plan.needed_dims.iter().product::<usize>() >= base.numel() {
         plan.needed_dims.clone()
     } else {
-        base.dims()
+        base.dims_smallvec()
     };
 
     // RHS values, broadcast: scalar fills, else must match index count.
@@ -608,10 +730,10 @@ pub fn scatter_cell_contents(base: &Array, plan: &IndexPlan, rhs: Array) -> Flow
     for &p in &plan.linear {
         flat[p] = rhs.clone();
     }
-    let dims = if plan.needed_dims.iter().product::<usize>() >= flat.len() {
+    let dims: Dims = if plan.needed_dims.iter().product::<usize>() >= flat.len() {
         plan.needed_dims.clone()
     } else {
-        vec![flat.len(), 1]
+        SmallVec::from_slice(&[flat.len(), 1])
     };
     Ok(Array::cell(&dims, flat))
 }
@@ -734,7 +856,7 @@ fn scatter_struct(base: &Array, plan: &IndexPlan, rhs: &Array) -> Flow<Array> {
     }
 
     Ok(Array::struct_array(StructArray::from_fields(
-        plan.needed_dims.clone(),
+        plan.needed_dims.to_vec(),
         fields,
     )))
 }

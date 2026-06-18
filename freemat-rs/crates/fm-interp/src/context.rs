@@ -140,6 +140,29 @@ impl Context {
         top.get_local(name)
     }
 
+    /// Mutable access to the variable `name` **in place** (no remove/insert),
+    /// honouring the top scope's global/persistent declarations. Returns `None`
+    /// if the variable is not currently bound.
+    ///
+    /// This is the in-place indexed-assignment fast path: scattering through the
+    /// returned `&mut Array` keeps the backing `Arc` owned solely by the symbol
+    /// table (strong-count 1 when not aliased), so `make_mut_*` mutates in place;
+    /// it also avoids the per-write map mutation and the `String` key realloc the
+    /// old take → mutate → put-back dance incurred. Copy-on-write stays correct:
+    /// an aliased `Arc` (`B = A`) still deep-copies on the first write.
+    #[must_use]
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut Array> {
+        let top = self.scopes.last().expect("base scope always present");
+        if top.is_global(name) {
+            self.globals.get_mut(name)
+        } else if top.is_persistent(name) {
+            let key = self.persistent_key(name);
+            self.persistents.get_mut(&key)
+        } else {
+            self.top_mut().get_local_mut(name)
+        }
+    }
+
     /// Assign `value` to `name`, honouring global/persistent declarations.
     pub fn assign(&mut self, name: &str, value: Array) {
         let top = self.top();

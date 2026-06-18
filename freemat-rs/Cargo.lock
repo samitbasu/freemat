@@ -576,6 +576,7 @@ version = "0.0.0"
 dependencies = [
  "ndarray",
  "num-complex",
+ "smallvec",
 ]
 
 [[package]]
@@ -597,6 +598,7 @@ dependencies = [
  "miette",
  "ndarray",
  "rustc-hash",
+ "smallvec",
  "thiserror 2.0.18",
 ]
 

@@ -41,6 +41,9 @@ tokio-tungstenite = "0.24"
 # Fast (non-DoS-resistant) hasher for the interpreter's symbol tables — variable
 # lookups are a tree-walker hot path and don't need SipHash's collision defence.
 rustc-hash = "2"
+# Small-vector optimisation for short index/shape vectors (Perf round 2): keeps
+# the common low-rank `dims()` / index-plan buffers on the stack (no heap).
+smallvec = "1"
 
 [workspace.lints.rust]
 rust_2018_idioms = "warn"

@@ -11,6 +11,7 @@ repository.workspace = true
 [dependencies]
 ndarray.workspace = true
 num-complex.workspace = true
+smallvec.workspace = true
 
 [lints]
 workspace = true
