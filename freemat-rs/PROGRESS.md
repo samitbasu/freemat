@@ -14,6 +14,7 @@ then tick it here and commit. Leave notes for the next session under each stage.
 - [x] **Stage 5 — `fm-linalg` + core math builtins  ·  ★ Milestone 1**
 - [x] **Stage 6 — `fm-builtins`: remaining core functions**
 - [x] **Stage 7 — `fm-graphics` + webserver + Plotly  ·  ★ Milestone 2**
+- [ ] **Stage 7.5 — Graphics handle-property system (set/get, subplot, contour)** — scheduled after Stage 8
 - [x] **Stage 8 — `fm-io`: MAT files, file I/O, FFT, regex**
 - [ ] **Stage 9 — Advanced / optional**
 - [ ] **Stage 10 — Debugging & editor integration (DAP + `db*` engine; optional LSP)**
