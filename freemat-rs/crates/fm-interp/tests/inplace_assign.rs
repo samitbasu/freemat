@@ -71,6 +71,28 @@ fn linear_grow_past_end_of_matrix_flattens_to_row() {
     );
 }
 
+/// A colon index assigning into an empty target grows it to the RHS's extent
+/// (FreeMat's grow-on-assign colon), instead of erroring on "0 positions".
+#[test]
+fn colon_assign_into_empty_grows() {
+    // `x = []; x(:,1) = 3` → a 1×1 holding 3.
+    let interp = common::run("x = []; x(:,1) = 3;");
+    let x = interp.context.lookup("x").unwrap().clone();
+    assert_eq!(to_f64_vec(&x), vec![3.0]);
+
+    // `x = []; x(1,:) = [1 2 3 4]` → a 1×4 row.
+    let interp = common::run("x = []; x(1,:) = [1 2 3 4];");
+    let x = interp.context.lookup("x").unwrap().clone();
+    assert_eq!(x.shape(), &[1, 4]);
+    assert_eq!(to_f64_vec(&x), vec![1.0, 2.0, 3.0, 4.0]);
+
+    // `a = []; a(:) = 1:4` → grows to a 4×1 column.
+    let interp = common::run("a = []; a(:) = 1:4;");
+    let a = interp.context.lookup("a").unwrap().clone();
+    assert_eq!(a.numel(), 4);
+    assert_eq!(to_f64_vec(&a), vec![1.0, 2.0, 3.0, 4.0]);
+}
+
 /// COW must also hold across many writes (the loop case): only the *first*
 /// write after aliasing copies; subsequent writes mutate the now-unshared copy.
 #[test]

@@ -44,16 +44,13 @@ pub fn promote(a: DataClass, b: DataClass) -> Result<DataClass> {
         // Exactly one is an integer class: result is that integer class.
         (true, false) => Ok(a),
         (false, true) => Ok(b),
-        // Neither is an integer: float lattice (single dominates only over
-        // bool/char/itself; double wins otherwise).
+        // Neither is an integer: FreeMat's `ComputeTypes` makes `single`
+        // *dominate* — if either operand is `single`, the result is `single`
+        // (including `single + double`, computed in double then cast to single).
+        // Everything else is `double`.
         (false, false) => {
             if a == Float || b == Float {
-                // single + (single|bool|char) => single; single + double => double.
-                if a == Double || b == Double {
-                    Ok(Double)
-                } else {
-                    Ok(Float)
-                }
+                Ok(Float)
             } else {
                 Ok(Double)
             }

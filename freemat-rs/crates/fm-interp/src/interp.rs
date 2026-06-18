@@ -439,7 +439,7 @@ impl Interpreter {
                         .context
                         .lookup(name)
                         .map_or_else(|| SmallVec::from_slice(&[0, 0]), Array::dims_smallvec);
-                    let plan = self.plan_for_dims(&dims, args, src)?;
+                    let plan = self.plan_for_dims(&dims, args, Some(&value.dims()), src)?;
                     // Now borrow the slot MUTABLY and scatter IN PLACE — no map
                     // remove/insert, no key realloc. COW stays correct:
                     // `scatter_into` → `make_mut_*` deep-copies only when the
@@ -458,7 +458,8 @@ impl Interpreter {
                 // Nested l-value (`a.b(2)`, `a(1).b(3)`): keep the existing
                 // evaluate-base → scatter → store-back path.
                 let (name, current) = self.lvalue_base(base, src)?;
-                let plan = self.plan_for(&current, args, src)?;
+                let cur_dims = current.dims();
+                let plan = self.plan_for_dims(&cur_dims, args, Some(&value.dims()), src)?;
                 let updated = index::scatter(&current, &plan, &value)?;
                 self.store_lvalue(base, updated, src)?;
                 Ok(name)
@@ -780,14 +781,20 @@ impl Interpreter {
     /// Evaluate index arguments against `target`, resolving `:` and `end`.
     fn plan_for(&mut self, target: &Array, args: &[Expr], src: &str) -> Flow<IndexPlan> {
         let dims = target.dims();
-        self.plan_for_dims(&dims, args, src)
+        self.plan_for_dims(&dims, args, None, src)
     }
 
     /// Like [`plan_for`](Self::plan_for) but the target's `dims` are supplied
     /// directly. Used by the in-place indexed-assignment fast path so the index
     /// arguments are evaluated **while the target variable is still bound** (the
     /// index may reference the variable itself, e.g. `v(v > 2) = 0`).
-    fn plan_for_dims(&mut self, dims: &[usize], args: &[Expr], src: &str) -> Flow<IndexPlan> {
+    fn plan_for_dims(
+        &mut self,
+        dims: &[usize],
+        args: &[Expr],
+        rhs_dims: Option<&[usize]>,
+        src: &str,
+    ) -> Flow<IndexPlan> {
         // Stack-allocate the resolved subscripts for the common low-arity case
         // (`A(i)` / `A(i,j)`) — no heap for one or two subscripts.
         let mut resolved: SmallVec<[IndexArg; 2]> = SmallVec::with_capacity(args.len());
@@ -801,7 +808,7 @@ impl Interpreter {
                 resolved.push(IndexArg::Value(v));
             }
         }
-        index::plan_index(dims, &resolved)
+        index::plan_index_rhs(dims, &resolved, rhs_dims)
     }
 
     /// Evaluate an index argument, substituting `end` with `dim_len`.
@@ -1258,14 +1265,14 @@ fn hcat(elems: &[Array]) -> Flow<Array> {
     }
     let complex = non_empty.iter().any(|e| e.is_complex());
     let total_cols: usize = non_empty.iter().map(|e| e.dims()[1]).sum();
+    let class = result_class(&non_empty);
     if complex {
         let mut data = Vec::new();
         for e in &non_empty {
             data.extend(value::to_c64_vec(e));
         }
-        return Ok(value::build_complex(&[rows, total_cols], data));
+        return Ok(value::build_complex_class(class, &[rows, total_cols], data));
     }
-    let class = result_class(&non_empty);
     let mut data = Vec::new();
     for e in &non_empty {
         data.extend(value::to_f64_vec(e));
@@ -1319,6 +1326,7 @@ fn vcat(rows: &[Array]) -> Flow<Array> {
     }
     let total_rows: usize = non_empty.iter().map(|e| e.dims()[0]).sum();
     let complex = non_empty.iter().any(|e| e.is_complex());
+    let class = result_class(&non_empty);
     if complex {
         let mut data = vec![C64::new(0.0, 0.0); total_rows * cols];
         let mut row_off = 0;
@@ -1332,9 +1340,8 @@ fn vcat(rows: &[Array]) -> Flow<Array> {
             }
             row_off += er;
         }
-        return Ok(value::build_complex(&[total_rows, cols], data));
+        return Ok(value::build_complex_class(class, &[total_rows, cols], data));
     }
-    let class = result_class(&non_empty);
     let mut data = vec![0.0f64; total_rows * cols];
     let mut row_off = 0;
     for e in &non_empty {
@@ -1468,21 +1475,24 @@ fn concat_structs(elems: &[&Array], horizontal: bool) -> Flow<Array> {
     )))
 }
 
-/// The common result class for a concatenation (double-dominant; char only when
-/// all are char, handled by the caller).
+/// The common result class for a concatenation, mirroring FreeMat's
+/// `ComputeCatType`: the **first** integer class found wins; otherwise any
+/// `single` makes the result `single`; otherwise any `double` makes it
+/// `double`; otherwise `bool`. (Char/cell/struct cases are handled by the
+/// caller before this is reached.)
 fn result_class(elems: &[&Array]) -> DataClass {
-    let mut class = DataClass::Bool;
+    // First integer class found dominates.
     for e in elems {
-        class = match (class, e.class()) {
-            (DataClass::Bool, c) => c,
-            (a, DataClass::Bool) => a,
-            (a, b) if a == b => a,
-            _ => DataClass::Double,
-        };
+        let c = e.class();
+        if c.is_integer() {
+            return c;
+        }
     }
-    if class.is_reference() {
+    if elems.iter().any(|e| e.class() == DataClass::Float) {
+        DataClass::Float
+    } else if elems.iter().any(|e| e.class() == DataClass::Double) {
         DataClass::Double
     } else {
-        class
+        DataClass::Bool
     }
 }

@@ -67,23 +67,13 @@ fn pred(args: &[Array], name: &str, f: impl Fn(&Array) -> bool) -> Flow<Vec<Arra
     Ok(vec![Array::bool(f(&args[0]))])
 }
 
-/// FreeMat's `typeof`: the class name, with complex distinguished as `complex`
-/// (single) / `dcomplex` (double).
+/// FreeMat's `typeof` == `Array::className()`: the storage class name. FreeMat
+/// tracks complexity as a *flag*, not a class, so `typeof` of a complex array
+/// is just `single`/`double` (e.g. `typeof(2.0+i)` is `'double'`, and
+/// `typeof(2.0f+i)` is `'single'`), never `complex`/`dcomplex`.
 fn b_typeof(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     need(args, 1, "typeof")?;
-    let a = &args[0];
-    // FreeMat distinguishes complex via the class name: complex single is
-    // `complex`, complex double is `dcomplex`. fm-core folds complex into the
-    // Float/Double classes, so detect it from `is_complex` + the width.
-    let name = if a.is_complex() {
-        match a.class() {
-            DataClass::Float => "complex",
-            _ => "dcomplex",
-        }
-    } else {
-        a.class().name()
-    };
-    Ok(vec![Array::char_string(name)])
+    Ok(vec![Array::char_string(args[0].class_name())])
 }
 
 fn cast_single(args: &[Array]) -> Flow<Vec<Array>> {

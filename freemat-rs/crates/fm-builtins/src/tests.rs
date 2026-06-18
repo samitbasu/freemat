@@ -186,6 +186,38 @@ fn diag_with_offset() {
 }
 
 #[test]
+fn typeof_ignores_complexity_and_single_dominates() {
+    let mut i = interp();
+    // `typeof` is FreeMat's `className`: complexity is a flag, not a class.
+    i.run("a = 2.0 + i; t1 = typeof(a);").unwrap();
+    assert_eq!(
+        i.context.lookup("t1").unwrap().as_string().as_deref(),
+        Some("double")
+    );
+    i.run("b = 2.0f + i; t2 = typeof(b);").unwrap();
+    assert_eq!(
+        i.context.lookup("t2").unwrap().as_string().as_deref(),
+        Some("single")
+    );
+    // single dominates double in arithmetic and concatenation.
+    i.run("t3 = typeof(4f + 1.0);").unwrap();
+    assert_eq!(
+        i.context.lookup("t3").unwrap().as_string().as_deref(),
+        Some("single")
+    );
+    i.run("t4 = typeof([1, 2; 3.0f, 4f + i]);").unwrap();
+    assert_eq!(
+        i.context.lookup("t4").unwrap().as_string().as_deref(),
+        Some("single")
+    );
+    i.run("t5 = typeof([1, 2; 3.0, 4.0 + i]);").unwrap();
+    assert_eq!(
+        i.context.lookup("t5").unwrap().as_string().as_deref(),
+        Some("double")
+    );
+}
+
+#[test]
 fn user_variable_shadows_builtin_constant() {
     // `e`, `pi`, `eps`, … are functions in FreeMat: a local variable of that
     // name shadows the constant (regression for `[q,r,e] = qr(a)` then using

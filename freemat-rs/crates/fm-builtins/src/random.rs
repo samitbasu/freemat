@@ -77,13 +77,37 @@ fn b_randn(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> 
     Ok(vec![build_real(DataClass::Double, &dims, data)])
 }
 
-/// `randi(imax)` or `randi(imax, ...)` — uniform integers in `[1, imax]`.
+/// `randi(low, high)` — element-wise uniform integers in `[low(i), high(i)]`.
+///
+/// This is FreeMat's `RandIFunction` (a binary dot-op over `low`/`high`), **not**
+/// MATLAB's `randi(imax, dims)`. The two arguments broadcast: a scalar pairs
+/// with every element of the other operand, otherwise the shapes must match.
 fn b_randi(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
-    need(args, 1, "randi")?;
-    let imax = args[0].as_f64().unwrap_or(1.0).max(1.0) as i64;
-    let dims = dims_from_args(&args[1..]);
-    let count: usize = dims.iter().product();
-    let data = draw(count, |rng| rng.random_range(1..=imax) as f64);
+    need(args, 2, "randi")?;
+    let lo = to_f64_vec(&args[0]);
+    let hi = to_f64_vec(&args[1]);
+    // Broadcast: pick the non-scalar shape (or the first if both match/scalar).
+    let (dims, count) = if args[0].numel() == 1 {
+        (args[1].dims(), hi.len())
+    } else {
+        (args[0].dims(), lo.len())
+    };
+    if lo.len() != 1 && hi.len() != 1 && lo.len() != hi.len() {
+        return Err(crate::util::err_signal(
+            "randi: low and high must be the same size or scalar",
+        ));
+    }
+    let at = |v: &[f64], i: usize| if v.len() == 1 { v[0] } else { v[i] };
+    let data = {
+        let mut idx = 0;
+        draw(count, move |rng| {
+            let l = at(&lo, idx) as i64;
+            let h = at(&hi, idx) as i64;
+            idx += 1;
+            let (l, h) = if l <= h { (l, h) } else { (h, l) };
+            rng.random_range(l..=h) as f64
+        })
+    };
     Ok(vec![build_real(DataClass::Double, &dims, data)])
 }
 

@@ -133,6 +133,20 @@ fn plan_scalar(dims: &[usize], args: &[IndexArg]) -> Option<IndexPlan> {
 /// Resolve a list of index arguments against a target of shape `dims` into an
 /// [`IndexPlan`]. Handles linear (1 arg) and subscript (N args) indexing.
 pub fn plan_index(dims: &[usize], args: &[IndexArg]) -> Flow<IndexPlan> {
+    plan_index_rhs(dims, args, None)
+}
+
+/// Like [`plan_index`], but for **assignment**: `rhs_dims` (the shape of the
+/// value being assigned) lets a colon index grow into a zero-length axis. For
+/// `x = []; x(:,1) = 3`, the colon on the empty row axis adopts the RHS's
+/// extent (1) instead of resolving to an empty range. Mirrors FreeMat, where a
+/// `:` subscript against an empty/under-sized dimension takes the assigned
+/// value's size.
+pub fn plan_index_rhs(
+    dims: &[usize],
+    args: &[IndexArg],
+    rhs_dims: Option<&[usize]>,
+) -> Flow<IndexPlan> {
     if args.is_empty() {
         return Err(Signal::Error(InterpError::msg("empty index")));
     }
@@ -145,16 +159,36 @@ pub fn plan_index(dims: &[usize], args: &[IndexArg]) -> Flow<IndexPlan> {
     }
 
     if args.len() == 1 {
-        return plan_linear(dims, total, &args[0]);
+        return plan_linear(dims, total, &args[0], rhs_dims);
     }
-    plan_subscript(dims, args)
+    plan_subscript(dims, args, rhs_dims)
 }
 
 /// Linear (single-argument) indexing.
-fn plan_linear(dims: &[usize], total: usize, arg: &IndexArg) -> Flow<IndexPlan> {
+fn plan_linear(
+    dims: &[usize],
+    total: usize,
+    arg: &IndexArg,
+    rhs_dims: Option<&[usize]>,
+) -> Flow<IndexPlan> {
     match arg {
         IndexArg::Colon => {
-            // `A(:)` → column vector of all elements.
+            // `A(:)` → column vector of all elements. On assignment into an
+            // empty target (`a = []; a(:) = b`), the colon adopts the RHS's
+            // element count and grows `a` to a column vector of that length
+            // (FreeMat's grow-on-assign colon).
+            if total == 0
+                && let Some(rd) = rhs_dims
+            {
+                let k: usize = rd.iter().product();
+                let linear: Linear = (0..k).collect();
+                return Ok(IndexPlan {
+                    result_dims: SmallVec::from_slice(&[k, 1]),
+                    needed_dims: SmallVec::from_slice(&[k, 1]),
+                    linear,
+                    deleted_axis: None,
+                });
+            }
             let linear: Linear = (0..total).collect();
             Ok(IndexPlan {
                 result_dims: SmallVec::from_slice(&[total, 1]),
@@ -246,7 +280,11 @@ fn grow_linear_dims(dims: &[usize], needed: usize) -> Dims {
 }
 
 /// Subscript (N-argument) indexing.
-fn plan_subscript(dims: &[usize], args: &[IndexArg]) -> Flow<IndexPlan> {
+fn plan_subscript(
+    dims: &[usize],
+    args: &[IndexArg],
+    rhs_dims: Option<&[usize]>,
+) -> Flow<IndexPlan> {
     let n = args.len();
     // Effective target dims padded/merged to `n` axes.
     let mut eff: Dims = SmallVec::from_elem(1usize, n);
@@ -259,6 +297,17 @@ fn plan_subscript(dims: &[usize], args: &[IndexArg]) -> Flow<IndexPlan> {
             }
         } else {
             *slot = dims.get(i).copied().unwrap_or(1);
+        }
+    }
+
+    // Assignment into an empty/under-sized axis: a colon over a zero-length
+    // dimension adopts the assigned value's extent for that axis (FreeMat's
+    // grow-on-assign colon). Only applies when assigning (`rhs_dims` set).
+    if let Some(rd) = rhs_dims {
+        for (i, arg) in args.iter().enumerate() {
+            if matches!(arg, IndexArg::Colon) && eff[i] == 0 {
+                eff[i] = rd.get(i).copied().unwrap_or(1);
+            }
         }
     }
 

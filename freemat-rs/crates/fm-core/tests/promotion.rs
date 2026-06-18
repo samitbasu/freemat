@@ -3,13 +3,9 @@
 use fm_core::{DataClass, promote};
 
 #[test]
-fn double_dominates() {
+fn double_combines() {
     assert_eq!(
         promote(DataClass::Double, DataClass::Double).unwrap(),
-        DataClass::Double
-    );
-    assert_eq!(
-        promote(DataClass::Double, DataClass::Float).unwrap(),
         DataClass::Double
     );
     assert_eq!(
@@ -23,7 +19,10 @@ fn double_dominates() {
 }
 
 #[test]
-fn single_lattice() {
+fn single_dominates_double() {
+    // FreeMat's `ComputeTypes`: if either operand is `single`, the result is
+    // `single` (single dominates double; the arithmetic is done in double then
+    // cast to single).
     assert_eq!(
         promote(DataClass::Float, DataClass::Float).unwrap(),
         DataClass::Float
@@ -34,7 +33,11 @@ fn single_lattice() {
     );
     assert_eq!(
         promote(DataClass::Float, DataClass::Double).unwrap(),
-        DataClass::Double
+        DataClass::Float
+    );
+    assert_eq!(
+        promote(DataClass::Double, DataClass::Float).unwrap(),
+        DataClass::Float
     );
 }
 

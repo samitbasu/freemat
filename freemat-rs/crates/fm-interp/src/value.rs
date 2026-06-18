@@ -113,9 +113,31 @@ pub fn build_real(class: DataClass, dims: &[usize], data: Vec<f64>) -> Array {
 
 /// Build a complex `double` array from a `C64` result vector.
 pub fn build_complex(dims: &[usize], data: Vec<C64>) -> Array {
+    build_complex_class(DataClass::Double, dims, data)
+}
+
+/// Like [`build_complex`], but produces a complex array of the given storage
+/// `class` — `Float` ⇒ complex single (`Complex32`), anything else ⇒ complex
+/// double. Narrows to a real array of the same class when the imaginary part
+/// vanishes everywhere (MATLAB/FreeMat semantics).
+pub fn build_complex_class(class: DataClass, dims: &[usize], data: Vec<C64>) -> Array {
     // Narrow to real if the imaginary part vanished everywhere (MATLAB does).
     if data.iter().all(|c| c.im == 0.0) {
-        return build_real(DataClass::Double, dims, data.iter().map(|c| c.re).collect());
+        return build_real(class, dims, data.iter().map(|c| c.re).collect());
+    }
+    if class == DataClass::Float {
+        let c32: Vec<fm_core::C32> = data
+            .iter()
+            .map(|c| fm_core::C32::new(c.re as f32, c.im as f32))
+            .collect();
+        if c32.len() == 1 && dims.iter().product::<usize>() == 1 {
+            return Array::Scalar(ScalarValue::Complex32(c32[0]));
+        }
+        use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+        use std::sync::Arc;
+        return Array::Complex32(Arc::new(
+            ArrayD::from_shape_vec(IxDyn(dims).f(), c32).expect("dims match"),
+        ));
     }
     if data.len() == 1 && dims.iter().product::<usize>() == 1 {
         return Array::Scalar(ScalarValue::Complex64(data[0]));

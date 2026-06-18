@@ -17,7 +17,9 @@ use fm_core::{Array, C64, DataClass, ScalarValue, promote};
 use fm_parser::ast::{BinaryOp, UnaryOp};
 
 use crate::error::{Flow, InterpError, Signal};
-use crate::value::{build_complex, build_real, cast_scalar, to_c64_vec, to_f64_vec};
+use crate::value::{
+    build_complex, build_complex_class, build_real, cast_scalar, to_c64_vec, to_f64_vec,
+};
 
 /// If both operands are inline scalars, read their `(f64, c64, is_complex)`
 /// forms without touching the heap. Returns `None` if either is not an inline
@@ -284,7 +286,7 @@ fn elementwise_arith(
     if let Some((a, b)) = scalar_pair(lhs, rhs) {
         if a.is_complex() || b.is_complex() {
             let r = cf(scalar_c64(a), scalar_c64(b));
-            return Ok(build_complex(&[1, 1], vec![r]));
+            return Ok(build_complex_class(result_class, &[1, 1], vec![r]));
         }
         return Ok(Array::Scalar(cast_scalar(
             result_class,
@@ -306,7 +308,7 @@ fn elementwise_arith(
             let b = ra[broadcast_src_index(i, &out, rd)];
             data.push(cf(a, b));
         }
-        return Ok(build_complex(&out, data));
+        return Ok(build_complex_class(result_class, &out, data));
     }
 
     let la = to_f64_vec(lhs);
@@ -331,6 +333,8 @@ fn elementwise_pow(lhs: &Array, rhs: &Array) -> Flow<Array> {
     let ra = to_f64_vec(rhs);
     let needs_complex =
         lhs.is_complex() || rhs.is_complex() || powers_need_complex(&la, &ra, &out, ld, rd);
+    let result_class = promote(lhs.class(), rhs.class())
+        .map_err(|e| Signal::Error(InterpError::msg(e.to_string())))?;
     if needs_complex {
         let lc = to_c64_vec(lhs);
         let rc = to_c64_vec(rhs);
@@ -340,10 +344,8 @@ fn elementwise_pow(lhs: &Array, rhs: &Array) -> Flow<Array> {
             let b = rc[broadcast_src_index(i, &out, rd)];
             data.push(a.powc(b));
         }
-        return Ok(build_complex(&out, data));
+        return Ok(build_complex_class(result_class, &out, data));
     }
-    let result_class = promote(lhs.class(), rhs.class())
-        .map_err(|e| Signal::Error(InterpError::msg(e.to_string())))?;
     let mut data = Vec::with_capacity(n);
     for i in 0..n {
         let a = la[broadcast_src_index(i, &out, ld)];
