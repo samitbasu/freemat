@@ -145,17 +145,17 @@ const CURATED: &[&str] = &[
     "freemat/test_assignin2",  // assignin('base', ...)
     "freemat/test_builtin1",   // builtin('abs', x) bypasses user shadow
     // Feature pass — function handles, N-D arrays, struct cs-list, by-ref.
-    "functions/test_fptr1",  // @cos in a struct field, then a.b(2.0)
-    "functions/test_call3",  // pass-by-reference (&x) write-back
-    "functions/test_call4",  // pass-by-reference of a struct field
-    "suite/test_matcat2",    // N-D vertical concat of pages [a;a]
-    "suite/test_matcat3",    // N-D concat (rank 5)
-    "array/test_assign14",   // N-D grow-on-assign a(2,:,:) = r
-    "array/test_assign15",   // illegal incomplete N-D assign must error
-    "array/test_repmat3",    // N-D repmat
-    "suite/test_struct5",    // struct field over array → comma list (args)
-    "suite/test_struct8",    // [a.foo] = f multi-output struct-field assign
-    "suite/test_getfield2",  // getfield(a, {i,j}, 'field')
+    "functions/test_fptr1", // @cos in a struct field, then a.b(2.0)
+    "functions/test_call3", // pass-by-reference (&x) write-back
+    "functions/test_call4", // pass-by-reference of a struct field
+    "suite/test_matcat2",   // N-D vertical concat of pages [a;a]
+    "suite/test_matcat3",   // N-D concat (rank 5)
+    "array/test_assign14",  // N-D grow-on-assign a(2,:,:) = r
+    "array/test_assign15",  // illegal incomplete N-D assign must error
+    "array/test_repmat3",   // N-D repmat
+    "suite/test_struct5",   // struct field over array → comma list (args)
+    "suite/test_struct8",   // [a.foo] = f multi-output struct-field assign
+    "suite/test_getfield2", // getfield(a, {i,j}, 'field')
 ];
 
 /// The corpus must be checked into the crate (self-contained, no `../FreeMat`).
