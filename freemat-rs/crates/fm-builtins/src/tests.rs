@@ -1258,3 +1258,14 @@ fn sparse_solve_known_system() {
     let v = vec_of("A = sparse([2 0;0 4]); b = [2;8]; x = A\\b;", "x");
     assert_eq!(v, vec![1.0, 2.0]);
 }
+
+#[test]
+fn isset_requires_nonempty() {
+    // FreeMat `isset` is true only for a defined, non-empty variable.
+    let mut i = interp();
+    i.run("a = []; b = 1; r1 = isset('c'); r2 = isset('a'); r3 = isset('b');")
+        .unwrap();
+    assert_eq!(i.context.lookup("r1").unwrap().as_f64(), Some(0.0));
+    assert_eq!(i.context.lookup("r2").unwrap().as_f64(), Some(0.0));
+    assert_eq!(i.context.lookup("r3").unwrap().as_f64(), Some(1.0));
+}

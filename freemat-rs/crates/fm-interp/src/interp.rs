@@ -293,28 +293,33 @@ impl Interpreter {
         }
         let nargout: usize = slots.iter().sum();
         let values = self.eval_multi(rhs, nargout, src)?;
-        if values.len() < nargout {
-            return Err(Signal::Error(InterpError::msg(format!(
-                "function returned {} value(s) but {nargout} were requested",
-                values.len()
-            ))));
+        // FreeMat assigns LHS targets only while returned values remain: a call
+        // that yields fewer values than requested (e.g. `[c,d] = size(a,2)`,
+        // which returns one value) leaves the trailing targets unassigned rather
+        // than erroring. We still error if the *first* target can't be filled.
+        if values.is_empty() && !lhs.is_empty() {
+            return Err(Signal::Error(InterpError::msg(
+                "expression produced no value where one was required",
+            )));
         }
         let mut names = Vec::with_capacity(lhs.len());
-        let mut vit = values.into_iter();
+        let mut vit = values.into_iter().peekable();
         for (target, &count) in lhs.iter().zip(&slots) {
+            if vit.peek().is_none() {
+                break;
+            }
             // `~` placeholder (parsed as Ident "~") discards the output.
             if matches!(&target.kind, ExprKind::Ident(n) if n == "~") {
                 vit.next();
                 continue;
             }
             if count == 1 {
-                let value = vit.next().expect("slot count checked above");
+                let value = vit.next().expect("peeked Some above");
                 names.push(self.assign_to(target, value, src)?);
             } else {
-                // Distribute `count` values across the cell-content positions.
-                let chunk: Vec<Array> = (0..count)
-                    .map(|_| vit.next().expect("slot count checked above"))
-                    .collect();
+                // Distribute up to `count` values across the cell-content
+                // positions (taking fewer if the call returned fewer).
+                let chunk: Vec<Array> = (0..count).map_while(|_| vit.next()).collect();
                 names.push(self.assign_to_multi(target, chunk, src)?);
             }
         }

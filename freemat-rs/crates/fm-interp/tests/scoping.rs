@@ -139,3 +139,13 @@ fn multi_output_into_cell_contents() {
     assert_eq!(i.context.lookup("v3").unwrap().as_f64(), Some(3.0));
     assert_eq!(i.context.lookup("v4").unwrap().as_f64(), Some(0.0));
 }
+
+#[test]
+fn multi_assign_fewer_values_leaves_trailing_unassigned() {
+    // `[c, d] = size(a, 2)` returns one value (the dim size); FreeMat assigns
+    // `c` and leaves `d` unassigned rather than erroring.
+    let mut i = Interpreter::new();
+    i.run("a = [1 2 3; 4 5 6]; [c, d] = size(a, 2);").unwrap();
+    assert_eq!(i.context.lookup("c").unwrap().as_f64(), Some(3.0));
+    assert!(i.context.lookup("d").is_none(), "d must stay unassigned");
+}

@@ -105,3 +105,12 @@ fn transpose_works() {
     let d = run_var("x = [1 2 3]';", "x").dims();
     assert_eq!(d, vec![3, 1]);
 }
+
+#[test]
+fn empty_matrix_power_is_empty() {
+    // `[] ^ []` yields `[]` (regression: matrix power errored on the empty,
+    // non-scalar exponent).
+    let mut i = fm_interp::Interpreter::new();
+    i.run("x = [] ^ [];").unwrap();
+    assert_eq!(i.context.lookup("x").unwrap().numel(), 0);
+}

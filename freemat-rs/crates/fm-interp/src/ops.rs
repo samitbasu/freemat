@@ -485,6 +485,10 @@ fn div(lhs: &Array, rhs: &Array, left: bool) -> Flow<Array> {
 
 /// `^` matrix power. Scalar^scalar uses element-wise pow; matrix power via faer.
 fn pow(lhs: &Array, rhs: &Array) -> Flow<Array> {
+    // `[] ^ []` (and any empty operand) yields `[]`, matching FreeMat.
+    if lhs.numel() == 0 || rhs.numel() == 0 {
+        return Ok(Array::empty());
+    }
     if lhs.is_scalar() && rhs.is_scalar() {
         return elementwise_pow(lhs, rhs);
     }

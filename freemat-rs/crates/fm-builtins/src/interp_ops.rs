@@ -99,7 +99,10 @@ fn b_exist(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
 fn b_isset(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     need(args, 1, "isset")?;
     let name = args[0].as_string().unwrap_or_default();
-    Ok(vec![Array::bool(i.context.exists(&name))])
+    // FreeMat's `isset` is true only when the variable is defined *and*
+    // non-empty (`isDefed && !d->isEmpty()`).
+    let set = i.context.lookup(&name).is_some_and(|v| v.numel() > 0);
+    Ok(vec![Array::bool(set)])
 }
 
 /// `clear(name, ...)` / `clear('all')` — remove variables from the scope.
