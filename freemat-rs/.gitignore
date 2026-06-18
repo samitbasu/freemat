@@ -1,3 +1,10 @@
 /target
 **/*.rs.bk
 Cargo.lock.bak
+
+# Scratch files emitted by save/load/csv conformance .m tests, which run with
+# cwd = workspace root (the reporter) or the crate dir (cargo test). These
+# specific names are test scratch, never fixtures.
+tmp.mat
+test_load1.txt
+test.csv
