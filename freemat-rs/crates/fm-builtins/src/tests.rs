@@ -159,6 +159,20 @@ fn diag_builds_and_extracts() {
 }
 
 #[test]
+fn zeros_ones_class_arg_and_trailing_singleton() {
+    let mut i = interp();
+    // A trailing class string names the result class.
+    i.run("a = zeros(2,3,'single');").unwrap();
+    assert_eq!(i.context.lookup("a").unwrap().dims(), vec![2, 3]);
+    assert_eq!(i.context.lookup("a").unwrap().class_name(), "single");
+    i.run("b = ones(3,'int8');").unwrap();
+    assert_eq!(i.context.lookup("b").unwrap().class_name(), "int8");
+    // Trailing singleton dimensions are squeezed: `ones(2,2,1)` is 2x2.
+    i.run("c = ones(2,2,1);").unwrap();
+    assert_eq!(i.context.lookup("c").unwrap().dims(), vec![2, 2]);
+}
+
+#[test]
 fn diag_with_offset() {
     let mut i = interp();
     // Extract the super-diagonal (k = 1) as a column vector.

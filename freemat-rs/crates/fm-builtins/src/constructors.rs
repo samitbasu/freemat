@@ -20,28 +20,71 @@ pub(crate) fn register(table: &mut FunctionTable) {
 
 /// Parse `zeros`/`ones`/`eye`-style dimension arguments.
 fn dims_from_args(args: &[Array]) -> Vec<usize> {
-    if args.is_empty() {
-        return vec![1, 1];
-    }
-    if args.len() == 1 {
+    let mut dims = if args.is_empty() {
+        vec![1, 1]
+    } else if args.len() == 1 {
         if args[0].numel() == 1 {
             let n = args[0].as_f64().unwrap_or(0.0).max(0.0) as usize;
-            return vec![n, n];
+            vec![n, n]
+        } else {
+            to_f64_vec(&args[0])
+                .into_iter()
+                .map(|x| x.max(0.0) as usize)
+                .collect()
         }
-        return to_f64_vec(&args[0])
-            .into_iter()
-            .map(|x| x.max(0.0) as usize)
-            .collect();
+    } else {
+        args.iter()
+            .map(|a| a.as_f64().unwrap_or(0.0).max(0.0) as usize)
+            .collect()
+    };
+    // Drop trailing singleton dimensions beyond rank 2 (MATLAB keeps ≥2 dims):
+    // `ones(2,2,1)` is a 2×2 matrix, not a 2×2×1 array.
+    while dims.len() > 2 && *dims.last().unwrap() == 1 {
+        dims.pop();
     }
-    args.iter()
-        .map(|a| a.as_f64().unwrap_or(0.0).max(0.0) as usize)
-        .collect()
+    while dims.len() < 2 {
+        dims.push(1);
+    }
+    dims
 }
 
 fn filled(args: &[Array], v: f64) -> Array {
-    let dims = dims_from_args(args);
+    // A trailing string argument names the result class: `zeros(2,3,'single')`.
+    let (dim_args, class) = split_class_arg(args);
+    let dims = dims_from_args(dim_args);
     let n: usize = dims.iter().product();
-    build_real(DataClass::Double, &dims, vec![v; n])
+    build_real(class, &dims, vec![v; n])
+}
+
+/// Split a trailing class-name string (`'single'`, `'int8'`, …) off the end of
+/// a constructor's arguments, returning the remaining dimension args and the
+/// requested class (defaulting to `double`).
+fn split_class_arg(args: &[Array]) -> (&[Array], DataClass) {
+    if let Some(last) = args.last()
+        && let Some(s) = last.as_string()
+        && let Some(class) = class_from_name(&s)
+    {
+        return (&args[..args.len() - 1], class);
+    }
+    (args, DataClass::Double)
+}
+
+/// Map a FreeMat class name to its [`DataClass`].
+fn class_from_name(name: &str) -> Option<DataClass> {
+    Some(match name {
+        "double" => DataClass::Double,
+        "single" | "float" => DataClass::Float,
+        "logical" => DataClass::Bool,
+        "int8" => DataClass::Int8,
+        "uint8" => DataClass::UInt8,
+        "int16" => DataClass::Int16,
+        "uint16" => DataClass::UInt16,
+        "int32" => DataClass::Int32,
+        "uint32" => DataClass::UInt32,
+        "int64" => DataClass::Int64,
+        "uint64" => DataClass::UInt64,
+        _ => return None,
+    })
 }
 
 fn b_eye(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
