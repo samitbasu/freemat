@@ -9,3 +9,4 @@ tmp.mat
 test_load1.txt
 test.csv
 crates/fm-builtins/examples/scratch_probe.rs
+crates/fm-parser/examples/scratch_pp.rs

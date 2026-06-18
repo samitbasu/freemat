@@ -737,18 +737,23 @@ impl<'src> Parser<'src> {
         })
     }
 
-    /// Parse a function body: statements plus any trailing nested `function`s.
+    /// Parse a function body: statements up to the next `function` keyword,
+    /// `end`, or EOF.
+    ///
+    /// FreeMat function files use **flat subfunctions**: every `function` in a
+    /// file is a file-level sibling (none are `end`-terminated). A `function`
+    /// keyword therefore terminates the current body — it is *not* consumed as a
+    /// lexically nested function (doing so would wrongly nest the file's third
+    /// subfunction inside the second, and so on). The top-level
+    /// [`parse_program`](Self::parse_program) loop collects the siblings.
     fn function_body(&mut self) -> Result<(Vec<Stmt>, Vec<FunctionDef>)> {
         let mut body = Vec::new();
-        let mut nested = Vec::new();
+        let nested = Vec::new();
         loop {
             self.skip_separators()?;
-            if self.at(&TokenKind::Eof) || self.at(&TokenKind::End) {
+            if self.at(&TokenKind::Eof) || self.at(&TokenKind::End) || self.at(&TokenKind::Function)
+            {
                 break;
-            }
-            if self.at(&TokenKind::Function) {
-                nested.push(self.function_definition()?);
-                continue;
             }
             let (kind, span) = self.statement()?;
             let terminator = self.statement_terminator()?;

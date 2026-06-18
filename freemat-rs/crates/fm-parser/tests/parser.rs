@@ -460,12 +460,19 @@ fn statements_helper_parses_repl_line() {
 }
 
 #[test]
-fn nested_function() {
-    let src = "function outer()\n x = 1;\n function inner()\n y = 2;\n end\nend";
-    let prog = parse_program(src).unwrap_or_else(|e| panic!("nested failed: {e}"));
+fn subfunctions_are_flat_siblings() {
+    // FreeMat's parser (`Parser::process`) collects every file-level `function`
+    // as a *sibling* — a function body ends at the next `function` keyword,
+    // never recursing into it. This is required so a file's third subfunction
+    // is not wrongly nested inside its second (which previously hid it).
+    let src = "function outer()\n x = helper();\nfunction n = length(x)\n n = 1;\nfunction y = helper()\n y = 2;\n";
+    let prog = parse_program(src).unwrap_or_else(|e| panic!("parse failed: {e}"));
     let Program::Functions(funcs) = prog else {
         panic!()
     };
-    assert_eq!(funcs[0].nested.len(), 1);
-    assert_eq!(funcs[0].nested[0].name, "inner");
+    assert_eq!(funcs.len(), 3, "all three functions are siblings");
+    assert_eq!(funcs[0].name, "outer");
+    assert_eq!(funcs[1].name, "length");
+    assert_eq!(funcs[2].name, "helper");
+    assert!(funcs.iter().all(|f| f.nested.is_empty()));
 }
