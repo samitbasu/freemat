@@ -176,3 +176,59 @@ fn mpower_square() {
     let p = mpower(&a, 2.0).unwrap();
     approx(&p, &[4.0, 0.0, 0.0, 9.0]);
 }
+
+#[test]
+fn cond_identity() {
+    let i3 = mat(3, 3, &[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
+    let c = cond(&i3).unwrap();
+    assert!((c.as_f64().unwrap() - 1.0).abs() < 1e-9);
+}
+
+#[test]
+fn rref_full_rank_2x2() {
+    // [1 2; 3 4] column-major.
+    let a = mat(2, 2, &[1.0, 3.0, 2.0, 4.0]);
+    let r = rref(&a).unwrap();
+    approx(&r, &[1.0, 0.0, 0.0, 1.0]);
+}
+
+#[test]
+fn rref_rank_deficient() {
+    // [1 2; 2 4] column-major: rref is [1 2; 0 0].
+    let a = mat(2, 2, &[1.0, 2.0, 2.0, 4.0]);
+    let r = rref(&a).unwrap();
+    // column-major [1,0,2,0]
+    approx(&r, &[1.0, 0.0, 2.0, 0.0]);
+}
+
+#[test]
+fn kron_identity_block() {
+    let i2 = mat(2, 2, &[1.0, 0.0, 0.0, 1.0]);
+    let b = mat(2, 2, &[1.0, 3.0, 2.0, 4.0]);
+    let k = kron(&i2, &b).unwrap();
+    assert_eq!(k.dims(), vec![4, 4]);
+}
+
+#[test]
+fn roots_quadratic() {
+    // x^2 - 3x + 2 -> roots {1, 2}.
+    let r = roots(&[1.0, -3.0, 2.0]).unwrap();
+    let mut v = to_f64(&r);
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert!((v[0] - 1.0).abs() < 1e-9);
+    assert!((v[1] - 2.0).abs() < 1e-9);
+}
+
+#[test]
+fn tril_triu_2x2() {
+    let a = mat(2, 2, &[1.0, 3.0, 2.0, 4.0]);
+    approx(&tril(&a, 0).unwrap(), &[1.0, 3.0, 0.0, 4.0]);
+    approx(&triu(&a, 0).unwrap(), &[1.0, 0.0, 2.0, 4.0]);
+}
+
+#[test]
+fn null_dimension() {
+    let a = mat(2, 2, &[1.0, 1.0, 1.0, 1.0]);
+    let n = null(&a).unwrap();
+    assert_eq!(n.dims(), vec![2, 1]);
+}

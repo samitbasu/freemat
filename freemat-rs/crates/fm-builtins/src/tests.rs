@@ -762,3 +762,277 @@ fn pause_zero_is_noop() {
     // Should return promptly and not error.
     i.run("pause(0);").unwrap();
 }
+
+// ---- Bit operations ---------------------------------------------------------
+
+#[test]
+fn bitand_bitor_bitxor() {
+    let mut i = interp();
+    i.run("a = bitand([1,5,42],3);").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("a").unwrap()),
+        vec![1.0, 1.0, 2.0]
+    );
+    i.run("b = bitor([1,5,42],3);").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("b").unwrap()),
+        vec![3.0, 7.0, 43.0]
+    );
+    i.run("c = bitxor([1,5,42],3);").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("c").unwrap()),
+        vec![2.0, 6.0, 41.0]
+    );
+}
+
+#[test]
+fn bitshift_left_and_right() {
+    assert_eq!(eval_scalar("bitshift(1, 4)"), 16.0);
+    assert_eq!(eval_scalar("bitshift(16, -2)"), 4.0);
+}
+
+#[test]
+fn bitcmp_uint8() {
+    assert_eq!(eval_scalar("bitcmp(uint8(0))"), 255.0);
+}
+
+// ---- Base conversion --------------------------------------------------------
+
+#[test]
+fn dec2hex_and_hex2dec() {
+    let mut i = interp();
+    i.run("s = dec2hex(255);").unwrap();
+    assert_eq!(i.context.lookup("s").unwrap().as_string().unwrap(), "FF");
+    assert_eq!(eval_scalar("hex2dec('FF')"), 255.0);
+}
+
+#[test]
+fn dec2bin_and_bin2dec() {
+    let mut i = interp();
+    i.run("s = dec2bin(10);").unwrap();
+    assert_eq!(i.context.lookup("s").unwrap().as_string().unwrap(), "1010");
+    assert_eq!(eval_scalar("bin2dec('1010')"), 10.0);
+}
+
+#[test]
+fn num2hex_hex2num_roundtrip() {
+    assert_eq!(eval_scalar("hex2num(num2hex(3.5))"), 3.5);
+}
+
+#[test]
+fn int2bin_bin2int_roundtrip() {
+    let mut i = interp();
+    i.run("b = int2bin([4;3;2;1],3);").unwrap();
+    // First row should be MSB-first of 4 -> [1 0 0].
+    let v = fm_interp::value::to_f64_vec(i.context.lookup("b").unwrap());
+    // Column-major 4x3: column 0 = [1;0;0;0], so v[0..4] = [1,0,0,0].
+    assert_eq!(&v[0..4], &[1.0, 0.0, 0.0, 0.0]);
+    i.run("c = bin2int(b);").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("c").unwrap()),
+        vec![4.0, 3.0, 2.0, 1.0]
+    );
+}
+
+// ---- Polynomials ------------------------------------------------------------
+
+#[test]
+fn polyval_horner() {
+    // p(x) = x^2 + 2x + 3 at x=2 -> 11.
+    assert_eq!(eval_scalar("polyval([1 2 3], 2)"), 11.0);
+}
+
+#[test]
+fn roots_quadratic() {
+    // x^2 - 3x + 2 -> roots 2 and 1.
+    let mut i = interp();
+    i.run("r = roots([1 -3 2]);").unwrap();
+    let mut v = fm_interp::value::to_f64_vec(i.context.lookup("r").unwrap());
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert!((v[0] - 1.0).abs() < 1e-9);
+    assert!((v[1] - 2.0).abs() < 1e-9);
+}
+
+#[test]
+fn polyfit_recovers_line() {
+    // y = 2x + 1 fit with degree 1.
+    let mut i = interp();
+    i.run("p = polyfit([0 1 2 3],[1 3 5 7],1);").unwrap();
+    let v = fm_interp::value::to_f64_vec(i.context.lookup("p").unwrap());
+    assert!((v[0] - 2.0).abs() < 1e-9);
+    assert!((v[1] - 1.0).abs() < 1e-9);
+}
+
+#[test]
+fn poly_from_roots() {
+    // roots 1,2 -> x^2 -3x +2.
+    let mut i = interp();
+    i.run("p = poly([1 2]);").unwrap();
+    let v = fm_interp::value::to_f64_vec(i.context.lookup("p").unwrap());
+    assert!((v[0] - 1.0).abs() < 1e-12);
+    assert!((v[1] + 3.0).abs() < 1e-12);
+    assert!((v[2] - 2.0).abs() < 1e-12);
+}
+
+#[test]
+fn polyder_polyint() {
+    // d/dx (x^3) = 3x^2 -> [3 0 0].
+    let mut i = interp();
+    i.run("d = polyder([1 0 0 0]);").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("d").unwrap()),
+        vec![3.0, 0.0, 0.0]
+    );
+}
+
+#[test]
+fn conv_polynomials() {
+    // (x+1)(x+1) = x^2 + 2x + 1.
+    let mut i = interp();
+    i.run("c = conv([1 1],[1 1]);").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("c").unwrap()),
+        vec![1.0, 2.0, 1.0]
+    );
+}
+
+#[test]
+fn deconv_polynomials() {
+    let mut i = interp();
+    i.run("[q,r] = deconv([1 2 1],[1 1]);").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("q").unwrap()),
+        vec![1.0, 1.0]
+    );
+}
+
+// ---- Linear-algebra extras --------------------------------------------------
+
+#[test]
+fn cond_identity_is_one() {
+    assert!((eval_scalar("cond(eye(3))") - 1.0).abs() < 1e-9);
+}
+
+#[test]
+fn rref_reduces() {
+    let mut i = interp();
+    i.run("r = rref([1 2; 3 4]);").unwrap();
+    // Full-rank 2x2 -> identity. Column-major [1,0,0,1].
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("r").unwrap()),
+        vec![1.0, 0.0, 0.0, 1.0]
+    );
+}
+
+#[test]
+fn kron_product() {
+    let mut i = interp();
+    i.run("k = kron([1 0; 0 1],[1 2; 3 4]);").unwrap();
+    // Should be a 4x4 with two diagonal blocks of [1 2;3 4].
+    assert_eq!(i.context.lookup("k").unwrap().dims(), vec![4, 4]);
+}
+
+#[test]
+fn tril_triu() {
+    let mut i = interp();
+    i.run("l = tril([1 2; 3 4]);").unwrap();
+    // tril: keep lower, zero upper. Column-major: [1,3,0,4].
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("l").unwrap()),
+        vec![1.0, 3.0, 0.0, 4.0]
+    );
+    i.run("u = triu([1 2; 3 4]);").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("u").unwrap()),
+        vec![1.0, 0.0, 2.0, 4.0]
+    );
+}
+
+#[test]
+fn null_of_singular() {
+    // [1 1; 1 1] has a 1-D null space.
+    let mut i = interp();
+    i.run("n = null([1 1; 1 1]);").unwrap();
+    assert_eq!(i.context.lookup("n").unwrap().dims(), vec![2, 1]);
+}
+
+// ---- Trig gaps --------------------------------------------------------------
+
+#[test]
+fn degree_trig() {
+    assert!((eval_scalar("sind(30)") - 0.5).abs() < 1e-12);
+    assert!((eval_scalar("cosd(60)") - 0.5).abs() < 1e-12);
+    assert!((eval_scalar("tand(45)") - 1.0).abs() < 1e-12);
+}
+
+#[test]
+fn hyperbolic_reciprocals() {
+    assert!((eval_scalar("sech(0)") - 1.0).abs() < 1e-12);
+}
+
+// ---- Misc numeric -----------------------------------------------------------
+
+#[test]
+fn diff_vector() {
+    let mut i = interp();
+    i.run("d = diff([1 3 6 10]);").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("d").unwrap()),
+        vec![2.0, 3.0, 4.0]
+    );
+}
+
+#[test]
+fn dot_and_cross() {
+    assert_eq!(eval_scalar("dot([1 2 3],[4 5 6])"), 32.0);
+    let mut i = interp();
+    i.run("c = cross([1 0 0],[0 1 0]);").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("c").unwrap()),
+        vec![0.0, 0.0, 1.0]
+    );
+}
+
+#[test]
+fn meshgrid_shapes() {
+    let mut i = interp();
+    i.run("[X,Y] = meshgrid([1 2 3],[4 5]);").unwrap();
+    assert_eq!(i.context.lookup("X").unwrap().dims(), vec![2, 3]);
+}
+
+#[test]
+fn vec_flattens() {
+    let mut i = interp();
+    i.run("v = vec([1 2; 3 4]);").unwrap();
+    assert_eq!(i.context.lookup("v").unwrap().dims(), vec![4, 1]);
+}
+
+#[test]
+fn erf_known_value() {
+    assert!((eval_scalar("erf(0)")).abs() < 1e-6);
+    assert!((eval_scalar("erf(10)") - 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn gamma_factorial() {
+    // gamma(5) = 4! = 24.
+    assert!((eval_scalar("gamma(5)") - 24.0).abs() < 1e-6);
+}
+
+// ---- eps as function --------------------------------------------------------
+
+#[test]
+fn eps_function_forms() {
+    assert_eq!(eval_scalar("eps('double')"), f64::EPSILON);
+    assert!((eval_scalar("eps(1.0)") - f64::EPSILON).abs() < 1e-30);
+}
+
+// ---- seed reproducibility ---------------------------------------------------
+
+#[test]
+fn seed_reproduces_sequence() {
+    let mut i = interp();
+    i.run("seed(32,41); a = rand(1,5); seed(32,41); b = rand(1,5); s = issame(a,b);")
+        .unwrap();
+    assert_eq!(i.context.lookup("s").unwrap().as_f64(), Some(1.0));
+}

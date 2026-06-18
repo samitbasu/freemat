@@ -1030,6 +1030,63 @@ then tick it here and commit. Leave notes for the next session under each stage.
   warnings` clean ✓ (no new `#[allow]`); `cargo fmt --all --check` ✓; `cargo test --workspace`
   green ✓ and still fast (~2 s). Existing `plot`/`surf`/`hold`/`figure`/Milestone-2 path unchanged.
 
+### Builtin gap-fill pass (post-Stage 8 — conformance-driven, not a numbered stage)
+
+- **Method:** ranked candidate builtins by how many `fm-conformance` tests each would unblock
+  (`cargo run --release -q -p fm-conformance -- --failures`, aggregated by reason). Sparse
+  (`sparse`/`sprandn`/`sparse_test_mat`, ~185 errors) dominates the backlog but is deferred to
+  Stage 9; outside sparse the remaining builtin gaps in the corpus are thin and the larger
+  buckets are correctness bugs (`false result`, dimension mismatches, multi-return) out of scope
+  for a builtin pass. So this pass targets the clean builtin wins that *do* have corpus tests
+  (bit ops, `eps`, `seed`) plus the high-value API-coverage groups (polynomial, linalg extras,
+  trig, base conversion) that round out the surface and make more toolbox `.m` runnable.
+- **Builtins added (grouped, by crate):**
+  - **`fm-builtins/src/bitops.rs`:** `bitand`, `bitor`, `bitxor`, `bitcmp`, `bitshift` (unsigned
+    64-bit; result class follows an integer input, else `double`; `bitshift` sign = direction).
+  - **`fm-builtins/src/baseconv.rs`:** `dec2hex`, `hex2dec`, `dec2bin`, `bin2dec`, `num2hex`,
+    `hex2num`, and FreeMat's `int2bin`/`bin2int` (MSB-first bit matrices). Char outputs stack
+    multi-value results into a zero-padded char matrix (column-major).
+  - **`fm-builtins/src/polynomial.rs`:** `polyval` (Horner), `polyfit` (least-squares via
+    `fm_linalg::mldivide` on a Vandermonde), `roots` (companion-matrix eig), `poly`, `polyder`,
+    `polyint`, `conv`, `deconv`.
+  - **`fm-linalg` + `fm-builtins/src/linalg.rs`:** `cond` (σmax/σmin), `rcond` (1-norm estimate),
+    `rref` (Gauss-Jordan, MATLAB tolerance), `kron`, `null`/`orth` (SVD-based), `tril`/`triu`.
+    `roots` also lives in `fm-linalg` (companion matrix + faer `Eigen::new_from_real`).
+  - **`fm-builtins/src/trig.rs`:** degree trig `sind`/`cosd`/`tand`/`secd`/`cscd`/`cotd`/`asind`/
+    `acosd`/`atand`/`acotd`/`asecd`/`acscd`; hyperbolic reciprocals `sech`/`csch`/`coth` + inverses
+    `asech`/`acsch`/`acoth`; inverse reciprocals `acot`/`asec`/`acsc`.
+  - **`fm-builtins/src/misc.rs`:** `vec`, `diff`, `dot`, `cross`, `meshgrid`, `ndgrid`, `deal`,
+    and special functions `erf`/`erfc` (A&S 7.1.26) + `gamma`/`gammaln` (Lanczos).
+  - **`fm-builtins/src/inspection.rs`:** `eps` as a callable function (`eps('double'|'single')`,
+    `eps(x)` spacing). This needed a one-line `fm-interp` change: in `eval_index`, a builtin
+    constant whose name is *also* a registered function now dispatches the call form to the
+    function (so `eps('double')` calls the builtin instead of indexing the `eps` scalar).
+  - **`fm-builtins/src/random.rs`:** `seed(a[,b])` — deterministic reseeding via a thread-local
+    optional `StdRng`; `rand`/`randn`/`randi` draw from it once seeded, else from `rand::rng()`.
+- **New dep:** none (reused `rand`'s `StdRng`/`SeedableRng`, already a workspace dep).
+- **Conformance: 294/640 (45.9%) → 309/640 (48.3%), Δ +15 tests (+2.4 pp).** Per-dir deltas:
+  `binary` 0→3 (100%), `constants` 0→1 (100%), `random` 0→1 (100%), `suite` 143→151,
+  `array` 33→34, `typecast` 2→3 (`eps1`). No regressions (every previously-passing dir held).
+- **Pass-floor guard raised 290 → 305** (`curated.rs::PASS_FLOOR`; live 309, margin for the few
+  PRNG-dependent `rand`/`randn`/`eig` tests).
+- **Tests added:** 27 new `fm-builtins` integration tests (bit ops, base conversion round-trips,
+  `polyval`/`polyfit`/`roots`/`poly`/`polyder`/`conv`/`deconv`, `cond`/`rref`/`kron`/`tril`/
+  `triu`/`null`, degree+hyperbolic trig, `diff`/`dot`/`cross`/`meshgrid`/`vec`, `erf`/`gamma`,
+  `eps`, `seed` reproducibility) + 7 new `fm-linalg` unit tests (`cond`/`rref`/`kron`/`roots`/
+  `tril`/`triu`/`null` vs known matrices).
+- **Coverage:** `docs/COVERAGE.md` regenerated — registered builtins 244 → **318**; headline
+  API coverage ~41% → ~52%; logical/relational, polynomial, and trig categories now 100%.
+- **Skipped / deferred (with reasons):** sparse (Stage 9 — ~185 corpus errors, the single
+  largest bucket but explicitly out of scope); `expm`/`eigs` (no corpus tests, lower value);
+  `cellstr`/`mat2cell`/`strtok` and the system/OS builtins (`pwd`/`cd`/`dir`/`getenv`/… — better
+  placed in `fm-io`, no blocking corpus tests this pass); `randperm` and the distribution draws.
+  The remaining `false result`/dimension-mismatch/multi-return conformance failures are
+  interpreter correctness bugs (e.g. `eig`/`qr` ordering, `assign`/`subset` edge cases), not
+  builtin gaps, and were left for a correctness-focused pass.
+- **Verification:** `cargo build --workspace` ✓; `cargo clippy --workspace --all-targets
+  -D warnings` clean ✓ (no new `#[allow]`); `cargo fmt --all --check` ✓; `cargo test --workspace`
+  green ✓ and fast (~2 s).
+
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,
   no GUI. Debug *engine* lives in `fm-interp`; new crates `fm-dap` (+ optional `fm-lsp`).

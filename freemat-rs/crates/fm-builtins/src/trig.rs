@@ -29,6 +29,36 @@ pub(crate) fn register(table: &mut FunctionTable) {
     reg!("sec", |x: f64| 1.0 / x.cos());
     reg!("csc", |x: f64| 1.0 / x.sin());
     reg!("cot", |x: f64| 1.0 / x.tan());
+    // Hyperbolic reciprocals and their inverses.
+    reg!("sech", |x: f64| 1.0 / x.cosh());
+    reg!("csch", |x: f64| 1.0 / x.sinh());
+    reg!("coth", |x: f64| 1.0 / x.tanh());
+    reg!("asech", |x: f64| ((1.0 / x)
+        + ((1.0 / (x * x) - 1.0).sqrt()))
+    .ln());
+    reg!("acsch", |x: f64| ((1.0 / x) + (1.0 / (x * x) + 1.0).sqrt())
+        .ln());
+    reg!("acoth", |x: f64| 0.5 * ((x + 1.0) / (x - 1.0)).ln());
+    // Inverse reciprocal trig.
+    reg!("acot", |x: f64| (1.0 / x).atan());
+    reg!("asec", |x: f64| (1.0 / x).acos());
+    reg!("acsc", |x: f64| (1.0 / x).asin());
+    // Degree-valued trig (constants inlined: the builtin signature is a plain
+    // `fn` pointer, so the closures must not capture).
+    const D2R: f64 = std::f64::consts::PI / 180.0;
+    const R2D: f64 = 180.0 / std::f64::consts::PI;
+    reg!("sind", |x: f64| (x * D2R).sin());
+    reg!("cosd", |x: f64| (x * D2R).cos());
+    reg!("tand", |x: f64| (x * D2R).tan());
+    reg!("secd", |x: f64| 1.0 / (x * D2R).cos());
+    reg!("cscd", |x: f64| 1.0 / (x * D2R).sin());
+    reg!("cotd", |x: f64| 1.0 / (x * D2R).tan());
+    reg!("asind", |x: f64| x.asin() * R2D);
+    reg!("acosd", |x: f64| x.acos() * R2D);
+    reg!("atand", |x: f64| x.atan() * R2D);
+    reg!("acotd", |x: f64| (1.0 / x).atan() * R2D);
+    reg!("asecd", |x: f64| (1.0 / x).acos() * R2D);
+    reg!("acscd", |x: f64| (1.0 / x).asin() * R2D);
     table.add_builtin("atan2", b_atan2);
 }
 

@@ -714,9 +714,12 @@ impl Interpreter {
         span: Span,
     ) -> Flow<Vec<Array>> {
         // `name(args)` where `name` is not a variable → function call.
+        // A builtin constant (e.g. `eps`) is normally not a function, but if a
+        // function with that name is registered it takes precedence for the
+        // call form `eps('double')`/`eps(x)` (MATLAB's `eps` is both).
         if let ExprKind::Ident(name) = &base.kind
             && !self.context.exists(name)
-            && !is_builtin_constant(name)
+            && (!is_builtin_constant(name) || self.functions.contains(name))
         {
             let arg_vals = self.eval_args(args, src)?;
             return self.call_function(name, &arg_vals, nargout, src, span);

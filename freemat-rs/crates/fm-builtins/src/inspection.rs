@@ -16,6 +16,7 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("complex", b_complex);
     table.add_builtin("dcomplex", b_dcomplex);
     table.add_builtin("feps", |_i, _a, _n| Ok(vec![Array::single(f32::EPSILON)]));
+    table.add_builtin("eps", b_eps);
     table.add_builtin("realmax", |_i, _a, _n| Ok(vec![Array::double(f64::MAX)]));
     table.add_builtin("realmin", |_i, _a, _n| {
         Ok(vec![Array::double(f64::MIN_POSITIVE)])
@@ -187,4 +188,42 @@ fn b_issame(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>>
 fn is_vector(a: &Array) -> bool {
     let d = a.dims();
     d.len() == 2 && (d[0] == 1 || d[1] == 1)
+}
+
+/// `eps` / `eps(x)` / `eps('single'|'double')` — floating-point spacing.
+///
+/// With no arguments returns `eps(1.0)` for double. With a string class name
+/// returns the machine epsilon for that class. With a numeric argument returns
+/// the spacing of floating-point numbers near `abs(x)` (`nextafter`-style),
+/// honoring single vs double precision.
+fn b_eps(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return Ok(vec![Array::double(f64::EPSILON)]);
+    }
+    if let Some(s) = args[0].as_string() {
+        return match s.as_str() {
+            "single" => Ok(vec![Array::single(f32::EPSILON)]),
+            _ => Ok(vec![Array::double(f64::EPSILON)]),
+        };
+    }
+    let single = matches!(args[0].class(), DataClass::Float);
+    let x = args[0].as_f64().unwrap_or(1.0).abs();
+    if single {
+        let xf = x as f32;
+        let spacing = if xf == 0.0 {
+            f32::from_bits(1)
+        } else {
+            let next = f32::from_bits(xf.to_bits() + 1);
+            next - xf
+        };
+        Ok(vec![Array::single(spacing)])
+    } else {
+        let spacing = if x == 0.0 {
+            f64::from_bits(1)
+        } else {
+            let next = f64::from_bits(x.to_bits() + 1);
+            next - x
+        };
+        Ok(vec![Array::double(spacing)])
+    }
 }

@@ -14,6 +14,8 @@
 use fm_interp::{FunctionTable, Interpreter};
 
 mod array_manip;
+mod baseconv;
+mod bitops;
 mod cellstruct;
 mod constructors;
 mod elementary;
@@ -22,6 +24,8 @@ mod inspection;
 mod interp_ops;
 mod linalg;
 mod logical;
+mod misc;
+mod polynomial;
 mod random;
 mod reductions;
 mod setops;
@@ -54,6 +58,10 @@ pub fn register_into(table: &mut FunctionTable) {
     cellstruct::register(table);
     time::register(table);
     interp_ops::register(table);
+    bitops::register(table);
+    baseconv::register(table);
+    polynomial::register(table);
+    misc::register(table);
     graphics::register(table);
     graphics::register_log_plots(table);
     // Stage 8: MAT save/load, file I/O, FFT, regex. Registered last so its

@@ -582,5 +582,303 @@ pub fn pinv(a: &Array) -> Result<Array> {
     Ok(finish(am.cols, am.rows, data, am.complex))
 }
 
+/// Singular values (descending), as a plain `Vec<f64>`.
+fn singular_values(am: &MatData) -> Result<Vec<f64>> {
+    let decomp: Svd<c64> = Svd::new(am.view()).map_err(|_| LinalgError::new("svd failed"))?;
+    let s = decomp.S();
+    Ok((0..s.dim()).map(|i| s[i].re).collect())
+}
+
+/// 2-norm condition number `sigma_max / sigma_min`.
+///
+/// # Errors
+/// Returns [`LinalgError`] if the SVD fails.
+pub fn cond(a: &Array) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    let sv = singular_values(&am)?;
+    let smax = sv.iter().cloned().fold(0.0, f64::max);
+    let smin = sv.iter().cloned().fold(f64::INFINITY, f64::min);
+    let c = if smin == 0.0 {
+        f64::INFINITY
+    } else {
+        smax / smin
+    };
+    Ok(Array::double(c))
+}
+
+/// Reciprocal 1-norm condition estimate `1 / (norm1(A) * norm1(inv(A)))`.
+///
+/// # Errors
+/// Returns [`LinalgError`] if the matrix is not square or inversion fails.
+pub fn rcond(a: &Array) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    if am.rows != am.cols {
+        return Err(LinalgError::new("rcond: matrix must be square"));
+    }
+    let n1 = norm(a, NormKind::One)?.as_f64().unwrap_or(0.0);
+    let inv_a = match inv(a) {
+        Ok(v) => v,
+        Err(_) => return Ok(Array::double(0.0)),
+    };
+    let n1i = norm(&inv_a, NormKind::One)?.as_f64().unwrap_or(0.0);
+    let r = if n1 == 0.0 || n1i == 0.0 {
+        0.0
+    } else {
+        1.0 / (n1 * n1i)
+    };
+    Ok(Array::double(r))
+}
+
+/// Reduced row-echelon form (Gauss-Jordan with partial pivoting).
+///
+/// # Errors
+/// Returns [`LinalgError`] if the input is not a 2-D matrix.
+pub fn rref(a: &Array) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    let (m, n) = (am.rows, am.cols);
+    // Work on a row-major copy of the real part (rref is defined for real here).
+    let mut mat = vec![0.0f64; m * n];
+    for j in 0..n {
+        for i in 0..m {
+            mat[i * n + j] = am.data[i + j * m].re;
+        }
+    }
+    // Default MATLAB tolerance: max(m,n)*eps*norm(A,inf).
+    let max_abs = mat.iter().cloned().fold(0.0f64, |acc, v| acc.max(v.abs()));
+    let tol = (m.max(n) as f64) * f64::EPSILON * max_abs.max(1.0);
+    let mut lead = 0usize;
+    let mut r = 0usize;
+    while r < m && lead < n {
+        // Find pivot row with largest magnitude in column `lead`, at or below r.
+        let mut piv = r;
+        let mut best = mat[r * n + lead].abs();
+        for i in (r + 1)..m {
+            let v = mat[i * n + lead].abs();
+            if v > best {
+                best = v;
+                piv = i;
+            }
+        }
+        if best <= tol {
+            // Column is negligible; zero it out and advance to the next column
+            // without consuming a pivot row.
+            for i in r..m {
+                mat[i * n + lead] = 0.0;
+            }
+            lead += 1;
+            continue;
+        }
+        if piv != r {
+            for j in 0..n {
+                mat.swap(r * n + j, piv * n + j);
+            }
+        }
+        let pivot = mat[r * n + lead];
+        for j in 0..n {
+            mat[r * n + j] /= pivot;
+        }
+        for i in 0..m {
+            if i != r {
+                let factor = mat[i * n + lead];
+                if factor != 0.0 {
+                    for j in 0..n {
+                        mat[i * n + j] -= factor * mat[r * n + j];
+                    }
+                }
+            }
+        }
+        r += 1;
+        lead += 1;
+    }
+    Ok(rref_pack(mat, m, n))
+}
+
+fn rref_pack(mat: Vec<f64>, m: usize, n: usize) -> Array {
+    // Convert row-major back to column-major Array buffer.
+    let mut data = vec![0.0f64; m * n];
+    for i in 0..m {
+        for j in 0..n {
+            let mut v = mat[i * n + j];
+            if v == 0.0 {
+                v = 0.0; // normalize -0.0
+            }
+            data[i + j * m] = v;
+        }
+    }
+    build_real(m, n, data)
+}
+
+/// Kronecker tensor product `kron(A, B)`.
+///
+/// # Errors
+/// Returns [`LinalgError`] if either input is not a 2-D matrix.
+pub fn kron(a: &Array, b: &Array) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    let bm = MatData::from_array(b)?;
+    let (ar, ac) = (am.rows, am.cols);
+    let (br, bc) = (bm.rows, bm.cols);
+    let (rr, rc) = (ar * br, ac * bc);
+    let mut data = vec![c64::new(0.0, 0.0); rr * rc];
+    for ja in 0..ac {
+        for ia in 0..ar {
+            let av = am.data[ia + ja * ar];
+            for jb in 0..bc {
+                for ib in 0..br {
+                    let bv = bm.data[ib + jb * br];
+                    let ri = ia * br + ib;
+                    let rj = ja * bc + jb;
+                    data[ri + rj * rr] = av * bv;
+                }
+            }
+        }
+    }
+    Ok(finish(rr, rc, data, am.complex || bm.complex))
+}
+
+/// Orthonormal basis for the null space of `A` (columns), from the SVD.
+///
+/// # Errors
+/// Returns [`LinalgError`] if the SVD fails.
+pub fn null(a: &Array) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    let (m, n) = (am.rows, am.cols);
+    let decomp: Svd<c64> = Svd::new(am.view()).map_err(|_| LinalgError::new("null: svd failed"))?;
+    let s = decomp.S();
+    let v = decomp.V();
+    let sv: Vec<f64> = (0..s.dim()).map(|i| s[i].re).collect();
+    let smax = sv.iter().cloned().fold(0.0, f64::max);
+    let tol = (m.max(n) as f64) * f64::EPSILON * smax;
+    let r = sv.iter().filter(|&&x| x > tol).count();
+    let null_cols = n - r;
+    // V is n x n; null space basis = columns r..n of V.
+    let mut data = Vec::with_capacity(n * null_cols);
+    for j in r..n {
+        for i in 0..n {
+            data.push(v[(i, j)]);
+        }
+    }
+    Ok(finish(n, null_cols, data, am.complex))
+}
+
+/// Orthonormal basis for the range (column space) of `A`, from the SVD.
+///
+/// # Errors
+/// Returns [`LinalgError`] if the SVD fails.
+pub fn orth(a: &Array) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    let (m, n) = (am.rows, am.cols);
+    let decomp: Svd<c64> = Svd::new(am.view()).map_err(|_| LinalgError::new("orth: svd failed"))?;
+    let s = decomp.S();
+    let u = decomp.U();
+    let sv: Vec<f64> = (0..s.dim()).map(|i| s[i].re).collect();
+    let smax = sv.iter().cloned().fold(0.0, f64::max);
+    let tol = (m.max(n) as f64) * f64::EPSILON * smax;
+    let r = sv.iter().filter(|&&x| x > tol).count();
+    let mut data = Vec::with_capacity(m * r);
+    for j in 0..r {
+        for i in 0..m {
+            data.push(u[(i, j)]);
+        }
+    }
+    Ok(finish(m, r, data, am.complex))
+}
+
+/// Roots of a polynomial given its coefficient vector (highest power first),
+/// via the eigenvalues of the companion matrix. Leading/trailing zeros are
+/// handled MATLAB-style.
+///
+/// # Errors
+/// Returns [`LinalgError`] if the eigen-decomposition fails.
+pub fn roots(coeffs: &[f64]) -> Result<Array> {
+    // Strip leading zeros.
+    let mut start = 0;
+    while start < coeffs.len() && coeffs[start] == 0.0 {
+        start += 1;
+    }
+    let c = &coeffs[start..];
+    if c.len() <= 1 {
+        // Constant (or empty): no roots, but account for trailing zeros below.
+        let trailing = coeffs.iter().rev().take_while(|&&x| x == 0.0).count();
+        if trailing == 0 {
+            return Ok(Array::double_matrix(&[0, 1], vec![]));
+        }
+        return Ok(Array::double_matrix(&[trailing, 1], vec![0.0; trailing]));
+    }
+    // Count trailing zeros -> roots at zero.
+    let mut trailing = 0usize;
+    while c.len() - 1 - trailing > 0 && c[c.len() - 1 - trailing] == 0.0 {
+        trailing += 1;
+    }
+    let active = &c[..c.len() - trailing];
+    let degree = active.len() - 1;
+    let mut eig_roots = Vec::new();
+    if degree >= 1 {
+        // Companion matrix (n x n), column-major.
+        let n = degree;
+        let lead = active[0];
+        let mut comp = vec![c64::new(0.0, 0.0); n * n];
+        // First row: -c[1..]/c[0].
+        for j in 0..n {
+            comp[j * n] = c64::new(-active[j + 1] / lead, 0.0);
+        }
+        // Sub-diagonal ones.
+        for i in 1..n {
+            comp[i + (i - 1) * n] = c64::new(1.0, 0.0);
+        }
+        let real: Vec<f64> = comp.iter().map(|c| c.re).collect();
+        let view = MatRef::<f64>::from_column_major_slice(&real, n, n);
+        let decomp: Eigen<f64> =
+            Eigen::new_from_real(view).map_err(|_| LinalgError::new("roots: eig failed"))?;
+        let s = decomp.S();
+        for i in 0..n {
+            eig_roots.push(s[i]);
+        }
+    }
+    // Append zero roots from trailing zeros.
+    for _ in 0..trailing {
+        eig_roots.push(c64::new(0.0, 0.0));
+    }
+    let count = eig_roots.len();
+    Ok(build_from_c64(count, 1, eig_roots))
+}
+
+/// Lower triangular part of `A` below (and including) the `k`-th diagonal.
+///
+/// # Errors
+/// Returns [`LinalgError`] if `A` is not a 2-D matrix.
+pub fn tril(a: &Array, k: i64) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    let (m, n) = (am.rows, am.cols);
+    let mut data = am.data.clone();
+    for j in 0..n {
+        for i in 0..m {
+            // keep where j - i <= k, i.e. i >= j - k
+            if (j as i64) - (i as i64) > k {
+                data[i + j * m] = c64::new(0.0, 0.0);
+            }
+        }
+    }
+    Ok(finish(m, n, data, am.complex))
+}
+
+/// Upper triangular part of `A` above (and including) the `k`-th diagonal.
+///
+/// # Errors
+/// Returns [`LinalgError`] if `A` is not a 2-D matrix.
+pub fn triu(a: &Array, k: i64) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    let (m, n) = (am.rows, am.cols);
+    let mut data = am.data.clone();
+    for j in 0..n {
+        for i in 0..m {
+            // keep where j - i >= k
+            if (j as i64) - (i as i64) < k {
+                data[i + j * m] = c64::new(0.0, 0.0);
+            }
+        }
+    }
+    Ok(finish(m, n, data, am.complex))
+}
+
 #[cfg(test)]
 mod tests;

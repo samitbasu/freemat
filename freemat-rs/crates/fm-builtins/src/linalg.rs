@@ -21,6 +21,56 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("rank", b_rank);
     table.add_builtin("pinv", b_pinv);
     table.add_builtin("trace", b_trace);
+    table.add_builtin("cond", b_cond);
+    table.add_builtin("rcond", b_rcond);
+    table.add_builtin("rref", b_rref);
+    table.add_builtin("kron", b_kron);
+    table.add_builtin("null", b_null);
+    table.add_builtin("orth", b_orth);
+    table.add_builtin("tril", b_tril);
+    table.add_builtin("triu", b_triu);
+}
+
+fn b_cond(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "cond")?;
+    Ok(vec![fm_linalg::cond(&args[0]).map_err(wrap)?])
+}
+
+fn b_rcond(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "rcond")?;
+    Ok(vec![fm_linalg::rcond(&args[0]).map_err(wrap)?])
+}
+
+fn b_rref(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "rref")?;
+    Ok(vec![fm_linalg::rref(&args[0]).map_err(wrap)?])
+}
+
+fn b_kron(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 2, "kron")?;
+    Ok(vec![fm_linalg::kron(&args[0], &args[1]).map_err(wrap)?])
+}
+
+fn b_null(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "null")?;
+    Ok(vec![fm_linalg::null(&args[0]).map_err(wrap)?])
+}
+
+fn b_orth(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "orth")?;
+    Ok(vec![fm_linalg::orth(&args[0]).map_err(wrap)?])
+}
+
+fn b_tril(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "tril")?;
+    let k = args.get(1).and_then(Array::as_f64).unwrap_or(0.0) as i64;
+    Ok(vec![fm_linalg::tril(&args[0], k).map_err(wrap)?])
+}
+
+fn b_triu(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "triu")?;
+    let k = args.get(1).and_then(Array::as_f64).unwrap_or(0.0) as i64;
+    Ok(vec![fm_linalg::triu(&args[0], k).map_err(wrap)?])
 }
 
 fn wrap(e: LinalgError) -> Signal {

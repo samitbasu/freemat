@@ -151,9 +151,11 @@ fn curated_subset_passes() {
 /// as later stages improve the number (the binary prints the live total).
 /// Stage 5 raised the live total to 198/603 (32.8%); Stage 6 to 250/603
 /// (41.5%); Stage 8 to 284/637 (with the `transforms` + `io` gains); Stage 7.5
-/// to 297/640 (handle dir + a parser leading-whitespace fix). The floor allows a
-/// small margin for PRNG-dependent (`rand`/`randn`/`eig`) tests.
-const PASS_FLOOR: usize = 290;
+/// to 297/640 (handle dir + a parser leading-whitespace fix). The builtin
+/// gap-fill pass (bit ops, base conversion, polynomial, linalg extras, trig
+/// gaps, `eps`/`seed`) raised the live total to 309/640 (48.3%). The floor
+/// allows a small margin for PRNG-dependent (`rand`/`randn`/`eig`) tests.
+const PASS_FLOOR: usize = 305;
 
 /// **Fast pass-floor guard (gates `cargo test`).** Running the *whole* covered
 /// corpus takes minutes (it spins up a fresh interpreter and re-parses every
