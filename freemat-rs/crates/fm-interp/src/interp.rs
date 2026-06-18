@@ -282,7 +282,16 @@ impl Interpreter {
         term: Terminator,
         src: &str,
     ) -> Flow<()> {
-        let nargout = lhs.len();
+        // Each LHS target normally consumes one returned value, but a
+        // cell-content target with a multi-element subscript — `[c{1:3}] = f` —
+        // consumes one value *per* indexed position (MATLAB/FreeMat comma-list
+        // expansion). Compute how many outputs each target wants so the total
+        // `nargout` and the per-target distribution are correct.
+        let mut slots: Vec<usize> = Vec::with_capacity(lhs.len());
+        for target in lhs {
+            slots.push(self.lhs_slot_count(target, src)?);
+        }
+        let nargout: usize = slots.iter().sum();
         let values = self.eval_multi(rhs, nargout, src)?;
         if values.len() < nargout {
             return Err(Signal::Error(InterpError::msg(format!(
@@ -291,12 +300,23 @@ impl Interpreter {
             ))));
         }
         let mut names = Vec::with_capacity(lhs.len());
-        for (target, value) in lhs.iter().zip(values) {
+        let mut vit = values.into_iter();
+        for (target, &count) in lhs.iter().zip(&slots) {
             // `~` placeholder (parsed as Ident "~") discards the output.
             if matches!(&target.kind, ExprKind::Ident(n) if n == "~") {
+                vit.next();
                 continue;
             }
-            names.push(self.assign_to(target, value, src)?);
+            if count == 1 {
+                let value = vit.next().expect("slot count checked above");
+                names.push(self.assign_to(target, value, src)?);
+            } else {
+                // Distribute `count` values across the cell-content positions.
+                let chunk: Vec<Array> = (0..count)
+                    .map(|_| vit.next().expect("slot count checked above"))
+                    .collect();
+                names.push(self.assign_to_multi(target, chunk, src)?);
+            }
         }
         if term == Terminator::Display {
             for name in names {
@@ -379,6 +399,14 @@ impl Interpreter {
         src: &str,
     ) -> Flow<()> {
         let value = self.eval(scrutinee, src)?;
+        // FreeMat: the switch argument must be a scalar or a string (a vector or
+        // matrix is an error — `test_switch4`).
+        let is_scalar = value.numel() == 1;
+        if !is_scalar && !value.is_char() {
+            return Err(Signal::Error(InterpError::msg(
+                "Switch statements support scalar and string arguments only.",
+            )));
+        }
         for case in cases {
             let label = self.eval(&case.label, src)?;
             if switch_matches(&value, &label) {
@@ -414,6 +442,34 @@ impl Interpreter {
 
     /// Assign `value` to the (possibly indexed) `target`, returning the root
     /// variable name affected (for echo).
+    /// How many returned values a multi-assign LHS target consumes. Normally 1,
+    /// but a cell-content index `c{i:j}` with a multi-element subscript consumes
+    /// one value per indexed position (comma-list expansion).
+    fn lhs_slot_count(&mut self, target: &Expr, src: &str) -> Flow<usize> {
+        if let ExprKind::CellIndex { base, args } = &target.kind {
+            let (_, current) = self.lvalue_base(base, src)?;
+            let plan = self.plan_for(&current, args, src)?;
+            return Ok(plan.linear.len().max(1));
+        }
+        Ok(1)
+    }
+
+    /// Assign several values into a multi-position cell-content target
+    /// (`[c{1:3}] = f`): each indexed cell slot receives one of `values`.
+    fn assign_to_multi(&mut self, target: &Expr, values: Vec<Array>, src: &str) -> Flow<String> {
+        let ExprKind::CellIndex { base, args } = &target.kind else {
+            // Only cell-content targets expand; fall back to single-value assign.
+            let mut it = values.into_iter();
+            let first = it.next().unwrap_or_else(Array::empty);
+            return self.assign_to(target, first, src);
+        };
+        let (name, current) = self.lvalue_base(base, src)?;
+        let plan = self.plan_for(&current, args, src)?;
+        let updated = index::scatter_cell_contents_multi(&current, &plan, values)?;
+        self.store_lvalue(base, updated, src)?;
+        Ok(name)
+    }
+
     fn assign_to(&mut self, target: &Expr, value: Array, src: &str) -> Flow<String> {
         match &target.kind {
             ExprKind::Ident(name) => {
@@ -1181,10 +1237,26 @@ fn switch_matches(value: &Array, label: &Array) -> bool {
     if value.is_char() || label.is_char() {
         return value.as_string() == label.as_string();
     }
+    // Numeric (possibly complex) scalar comparison: compare as complex doubles
+    // so `1.0f + i` (complex single) matches `1.0 + i` (complex double) — the
+    // `as_f64` path would discard the imaginary component.
+    if value.is_complex() || label.is_complex() {
+        let v = value_c64(value);
+        let l = value_c64(label);
+        return matches!((v, l), (Some(a), Some(b)) if a == b);
+    }
     match (value.as_f64(), label.as_f64()) {
         (Some(a), Some(b)) => a == b,
         _ => false,
     }
+}
+
+/// The single complex value of a scalar array (`None` if not numel-1).
+fn value_c64(a: &Array) -> Option<C64> {
+    if a.numel() != 1 {
+        return None;
+    }
+    value::to_c64_vec(a).first().copied()
 }
 
 /// Element-wise transpose (2-D only); `conjugate` negates imaginary parts.

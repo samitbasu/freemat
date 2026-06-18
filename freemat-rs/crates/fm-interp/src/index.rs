@@ -838,6 +838,42 @@ pub fn scatter_cell_contents(base: &Array, plan: &IndexPlan, rhs: Array) -> Flow
     Ok(Array::cell(&dims, flat))
 }
 
+/// Scatter cell *contents* from a multi-output assignment (`[c{1:3}] = f`):
+/// each indexed position receives the *corresponding* value from `values`
+/// (comma-list distribution), rather than the single rhs broadcast by
+/// [`scatter_cell_contents`]. Grows the cell to fit.
+pub fn scatter_cell_contents_multi(
+    base: &Array,
+    plan: &IndexPlan,
+    values: Vec<Array>,
+) -> Flow<Array> {
+    let mut flat: Vec<Array> = match base {
+        Array::Cell(d) => crate::value::mem_order(d),
+        _ if base.numel() == 0 => Vec::new(),
+        _ => {
+            return Err(Signal::Error(InterpError::msg(format!(
+                "'{{}}' assignment requires a cell array, got {}",
+                base.class_name()
+            ))));
+        }
+    };
+    let needed: usize = plan.needed_dims.iter().product();
+    flat.resize(needed.max(flat.len()), Array::empty());
+    for (&p, value) in plan.linear.iter().zip(values) {
+        flat[p] = value;
+    }
+    // Keep the grown shape: the target's needed dims if they cover every slot,
+    // else fall back to a column vector of the (grown) length.
+    let dims: Dims = if needed >= flat.len() {
+        plan.needed_dims.clone()
+    } else if base.numel() == flat.len() {
+        base.dims_smallvec()
+    } else {
+        SmallVec::from_slice(&[flat.len(), 1])
+    };
+    Ok(Array::cell(&dims, flat))
+}
+
 /// Delete the positions in `plan` from `base` (`x(idx) = []`).
 ///
 /// Linear deletion from a vector keeps the source orientation; row/column

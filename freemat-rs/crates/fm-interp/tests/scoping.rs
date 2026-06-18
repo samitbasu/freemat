@@ -121,3 +121,21 @@ fn debug_seam_active_scope_switchable() {
     i.context.set_active(0);
     assert_eq!(i.context.active_index(), 0);
 }
+
+#[test]
+fn multi_output_into_cell_contents() {
+    // `[c{1:3}] = f` distributes the function's three outputs across the cell
+    // slots (comma-list expansion), one value per indexed position.
+    let mut i = Interpreter::new();
+    i.define_source("function [a, b, c] = three()\n  a = 1;\n  b = 4;\n  c = 3;\n")
+        .unwrap();
+    i.run("d = {0,0,0,0}; [d{1:3}] = three();").unwrap();
+    // Cell stays 1x4; first three slots get 1,4,3, the fourth is untouched.
+    assert_eq!(i.context.lookup("d").unwrap().shape(), &[1, 4]);
+    i.run("v1 = d{1}; v2 = d{2}; v3 = d{3}; v4 = d{4};")
+        .unwrap();
+    assert_eq!(i.context.lookup("v1").unwrap().as_f64(), Some(1.0));
+    assert_eq!(i.context.lookup("v2").unwrap().as_f64(), Some(4.0));
+    assert_eq!(i.context.lookup("v3").unwrap().as_f64(), Some(3.0));
+    assert_eq!(i.context.lookup("v4").unwrap().as_f64(), Some(0.0));
+}

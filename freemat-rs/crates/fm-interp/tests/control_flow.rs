@@ -124,3 +124,39 @@ for i = 1:3
 end";
     assert_eq!(run_f64(src, "c"), 3.0);
 }
+
+#[test]
+fn switch_matches_complex_across_widths() {
+    // `switch (1.0f + i)` must match `case (1.0 + i)` — complex single equals
+    // complex double by value (the old `as_f64` comparison dropped the imag).
+    let src = "\
+x = 1.0f + i;
+z = 1.0 + i;
+switch x
+  case 1
+    r = 0;
+  case i
+    r = 0;
+  case z
+    r = 1;
+  otherwise
+    r = 0;
+end";
+    assert_eq!(run_f64(src, "r"), 1.0);
+}
+
+#[test]
+fn switch_on_vector_errors() {
+    // A non-scalar, non-string switch argument is an error (caught here).
+    let src = "\
+r = 0;
+try
+  switch [1 1]
+    case 1
+      r = 0;
+  end
+catch
+  r = 1;
+end";
+    assert_eq!(run_f64(src, "r"), 1.0);
+}
