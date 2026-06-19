@@ -8,5 +8,6 @@ Cargo.lock.bak
 tmp.mat
 test_load1.txt
 test.csv
+junk.dat
 crates/fm-builtins/examples/scratch_probe.rs
 crates/fm-parser/examples/scratch_pp.rs
