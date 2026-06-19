@@ -26,6 +26,7 @@ use faer::{Mat, MatRef, Side, c64};
 use fm_core::{Array, C64};
 
 mod error;
+mod sparse_solve;
 pub use error::LinalgError;
 
 /// A linalg result.
@@ -207,6 +208,10 @@ pub fn mtimes(a: &Array, b: &Array) -> Result<Array> {
 /// # Errors
 /// Returns [`LinalgError`] on dimension mismatch or a singular/failed solve.
 pub fn mldivide(a: &Array, b: &Array) -> Result<Array> {
+    // Sparse `A`: solve natively (sparse LU / QR) without densifying `A`.
+    if let Some(sa) = a.as_sparse() {
+        return sparse_solve::sp_mldivide(sa, b);
+    }
     let am = MatData::from_array(a)?;
     let bm = MatData::from_array(b)?;
     if am.rows != bm.rows {
@@ -243,6 +248,14 @@ pub fn mldivide(a: &Array, b: &Array) -> Result<Array> {
 /// Returns [`LinalgError`] on dimension mismatch or a failed solve.
 pub fn mrdivide(a: &Array, b: &Array) -> Result<Array> {
     // x A = b  <=>  A^T x^T = b^T.
+    // Sparse `A`: transpose it *as a sparse matrix* (so `mldivide` takes the
+    // native sparse path) rather than densifying via the dense `transpose`.
+    if let Some(sa) = a.as_sparse() {
+        let at = Array::sparse(sa.transpose());
+        let bt = transpose(b)?;
+        let xt = mldivide(&at, &bt)?;
+        return transpose(&xt);
+    }
     let at = transpose(a)?;
     let bt = transpose(b)?;
     let xt = mldivide(&at, &bt)?;

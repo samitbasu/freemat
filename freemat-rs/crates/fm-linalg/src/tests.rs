@@ -341,3 +341,73 @@ fn null_dimension() {
     let n = null(&a).unwrap();
     assert_eq!(n.dims(), vec![2, 1]);
 }
+
+// ---- Sparse solves (native sp_lu / sp_qr, no densification) -----------------
+
+/// Wrap a dense column-major real matrix as a sparse `Array`.
+fn sparse_real(rows: usize, cols: usize, data: &[f64]) -> Array {
+    let s =
+        fm_core::SparseMatrix::from_dense_cols(rows, cols, fm_core::DataClass::Double, data, None);
+    Array::sparse(s)
+}
+
+#[test]
+fn sparse_mldivide_matches_dense() {
+    // SPD-ish tridiagonal 3x3; solve against a 3x1 rhs.
+    let dense = mat(3, 3, &[4.0, 1.0, 0.0, 1.0, 3.0, 1.0, 0.0, 1.0, 2.0]);
+    let sp = sparse_real(3, 3, &[4.0, 1.0, 0.0, 1.0, 3.0, 1.0, 0.0, 1.0, 2.0]);
+    let b = mat(3, 1, &[1.0, 2.0, 3.0]);
+    let xd = mldivide(&dense, &b).unwrap();
+    let xs = mldivide(&sp, &b).unwrap();
+    let (gd, gs) = (to_f64(&xd), to_f64(&xs));
+    for (d, s) in gd.iter().zip(&gs) {
+        assert!(
+            (d - s).abs() < 1e-9,
+            "sparse vs dense solve mismatch: {gd:?} {gs:?}"
+        );
+    }
+    // The result is dense (FreeMat returns dense from a sparse solve).
+    assert!(!xs.is_sparse());
+}
+
+#[test]
+fn sparse_mldivide_complex_residual_zero() {
+    // C = [2, i; i, 4] (column-major re=[2,0,0,4], im=[0,1,1,0]); b = [1+i; 2].
+    let re = [2.0, 0.0, 0.0, 4.0];
+    let im = [0.0, 1.0, 1.0, 0.0];
+    let sp = Array::sparse(fm_core::SparseMatrix::from_dense_cols(
+        2,
+        2,
+        fm_core::DataClass::Double,
+        &re,
+        Some(&im),
+    ));
+    let dense = Array::complex64_matrix(
+        &[2, 2],
+        vec![
+            C64::new(2.0, 0.0),
+            C64::new(0.0, 1.0),
+            C64::new(0.0, 1.0),
+            C64::new(4.0, 0.0),
+        ],
+    );
+    let b = Array::complex64_matrix(&[2, 1], vec![C64::new(1.0, 1.0), C64::new(2.0, 0.0)]);
+    let x = mldivide(&sp, &b).unwrap();
+    // Residual C*x - b must vanish.
+    let r = mtimes(&dense, &x).unwrap();
+    let (rv, bv) = (to_c64(&r), to_c64(&b));
+    for (ri, bi) in rv.iter().zip(&bv) {
+        assert!(
+            (ri - bi).norm() < 1e-9,
+            "complex sparse solve residual too large"
+        );
+    }
+}
+
+#[test]
+fn sparse_mldivide_singular_errors() {
+    // A singular sparse matrix (zero column) must error, not return garbage.
+    let sp = sparse_real(2, 2, &[0.0, 0.0, 1.0, 1.0]); // column 0 all zero
+    let b = mat(2, 1, &[1.0, 2.0]);
+    assert!(mldivide(&sp, &b).is_err());
+}
