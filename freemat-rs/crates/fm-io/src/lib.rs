@@ -16,6 +16,7 @@
 pub mod builtins;
 pub mod fft;
 pub mod fileio;
+pub mod image_io;
 pub mod matfile;
 pub mod regexp;
 pub mod scanf;

@@ -1,9 +1,9 @@
 # FreeMat-rs — remaining work / backlog
 
-Snapshot: HEAD `c796560af`, conformance **658/677 ≈ 97.2%** against FreeMat's own `.m` suite.
-The interpreter is effectively feature-complete for the corpus; what remains is one last big
-*feature* (the debugger), a few moderate/niche numerical features, and a handful of
-out-of-scope or not-real-bug items.
+Snapshot: conformance **670/677 ≈ 99.0%** against FreeMat's own `.m` suite. The interpreter is
+effectively feature-complete for the corpus; what remains is one last big *feature* (the
+debugger), **one** deferred numerical feature (`eigs`), and a handful of out-of-scope /
+not-real-bug items.
 
 How to use: pick an item, implement to the **Definition of Done** in `docs/PLAN.md` (build +
 `clippy -D warnings` + `fmt --check` + `test` all green, regression tests, no conformance
@@ -12,46 +12,29 @@ regression, update `PROGRESS.md`, commit on `rust-port`). Reconfirm with
 
 ---
 
-## A. Conformance gaps (the ~19 still-failing tests)
+## A. Conformance gaps (the 7 still-failing tests)
 
-### A1 — Worth doing
+### A0 — DONE in the REMAINING.md backlog pass (was A1/A2 + imwrite)
 
-**Curve fitting — `fitfun`, `gausfit`** · unblocks `suite/test_fitfun1/2/3`, `suite/test_gausfit1` (4)
-- *Gap:* nonlinear least-squares is unimplemented. `fitfun` is the core; `gausfit` builds on it.
-- *Work:* implement Levenberg–Marquardt — either port FreeMat's bundled `libs/libFN/levmar-2.3/`,
-  or use a Rust crate (`levenberg-marquardt`, or `argmin`). Add the `fitfun` builtin (it takes a
-  function/expression + data); `gausfit` is likely expressible as a toolbox `.m` once `fitfun`
-  exists. Reference FreeMat `libs/libFN` (`FitFunFunction`).
-- *Effort:* Medium. *Value:* Moderate — the only remaining genuinely-useful capability.
+All cleared, no regressions (see `PROGRESS.md` → "REMAINING.md backlog pass"):
+- **`fitfun` + `gausfit`/`gfitfun`** — Levenberg–Marquardt (`fm-builtins::fitfun`) + embedded
+  toolbox M-source. `test_fitfun1/2/3`, `test_gausfit1`.
+- **`source`** — `fm-builtins::interp_ops`, plus `which`-returns-file-path tracking. `test_source`.
+- **`int2bin`/`bin2int` N-D** — VectorOp semantics in `baseconv.rs`. `test_bin2int1`.
+- **`test_sparse75`** — sparse-preserving indexed assignment (no densify) + `lu` erroring on
+  non-square / non-double sparse input (matches `SparseLUDecompose`).
+- **`imwrite`/`imread`** — `fm-io::image_io` on the `image` crate (bmp/png/jpeg/gif/tiff).
+  `test_imwrite_imread`.
 
-**`source` builtin** · unblocks `freemat/test_source`, `suite/test_source` (1 unique)
-- *Gap:* `source('file')` (run a script file's statements in the caller's scope) is missing.
-- *Work:* small `fm-interp` builtin — parse the file and `exec` its statements in the current
-  scope (distinct from running it as a function). Reference FreeMat `Source.cpp`.
-- *Effort:* Low–Medium. *Value:* Low.
-
-### A2 — Cheap niche fixes
-
-**`int2bin`/`bin2int` on N-D input** · unblocks `suite/test_bin2int1`, `typecast/test_bin2int1` (1 unique)
-- *Gap:* the test feeds `rand(4,4,3)` (3-D); our base-conversion builtins assume ≤2-D.
-- *Work:* generalize `crates/fm-builtins/src/baseconv.rs` `int2bin`/`bin2int` to preserve N-D shape.
-- *Effort:* Low. *Value:* Low.
-
-**`lu` must error on non-finite** · unblocks `suite/test_sparse75`, `transforms/test_sparse75` (1 unique)
-- *Gap:* the test sets an element to `inf` and expects `[l,u]=lu(...)` to throw; we don't.
-- *Work:* in `fm-linalg` `lu` (and the sparse densify path), detect non-finite input and return an
-  error matching FreeMat. *Effort:* Low. *Value:* Low.
-
-### A3 — Larger / low-value features
+### A1 — Still open
 
 **`eigs` — iterative sparse eigensolver** · unblocks `suite/test_sparse45`, `sparse/test_sparse45` (1)
-- *Work:* Lanczos (symmetric) / Arnoldi (general) restarted iteration — the ARPACK role the plan
-  deferred. Consider a Rust crate or a minimal Lanczos for the symmetric case.
-- *Effort:* Medium–High. *Value:* Low.
-
-**`imwrite` / `imread` — image I/O** · unblocks `io/test_imwrite_imread`, `suite/test_imwrite_imread` (1)
-- *Work:* add the `image` crate; map FreeMat's `imwrite(A,'file.png')` / `imread`. New external dep.
-- *Effort:* Medium. *Value:* Low.
+- *Deferred* (must NOT densify — see [[sparse-no-densify]] rule). A correct version is a shift-invert
+  Arnoldi: build sparse `A − σI`, factor with faer's `SparseColMat::sp_lu()`, run (non-restarted, or
+  ideally implicitly-restarted) Arnoldi on `OP = (A − σI)⁻¹` via the sparse solve, take Ritz values
+  `λ = σ + 1/θ`. The `'lm'`/no-sigma case runs Arnoldi on `A` directly via sparse mat-vec. The test
+  is `eigs(A,4,0.634)` (4 eigenvalues nearest 0.634, 1 output).
+- *Effort:* Medium–High. *Value:* Low (one unique test).
 
 ---
 

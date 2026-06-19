@@ -11,6 +11,7 @@ use crate::util::need;
 pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("eval", b_eval);
     table.add_builtin("evalin", b_evalin);
+    table.add_builtin("source", b_source);
     table.add_builtin("feval", b_feval);
     table.add_builtin("builtin", b_builtin);
     table.add_builtin("exist", b_exist);
@@ -85,6 +86,24 @@ fn b_eval(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array
             }
         }
     }
+}
+
+/// `source(filename)` — read a script file and execute its statements in the
+/// *current* scope (FreeMat's `Source.cpp`). Unlike calling a function file,
+/// the script's assignments land in the caller's workspace, and unlike running
+/// a file as a script it does not re-execute the final line.
+fn b_source(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "source")?;
+    let path = args[0]
+        .as_string()
+        .ok_or_else(|| Signal::Error(InterpError::msg("source: argument must be a filename")))?;
+    let contents = std::fs::read_to_string(&path).map_err(|e| {
+        Signal::Error(InterpError::msg(format!(
+            "source: cannot read '{path}': {e}"
+        )))
+    })?;
+    run_source(i, &contents)?;
+    Ok(vec![])
 }
 
 /// `evalin(context, expr)` — we treat the context name (`'base'`/`'caller'`) as

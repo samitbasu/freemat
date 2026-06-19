@@ -6,7 +6,7 @@ use fm_interp::error::Flow;
 use fm_interp::value::{build_real, char_matrix, to_f64_vec};
 use fm_interp::{FunctionTable, Interpreter};
 
-use crate::util::{err, need};
+use crate::util::need;
 
 pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("dec2hex", b_dec2hex);
@@ -129,56 +129,69 @@ fn b_hex2num(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>
     Ok(vec![column(out)])
 }
 
-/// `int2bin(A, n)` — FreeMat: returns an `n`-wide bit matrix where each input
-/// element becomes a row of bits (MSB first), stacked along the last dim. We
-/// implement the common 2-D case: rows of input map to rows of an `numel x n`
-/// double matrix of 0/1.
+/// `int2bin(A, n)` — FreeMat: each input element expands into `n` bits (MSB
+/// first) laid out along a new trailing dimension (a trailing singleton dim is
+/// reused). So a column vector `m x 1` becomes `m x n`, while an N-D array
+/// `[d1..dk]` becomes `[d1..dk n]`. Bits use two's-complement for negatives.
 fn b_int2bin(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     need(args, 2, "int2bin")?;
+    let in_dims = args[0].dims();
     let vals = to_f64_vec(&args[0]);
-    let nbits = args[1].as_f64().unwrap_or(0.0) as usize;
-    let m = vals.len();
-    // Result is m x nbits double, MSB first. Column-major layout.
-    let mut data = vec![0.0f64; m * nbits];
-    for (i, &v) in vals.iter().enumerate() {
-        let iv = v as u64;
+    let nbits = (args[1].as_f64().unwrap_or(0.0).clamp(0.0, 64.0) as usize).max(1);
+    let numel = vals.len();
+    // The bits dimension is the (new) outermost dim, so its stride is `numel`.
+    let mut data = vec![0.0f64; numel * nbits];
+    for (e, &v) in vals.iter().enumerate() {
+        let iv = v as i64 as u64;
         for b in 0..nbits {
-            // bit (nbits-1-b) is column b (MSB first).
+            // column/plane b (MSB first) holds bit (nbits-1-b).
             let bit = (iv >> (nbits - 1 - b)) & 1;
-            data[i + b * m] = bit as f64;
+            data[e + b * numel] = bit as f64;
         }
     }
-    if m == 1 {
-        Ok(vec![build_real(DataClass::Double, &[1, nbits], data)])
+    let mut out_dims: Vec<usize> = in_dims.to_vec();
+    if out_dims.len() >= 2 && *out_dims.last().unwrap() == 1 {
+        *out_dims.last_mut().unwrap() = nbits;
     } else {
-        Ok(vec![build_real(DataClass::Double, &[m, nbits], data)])
+        out_dims.push(nbits);
     }
+    Ok(vec![build_real(DataClass::Double, &out_dims, data)])
 }
 
-/// `bin2int(B)` — inverse of `int2bin`: each row of the `m x nbits` bit matrix
-/// (MSB first) becomes an integer.
+/// `bin2int(B)` — inverse of `int2bin`: collapses the last non-singleton
+/// dimension (the bits, MSB first) into a single integer, recovering the
+/// original N-D shape.
 fn b_bin2int(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     need(args, 1, "bin2int")?;
     let dims = args[0].dims();
-    if dims.len() != 2 {
-        return err("bin2int: input must be a 2-D bit matrix");
+    // Work dimension = last non-singleton dim (FreeMat's `lastNotOne`).
+    let mut wd = 0usize;
+    for (k, &d) in dims.iter().enumerate() {
+        if d > 1 {
+            wd = k;
+        }
     }
-    let (m, nbits) = (dims[0], dims[1]);
+    let nbits = dims.get(wd).copied().unwrap_or(1).max(1);
     let data = to_f64_vec(&args[0]);
-    let mut out = vec![0.0f64; m];
-    for i in 0..m {
+    // The work dim is the outermost non-singleton, so its stride is `base`.
+    let base = data.len() / nbits;
+    let mut out = vec![0.0f64; base];
+    for e in 0..base {
         let mut acc: u64 = 0;
         for b in 0..nbits {
-            let bit = data[i + b * m] as u64 & 1;
+            let bit = data[e + b * base] as i64 as u64 & 1;
             acc = (acc << 1) | bit;
         }
-        out[i] = acc as f64;
+        out[e] = acc as f64;
     }
-    if m == 1 {
-        Ok(vec![build_real(DataClass::Double, &[1, 1], out)])
-    } else {
-        Ok(vec![build_real(DataClass::Double, &[m, 1], out)])
+    let mut out_dims: Vec<usize> = dims.to_vec();
+    if wd < out_dims.len() {
+        out_dims[wd] = 1;
     }
+    while out_dims.len() > 2 && *out_dims.last().unwrap() == 1 {
+        out_dims.pop();
+    }
+    Ok(vec![build_real(DataClass::Double, &out_dims, out)])
 }
 
 /// Read an array as a list of row strings: a single char row vector -> one

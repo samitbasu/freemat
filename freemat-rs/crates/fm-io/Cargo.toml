@@ -18,6 +18,13 @@ flate2.workspace = true
 byteorder.workspace = true
 rustfft.workspace = true
 regex.workspace = true
+image = { version = "0.25", default-features = false, features = [
+    "bmp",
+    "png",
+    "jpeg",
+    "gif",
+    "tiff",
+] }
 
 [lints]
 workspace = true

@@ -6,11 +6,11 @@
 //! a list of 0-based linear element positions ([`IndexPlan`]); reads gather,
 //! writes scatter (growing the target if a position is out of bounds).
 
-use fm_core::{Array, C64, DataClass, Dims, ScalarValue, StructArray};
+use fm_core::{Array, C64, DataClass, Dims, ScalarValue, SparseMatrix, StructArray};
 use smallvec::SmallVec;
 
 use crate::error::{Flow, InterpError, Signal};
-use crate::value::{to_f64_vec, to_index};
+use crate::value::{to_c64_vec, to_f64_vec, to_index};
 
 /// A short list of 0-based linear positions, kept on the stack for the common
 /// case (a handful of indexed elements, e.g. `A(i,j)`).
@@ -742,6 +742,15 @@ pub fn scatter(base: &Array, plan: &IndexPlan, rhs: &Array) -> Flow<Array> {
         return scatter_struct(base, plan, rhs);
     }
 
+    // Sparse base: keep it sparse for in-bounds element writes (FreeMat keeps
+    // sparse matrices sparse under indexed assignment). Unusual cases (growth,
+    // deletion handled above) fall through to the densifying path below.
+    if let Some(sp) = base.as_sparse()
+        && let Some(result) = try_scatter_sparse(sp, plan, rhs)?
+    {
+        return Ok(result);
+    }
+
     // Decide the result class: keep base's class unless base is empty (then take
     // rhs's class — assigning into `[]` adopts the rhs type).
     let class = if base.numel() == 0 && !matches!(base, Array::Scalar(_)) {
@@ -801,7 +810,12 @@ pub fn scatter(base: &Array, plan: &IndexPlan, rhs: &Array) -> Flow<Array> {
         return Ok(crate::value::char_matrix(&needed_dims, flat));
     }
 
-    if class == DataClass::Double && (base.is_complex() || rhs.is_complex()) {
+    // Complex assignment, for either single- or double-precision complex
+    // (the only complex-capable classes). Without the `Float` case, assigning
+    // into a single-complex array would drop the imaginary part.
+    if matches!(class, DataClass::Double | DataClass::Float)
+        && (base.is_complex() || rhs.is_complex())
+    {
         let src = crate::value::to_c64_vec(base);
         let mut flat = relayout(
             src,
@@ -816,7 +830,7 @@ pub fn scatter(base: &Array, plan: &IndexPlan, rhs: &Array) -> Flow<Array> {
             let val = if rc.len() == 1 { rc[0] } else { rc[i] };
             flat[p] = val;
         }
-        return Ok(crate::value::build_complex(&needed_dims, flat));
+        return Ok(crate::value::build_complex_class(class, &needed_dims, flat));
     }
 
     let src = to_f64_vec(base);
@@ -825,6 +839,91 @@ pub fn scatter(base: &Array, plan: &IndexPlan, rhs: &Array) -> Flow<Array> {
         flat[p] = take(i)?;
     }
     Ok(crate::value::build_real(class, &needed_dims, flat))
+}
+
+/// Indexed assignment into a sparse base that *keeps it sparse*. Handles the
+/// common in-bounds element write `S(i,j) = v` (scalar or matching rhs, real or
+/// complex) by editing a coordinate map of the nonzeros. Returns `Ok(None)` for
+/// cases the densifying rebuild path must own (deletion, struct/cell rhs, or
+/// any growth beyond the current dimensions).
+fn try_scatter_sparse(base: &SparseMatrix, plan: &IndexPlan, rhs: &Array) -> Flow<Option<Array>> {
+    if is_deletion(rhs) || matches!(rhs, Array::Cell(_) | Array::Struct(_)) {
+        return Ok(None);
+    }
+    let (rows, cols) = (base.rows(), base.cols());
+    let numel = rows * cols;
+    // Growth is left to the densifying path; only in-bounds writes stay sparse.
+    if plan.needed_dims.iter().product::<usize>() > numel || plan.linear.iter().any(|&p| p >= numel)
+    {
+        return Ok(None);
+    }
+    let count = plan.linear.len();
+    let complex = base.is_complex() || rhs.is_complex();
+
+    // Seed the coordinate map (1-based i/j) with the existing nonzeros.
+    let (bi, bj, bre, bim) = base.find_triplets();
+    let mut map: std::collections::HashMap<(usize, usize), (f64, f64)> =
+        std::collections::HashMap::with_capacity(bi.len() + count);
+    for k in 0..bi.len() {
+        let im = bim.as_ref().map_or(0.0, |v| v[k]);
+        map.insert((bi[k] as usize, bj[k] as usize), (bre[k], im));
+    }
+
+    // RHS values (broadcast a scalar; else one value per indexed position).
+    let (re_vals, im_vals) = if complex {
+        let c = to_c64_vec(rhs);
+        (
+            c.iter().map(|z| z.re).collect::<Vec<_>>(),
+            Some(c.iter().map(|z| z.im).collect::<Vec<_>>()),
+        )
+    } else {
+        (to_f64_vec(rhs), None)
+    };
+    let rlen = re_vals.len();
+    if rlen != 1 && rlen != count {
+        return Err(Signal::Error(InterpError::msg(format!(
+            "assignment size mismatch: {rlen} elements into {count} positions"
+        ))));
+    }
+    for (idx, &lin) in plan.linear.iter().enumerate() {
+        let (row, col) = (lin % rows + 1, lin / rows + 1);
+        let pick = if rlen == 1 { 0 } else { idx };
+        let vr = re_vals[pick];
+        let vi = im_vals.as_ref().map_or(0.0, |v| v[pick]);
+        // An assigned zero clears the entry (a structural zero), matching how
+        // `find`/`sparse` drop explicit zeros.
+        if vr == 0.0 && vi == 0.0 {
+            map.remove(&(row, col));
+        } else {
+            map.insert((row, col), (vr, vi));
+        }
+    }
+
+    // Emit triplets and rebuild. Keys are unique, so no duplicate summing.
+    let mut iv = Vec::with_capacity(map.len());
+    let mut jv = Vec::with_capacity(map.len());
+    let mut rv = Vec::with_capacity(map.len());
+    let mut mv: Vec<f64> = Vec::with_capacity(if complex { map.len() } else { 0 });
+    for ((r, c), (re, im)) in map {
+        iv.push(r);
+        jv.push(c);
+        rv.push(re);
+        if complex {
+            mv.push(im);
+        }
+    }
+    let im_opt = if complex { Some(mv.as_slice()) } else { None };
+    let sp = SparseMatrix::from_triplets(
+        &iv,
+        &jv,
+        &rv,
+        im_opt,
+        Some(rows),
+        Some(cols),
+        DataClass::Double,
+    )
+    .map_err(|e| Signal::Error(InterpError::msg(e)))?;
+    Ok(Some(Array::sparse(sp)))
 }
 
 /// Re-lay-out `src` (column-major in `old_dims`) into a buffer of length

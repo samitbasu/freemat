@@ -108,7 +108,24 @@ fn b_svd(_i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array
 
 fn b_lu(_i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
     need(args, 1, "lu")?;
-    fm_linalg::lu(&args[0], nargout).map_err(wrap)
+    let a = &args[0];
+    // FreeMat's sparse LU (SparseLUDecompose) only handles square double /
+    // dcomplex matrices; everything else errors out (the dense path, by
+    // contrast, supports rectangular and all numeric classes).
+    if a.is_sparse() {
+        if a.class() != DataClass::Double {
+            return Err(Signal::Error(InterpError::msg(
+                "lu: sparse LU is only supported for double and dcomplex matrices",
+            )));
+        }
+        let dims = a.dims();
+        if dims.len() != 2 || dims[0] != dims[1] {
+            return Err(Signal::Error(InterpError::msg(
+                "lu: sparse LU is only supported for square matrices",
+            )));
+        }
+    }
+    fm_linalg::lu(a, nargout).map_err(wrap)
 }
 
 fn b_qr(_i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {

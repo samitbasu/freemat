@@ -951,6 +951,115 @@ fn int2bin_bin2int_roundtrip() {
     );
 }
 
+/// N-D `int2bin`/`bin2int` round-trip preserves shape and values
+/// (conformance `suite/test_bin2int1`): a 3-D array survives the round trip.
+#[test]
+fn int2bin_bin2int_nd_roundtrip() {
+    let mut i = interp();
+    i.run("A = floor(rand(4,4,3)*10);").unwrap();
+    i.run("C = bin2int(int2bin(A,4));").unwrap();
+    i.run("ok = isequal(A, C);").unwrap();
+    assert_eq!(
+        i.context.lookup("ok").and_then(fm_core::Array::as_f64),
+        Some(1.0)
+    );
+    // int2bin appends the bits along a new trailing dimension.
+    i.run("d = size(int2bin(A,4));").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("d").unwrap()),
+        vec![4.0, 4.0, 3.0, 4.0]
+    );
+}
+
+/// `fitfun` fits a linear model `a*x + b` to data, recovering the parameters
+/// (conformance `suite/test_fitfun*`). Uses a function handle.
+#[test]
+fn fitfun_linear_fit() {
+    let mut i = interp();
+    i.run("x = 1:10;").unwrap();
+    i.run("y = 3*x + 2;").unwrap();
+    i.run("f = @(p) p(1)*x + p(2);").unwrap();
+    i.run("[xopt, yopt] = fitfun(f, [0,0], y, ones(1,10), 1e-10);")
+        .unwrap();
+    let xopt = fm_interp::value::to_f64_vec(i.context.lookup("xopt").unwrap());
+    assert!((xopt[0] - 3.0).abs() < 1e-5, "slope {}", xopt[0]);
+    assert!((xopt[1] - 2.0).abs() < 1e-5, "intercept {}", xopt[1]);
+}
+
+/// `gausfit` (embedded toolbox M-function on top of `fitfun`) recovers the
+/// mean and width of a Gaussian (conformance `suite/test_gausfit1`).
+#[test]
+fn gausfit_recovers_gaussian() {
+    let mut i = interp();
+    i.run("t = linspace(-1,1);").unwrap();
+    i.run("y = exp(-t.^2/8);").unwrap();
+    i.run("[mu,sigma,dc,gain,yhat] = gausfit(t,y);").unwrap();
+    let mu = i
+        .context
+        .lookup("mu")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+    let sigma = i
+        .context
+        .lookup("sigma")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+    assert!(mu.abs() < 1e-4, "mu {mu}");
+    assert!((sigma.abs() - 2.0).abs() < 1e-4, "sigma {sigma}");
+}
+
+/// Indexed assignment into a sparse matrix keeps it sparse, and an assigned
+/// zero clears the entry (conformance `suite/test_sparse75` depends on this).
+#[test]
+fn sparse_assignment_preserves_sparsity() {
+    let mut i = interp();
+    i.run("z = sparse(eye(4));").unwrap();
+    i.run("z(1,3) = 5;").unwrap();
+    i.run("s1 = issparse(z);").unwrap();
+    assert_eq!(
+        i.context.lookup("s1").and_then(fm_core::Array::as_f64),
+        Some(1.0)
+    );
+    i.run("v = full(z(1,3));").unwrap();
+    assert_eq!(
+        i.context.lookup("v").and_then(fm_core::Array::as_f64),
+        Some(5.0)
+    );
+    // Assigning zero removes the structural nonzero.
+    i.run("z(2,2) = 0; n = nnz(z);").unwrap();
+    assert_eq!(
+        i.context.lookup("n").and_then(fm_core::Array::as_f64),
+        Some(4.0)
+    );
+}
+
+/// `lu` on a non-square sparse matrix errors, matching FreeMat's
+/// `SparseLUDecompose` (conformance `suite/test_sparse75`).
+#[test]
+fn lu_sparse_non_square_errors() {
+    let mut i = interp();
+    i.run("z = sparse(rand(3,5));").unwrap();
+    assert!(i.run("[l,u] = lu(z);").is_err());
+    // A square sparse matrix is fine.
+    i.run("w = sparse(eye(4));").unwrap();
+    assert!(i.run("[l,u] = lu(w);").is_ok());
+}
+
+/// Indexed assignment into a single-precision complex array preserves the
+/// imaginary part (regression for the `class == Double`-only scatter branch).
+#[test]
+fn single_complex_scatter_keeps_imaginary() {
+    let mut i = interp();
+    i.run("a = complex(single([1,3]) + single([0,2])*i);")
+        .unwrap();
+    i.run("a(1) = complex(7+2*i);").unwrap();
+    i.run("ok = isequal(imag(a), single([2,2]));").unwrap();
+    assert_eq!(
+        i.context.lookup("ok").and_then(fm_core::Array::as_f64),
+        Some(1.0)
+    );
+}
+
 // ---- Polynomials ------------------------------------------------------------
 
 #[test]

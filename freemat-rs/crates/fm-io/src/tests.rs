@@ -268,3 +268,26 @@ fn read_real_compressed_fixture_first_var() {
     let first = crate::matfile::read_first(&bytes).expect("read first var");
     assert!(!first.name.is_empty());
 }
+
+#[test]
+fn imwrite_imread_grayscale_bmp_roundtrip() {
+    use fm_core::DataClass;
+    use fm_interp::value::{build_real, to_f64_vec};
+
+    // A 4x5 uint8 grayscale image with distinct values per pixel.
+    let (rows, cols) = (4usize, 5usize);
+    let vals: Vec<f64> = (0..rows * cols).map(|k| (k * 7 % 256) as f64).collect();
+    let img = build_real(DataClass::UInt8, &[rows, cols], vals.clone());
+
+    let path = std::env::temp_dir().join("fm_io_imwrite_test.bmp");
+    let path_arr = Array::char_string(&path.to_string_lossy());
+
+    crate::image_io::imwrite(&[img, path_arr.clone()]).expect("imwrite ok");
+    let out = crate::image_io::imread(&[path_arr]).expect("imread ok");
+    let _ = std::fs::remove_file(&path);
+
+    let b = &out[0];
+    assert_eq!(b.class(), DataClass::UInt8);
+    assert_eq!(b.dims(), vec![rows, cols]);
+    assert_eq!(to_f64_vec(b), vals);
+}

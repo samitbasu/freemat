@@ -41,7 +41,11 @@ impl Interpreter {
         let path = path.as_ref();
         let src = std::fs::read_to_string(path)
             .map_err(|e| InterpError::msg(format!("cannot read '{}': {e}", path.display())))?;
-        self.define_source_main(&src)
+        // Record the absolute path so `which` can report where a function lives.
+        let abs = std::fs::canonicalize(path)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| path.to_string_lossy().into_owned());
+        self.define_source_main_from(&src, Some(abs))
     }
 
     /// Parse `src` and register any function definitions it contains (the
@@ -58,10 +62,23 @@ impl Interpreter {
     /// # Errors
     /// Returns an [`InterpError`] if `src` fails to parse.
     pub fn define_source_main(&mut self, src: &str) -> Result<Option<String>, InterpError> {
+        self.define_source_main_from(src, None)
+    }
+
+    /// Like [`Self::define_source_main`], recording the originating file `path`
+    /// (if any) so `which` can report where the functions live.
+    ///
+    /// # Errors
+    /// Returns an [`InterpError`] if `src` fails to parse.
+    pub fn define_source_main_from(
+        &mut self,
+        src: &str,
+        path: Option<String>,
+    ) -> Result<Option<String>, InterpError> {
         let program = parse_program(src).map_err(|e| InterpError::msg(e.to_string()))?;
         if let Program::Functions(defs) = program {
             let main = defs.first().map(|d| d.name.clone());
-            self.load_functions(defs, src);
+            self.load_functions_from(defs, src, path);
             Ok(main)
         } else {
             Ok(None)

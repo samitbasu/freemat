@@ -53,6 +53,9 @@ pub struct FileLocals {
     pub funcs: HashMap<String, Arc<FunctionDef>>,
     /// The source text shared by every function in the file.
     pub src: Arc<String>,
+    /// The absolute path of the `.m` file these functions were loaded from, if
+    /// they came from a file (vs. embedded/REPL source). Surfaced by `which`.
+    pub path: Option<String>,
 }
 
 impl FileLocals {
@@ -127,6 +130,16 @@ impl FunctionTable {
     #[must_use]
     pub fn contains(&self, name: &str) -> bool {
         self.funcs.contains_key(name)
+    }
+
+    /// The absolute path of the `.m` file a function was loaded from, if it is
+    /// an interpreted function loaded from a file (used by `which`).
+    #[must_use]
+    pub fn source_path(&self, name: &str) -> Option<String> {
+        match self.funcs.get(name) {
+            Some(Function::Interpreted { locals, .. }) => locals.path.clone(),
+            _ => None,
+        }
     }
 
     /// Every registered function name, **sorted** — the authoritative builtin

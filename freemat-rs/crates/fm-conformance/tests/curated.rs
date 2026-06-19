@@ -220,7 +220,12 @@ fn curated_subset_passes() {
 /// builtins; `return (expr)` parse; unassigned outputs return `[]` like FreeMat;
 /// `eig(A,B)` via QZ + inverse-iteration refinement) raised the live total to
 /// 658/677 (97.2%).
-const PASS_FLOOR: usize = 653;
+///
+/// The REMAINING.md backlog pass (`fitfun`/`gausfit`, `source` + `which`-path,
+/// N-D `int2bin`/`bin2int`, sparse-preserving indexed assignment + sparse-`lu`
+/// errors, `imwrite`/`imread`, single-complex scatter fix) raised the live total
+/// to 670/677 (99.0%).
+const PASS_FLOOR: usize = 665;
 
 /// **Fast pass-floor guard (gates `cargo test`).** Running the *whole* covered
 /// corpus takes minutes (it spins up a fresh interpreter and re-parses every

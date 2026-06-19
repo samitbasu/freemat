@@ -330,6 +330,15 @@ pub fn det(a: &Array) -> Result<Array> {
 /// Returns [`LinalgError`] if the input is not a 2-D matrix.
 pub fn lu(a: &Array, nargout: usize) -> Result<Vec<Array>> {
     let am = MatData::from_array(a)?;
+    // FreeMat errors out rather than returning NaN-laden factors when the input
+    // contains Inf/NaN entries.
+    if am
+        .data
+        .iter()
+        .any(|z| !z.re.is_finite() || !z.im.is_finite())
+    {
+        return Err(LinalgError::new("lu: input matrix has non-finite entries"));
+    }
     let factor = am.view().partial_piv_lu();
     let l = factor.L().to_owned();
     let u = factor.U().to_owned();

@@ -19,6 +19,7 @@ mod bitops;
 mod cellstruct;
 mod constructors;
 mod elementary;
+mod fitfun;
 mod graphics;
 mod inspection;
 mod interp_ops;
@@ -41,6 +42,51 @@ mod util;
 /// minimal Stage-3 defaults); these registrations layer on top.
 pub fn register_standard_library(interp: &mut Interpreter) {
     register_into(&mut interp.functions);
+    register_toolbox_m(interp);
+}
+
+/// Define the handful of FreeMat `toolbox/*.m` functions we ship as embedded
+/// source (rather than native builtins) because they are most faithfully
+/// expressed in M-code on top of native primitives. Currently the curve-fitting
+/// wrappers `gausfit`/`gfitfun`, which build on the native `fitfun`.
+fn register_toolbox_m(interp: &mut Interpreter) {
+    // Verbatim from `toolbox/fitting/gfitfun.m` and `gausfit.m`.
+    const GFITFUN_M: &str = "\
+function y = gfitfun(x,times)
+y = x(4)*exp(-((times-x(1)).^2)/(2*x(2)^2)) + x(3);
+";
+    const GAUSFIT_M: &str = "\
+function [mu,sigma,dc,gain,yhat] = gausfit(t,y,w,mug,sigmag,dcg,gaing)
+if (~isset('w'))
+  w = y*0+1;
+end
+if (~isset('dcg'))
+  dcg = min(y(:));
+end
+ycor = y - dcg;
+if (~isset('gaing'))
+  gaing = max(ycor);
+end
+ycor = ycor/gaing;
+if (~isset('mug'))
+  mug = sum(ycor.*t)/sum(ycor);
+end
+if (~isset('sigmag'))
+  sigmag = sqrt(abs(sum((ycor).*(t-mug).^2)/sum(ycor)));
+end
+[xopt,err] = fitfun('gfitfun',[mug,sigmag,dcg,gaing],y,w,eps,t);
+mu = xopt(1);
+sigma = xopt(2);
+dc = xopt(3);
+gain = xopt(4);
+yhat = gfitfun(xopt,t);
+";
+    for src in [GFITFUN_M, GAUSFIT_M] {
+        // Embedded source is known-good; a parse failure is a build-time bug.
+        interp
+            .define_source(src)
+            .expect("embedded toolbox M-source must parse");
+    }
 }
 
 /// Register every builtin into a [`FunctionTable`] directly.
@@ -62,6 +108,7 @@ pub fn register_into(table: &mut FunctionTable) {
     bitops::register(table);
     baseconv::register(table);
     polynomial::register(table);
+    fitfun::register(table);
     misc::register(table);
     // Sparse builtins. Registered after the dense modules so `find`/`full`
     // become sparse-aware (they shadow the dense versions).

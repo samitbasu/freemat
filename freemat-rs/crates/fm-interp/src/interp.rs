@@ -135,6 +135,12 @@ impl Interpreter {
 
     /// Register interpreted function definitions in the function table.
     pub fn load_functions(&mut self, defs: Vec<FunctionDef>, src: &str) {
+        self.load_functions_from(defs, src, None);
+    }
+
+    /// Like [`Self::load_functions`], recording the `.m` file `path` the
+    /// definitions came from so `which` can report it.
+    pub fn load_functions_from(&mut self, defs: Vec<FunctionDef>, src: &str, path: Option<String>) {
         let shared = Arc::new(src.to_string());
 
         // A `.m` function file contains the public/main function (the first
@@ -151,6 +157,7 @@ impl Interpreter {
         let mut funcs: crate::function::FileLocals = crate::function::FileLocals {
             funcs: HashMap::new(),
             src: shared,
+            path,
         };
         let mut main: Option<Arc<FunctionDef>> = None;
         for def in defs {

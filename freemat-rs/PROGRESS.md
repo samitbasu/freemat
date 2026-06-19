@@ -1396,6 +1396,46 @@ eigenproblem `eig(A,B)`. **Conformance 650/677 (96.0%) → 658/677 (97.2%), Δ +
   `test_fitfun*`/`test_gausfit1` (curvefit), `test_parallel_fft1` (threading),
   `test_ctype1` (C-FFI), `test_sparse75` (sparse-LU must-error-on-inf).
 
+### REMAINING.md backlog pass — curvefit, source, image I/O, sparse assignment
+- **Conformance: 658/677 (97.2%) → 670/677 (99.0%), Δ +12 (no regressions).** Cleared every
+  `docs/REMAINING.md` "worth doing" / "cheap niche" item plus two latent bugs; the 7 still-red are
+  all out-of-scope (`file1` ×2 buggy corpus test, `ctype1` C-FFI, `parallel_fft1` ×2 threads) or the
+  one deferred feature (`eigs`).
+- **`fitfun` (new `fm-builtins::fitfun`)** — nonlinear least-squares, ported from libFN
+  `OptFun.cpp`'s `dlevmar_dif`: Levenberg–Marquardt (Nielsen damping) with a forward-difference
+  Jacobian and a small in-house damped-normal-equation solve, calling the user function/handle
+  re-entrantly. Minimises `sum (w·(fcn(x)−y))²`. Flips `suite/test_fitfun1/2/3` (incl. the nested
+  and `@handle` variants).
+- **`gausfit`/`gfitfun` (embedded toolbox M-source)** — `register_standard_library` now also
+  `define_source`s the two `toolbox/fitting/*.m` wrappers verbatim (they build on native `fitfun`),
+  since the harness only loads a test's own dir + `_helpers`. Flips `suite/test_gausfit1`.
+- **`source` builtin (`fm-builtins::interp_ops`)** — runs a script file's statements in the caller's
+  scope (FreeMat `Source.cpp`). Needed `which` to report a function's *file path*: added
+  source-path tracking through `load_file → define_source_main_from → load_functions_from →
+  FileLocals.path`, surfaced by `FunctionTable::source_path` and the `which` builtin. Flips
+  `suite/test_source`, `freemat/test_source` (helper `source_test_script.m` bundled into both dirs).
+- **`int2bin`/`bin2int` N-D** — generalised to FreeMat's VectorOp semantics: `int2bin` appends bits
+  along a new trailing dim (reusing a trailing singleton), `bin2int` collapses the last
+  non-singleton dim, so a 3-D array round-trips with its shape. Flips `suite/test_bin2int1`.
+- **Sparse-preserving indexed assignment** — `S(i,j)=v` now edits the sparse structure (coordinate
+  map → `from_triplets`) instead of densifying; an assigned 0 clears the entry. Growth/deletion
+  still fall back. This is what `suite/test_sparse75` needs: the sparse stays sparse, so `lu` hits
+  the sparse path, which now errors on non-square / non-double input (matching `SparseLUDecompose`).
+  Flips `test_sparse75`. **No densification** — per the project rule, sparse ops use sparse code.
+- **`imwrite`/`imread` (new `fm-io::image_io`, new dep `image` 0.25, features bmp/png/jpeg/gif/tiff)**
+  — M×N grayscale / M×N×3 RGB, format from extension. `imread` returns 2-D when the content is
+  grayscale (all channels equal) so an 8-bit BMP that decoders expand to RGB still comes back 2-D,
+  matching MATLAB. Flips `io/test_imwrite_imread`, `suite/test_imwrite_imread`.
+- **Latent bug fixed (exposed by sparse assignment):** dense indexed assignment into a *single*
+  complex array dropped the imaginary part — the scatter complex branch gated on `class==Double`
+  only. Now fires for `Float` too and rebuilds with `build_complex_class`. (Both sides previously
+  shared the bug, masking it in `test_sparse30/65/66`.)
+- **Deferred (user decision):** `eigs` (`test_sparse45`) — a correct version is a sparse-iterative
+  (shift-invert Arnoldi) solver; not done here to avoid a densify shortcut. Tracked in REMAINING.md.
+- **New deps:** `image` 0.25 (fm-io). **Regression tests:** 6 in `fm-builtins` (N-D base-conv,
+  fitfun, gausfit, sparse-assign, sparse-lu-error, single-complex scatter) + 1 in `fm-io` (BMP
+  round-trip). Full workspace test suite green (400 tests).
+
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,
   no GUI. Debug *engine* lives in `fm-interp`; new crates `fm-dap` (+ optional `fm-lsp`).

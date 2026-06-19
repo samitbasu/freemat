@@ -47,6 +47,9 @@ pub fn register(table: &mut FunctionTable) {
     table.add_builtin("fft2", |_i, a, _n| fft::fft2(a, false));
     table.add_builtin("ifft2", |_i, a, _n| fft::fft2(a, true));
     // Regex.
+    table.add_builtin("imwrite", |_i, a, _n| crate::image_io::imwrite(a));
+    table.add_builtin("imread", |_i, a, _n| crate::image_io::imread(a));
+
     table.add_builtin("regexp", |_i, a, n| regexp::regexp(a, false, n));
     table.add_builtin("regexpi", |_i, a, n| regexp::regexp(a, true, n));
     table.add_builtin("regexprep", |_i, a, n| regexp::regexprep(a, n));
@@ -541,7 +544,11 @@ fn b_which(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
         return err("which: name required");
     }
     let name = args[0].as_string().unwrap_or_default();
-    // A loaded/registered function.
+    // A function loaded from an `.m` file: report its path (FreeMat behaviour).
+    if let Some(path) = i.functions.source_path(&name) {
+        return Ok(vec![Array::char_string(&path)]);
+    }
+    // A loaded/registered function with no backing file (builtin / embedded).
     if i.functions.contains(&name) {
         return Ok(vec![Array::char_string(&format!(
             "{name} is a built-in function"
