@@ -12,9 +12,10 @@
 //! the magnitudes the test corpus exercises.
 //!
 //! Stored entries are kept in **column order, ascending row within a column**,
-//! with no explicit zeros (canonical CSC). Complex sparse and sparse
-//! eigensolvers (ARPACK) are partly supported here for round-tripping; heavy
-//! complex linear algebra is densified by the interpreter/builtins layer.
+//! with no explicit zeros (canonical CSC). Real and complex sparse are both
+//! first-class: arithmetic, transpose/conjugate, elementwise multiply, diag,
+//! repmat, and mat-vec stay sparse here, while the `fm-linalg` layer solves
+//! sparse systems (`\`) and eigenproblems (`eigs`) natively without densifying.
 
 use crate::class::DataClass;
 use crate::complex::C64;
@@ -601,6 +602,234 @@ impl SparseMatrix {
     }
 }
 
+impl SparseMatrix {
+    /// Conjugate (Hermitian) transpose: structural transpose with the imaginary
+    /// parts negated. (Plain [`SparseMatrix::transpose`] is non-conjugate.)
+    #[must_use]
+    pub fn conjugate_transpose(&self) -> SparseMatrix {
+        let t = self.transpose();
+        match t.im {
+            Some(im) => {
+                let neg = im.iter().map(|v| -v).collect();
+                Self::build(
+                    t.rows,
+                    t.cols,
+                    t.class,
+                    t.col_ptr,
+                    t.row_idx,
+                    t.re,
+                    Some(neg),
+                )
+            }
+            None => t,
+        }
+    }
+
+    /// Real part as a (real) sparse matrix; purely-imaginary entries prune out.
+    #[must_use]
+    pub fn real_part(&self) -> SparseMatrix {
+        Self::from_csc_raw(
+            self.rows,
+            self.cols,
+            self.class,
+            self.col_ptr.clone(),
+            self.row_idx.clone(),
+            self.re.clone(),
+            None,
+        )
+    }
+
+    /// Imaginary part as a (real) sparse matrix; a real matrix yields all zeros.
+    #[must_use]
+    pub fn imag_part(&self) -> SparseMatrix {
+        let re = self.im.clone().unwrap_or_else(|| vec![0.0; self.nnz()]);
+        Self::from_csc_raw(
+            self.rows,
+            self.cols,
+            self.class,
+            self.col_ptr.clone(),
+            self.row_idx.clone(),
+            re,
+            None,
+        )
+    }
+
+    /// Complex conjugate (negate the imaginary part), staying sparse.
+    #[must_use]
+    pub fn conj(&self) -> SparseMatrix {
+        match &self.im {
+            None => self.clone(),
+            Some(im) => Self::build(
+                self.rows,
+                self.cols,
+                self.class,
+                self.col_ptr.clone(),
+                self.row_idx.clone(),
+                self.re.clone(),
+                Some(im.iter().map(|v| -v).collect()),
+            ),
+        }
+    }
+
+    /// Element-wise multiply `A .* B` (pattern intersection — a product is
+    /// nonzero only where both operands are), staying sparse.
+    ///
+    /// # Errors
+    /// Returns `Err` on a dimension mismatch.
+    pub fn emul(&self, b: &SparseMatrix) -> Result<SparseMatrix, String> {
+        if self.rows != b.rows || self.cols != b.cols {
+            return Err(format!(
+                "matrix dimensions must agree: {}x{} vs {}x{}",
+                self.rows, self.cols, b.rows, b.cols
+            ));
+        }
+        let complex = self.im.is_some() || b.im.is_some();
+        let class = result_class(self.class, b.class);
+        let mut col_ptr = Vec::with_capacity(self.cols + 1);
+        let mut row_idx = Vec::new();
+        let mut vre = Vec::new();
+        let mut vim: Option<Vec<f64>> = if complex { Some(Vec::new()) } else { None };
+        col_ptr.push(0);
+        for j in 0..self.cols {
+            let (mut ka, ae) = (self.col_ptr[j], self.col_ptr[j + 1]);
+            let (mut kb, be) = (b.col_ptr[j], b.col_ptr[j + 1]);
+            // Merge the two sorted columns, emitting only matched rows.
+            while ka < ae && kb < be {
+                let ra = self.row_idx[ka];
+                let rb = b.row_idx[kb];
+                if ra < rb {
+                    ka += 1;
+                } else if rb < ra {
+                    kb += 1;
+                } else {
+                    let (are, aim) = (self.re[ka], self.im.as_ref().map_or(0.0, |v| v[ka]));
+                    let (bre, bim) = (b.re[kb], b.im.as_ref().map_or(0.0, |v| v[kb]));
+                    let pr = are * bre - aim * bim;
+                    let pi = are * bim + aim * bre;
+                    if pr != 0.0 || pi != 0.0 {
+                        row_idx.push(ra);
+                        vre.push(pr);
+                        if let Some(iv) = vim.as_mut() {
+                            iv.push(pi);
+                        }
+                    }
+                    ka += 1;
+                    kb += 1;
+                }
+            }
+            col_ptr.push(row_idx.len());
+        }
+        Ok(Self::build(
+            self.rows, self.cols, class, col_ptr, row_idx, vre, vim,
+        ))
+    }
+
+    /// Extract the `k`-th diagonal as a dense `(re, im?, len)` triple (k>0 above,
+    /// k<0 below the main diagonal), matching `diag`'s convention.
+    #[must_use]
+    pub fn get_diagonal(&self, k: i64) -> (Vec<f64>, Option<Vec<f64>>, usize) {
+        let (rows, cols) = (self.rows as i64, self.cols as i64);
+        let (r0, c0) = if k >= 0 { (0i64, k) } else { (-k, 0i64) };
+        let len = ((rows - r0).min(cols - c0)).max(0) as usize;
+        let mut re = vec![0.0; len];
+        let mut im = if self.im.is_some() {
+            Some(vec![0.0; len])
+        } else {
+            None
+        };
+        for t in 0..len {
+            let (rv, iv) = self.get((r0 as usize) + t, (c0 as usize) + t);
+            re[t] = rv;
+            if let Some(m) = im.as_mut() {
+                m[t] = iv;
+            }
+        }
+        (re, im, len)
+    }
+
+    /// Build a sparse matrix with the given vector on its `k`-th diagonal
+    /// (`diag(v, k)`), sized `(n+|k|) x (n+|k|)`.
+    #[must_use]
+    pub fn from_diagonal(re: &[f64], im: Option<&[f64]>, k: i64, class: DataClass) -> SparseMatrix {
+        let n = re.len();
+        let dim = n + k.unsigned_abs() as usize;
+        let complex = im.is_some();
+        // Each diagonal element sits in a distinct column; record per-column.
+        let mut entry_for_col: Vec<Option<(usize, f64, f64)>> = vec![None; dim];
+        for t in 0..n {
+            let (r, c) = if k >= 0 {
+                (t, t + k as usize)
+            } else {
+                (t + (-k) as usize, t)
+            };
+            entry_for_col[c] = Some((r, re[t], im.map_or(0.0, |v| v[t])));
+        }
+        let mut col_ptr = vec![0usize; dim + 1];
+        let mut row_idx = Vec::with_capacity(n);
+        let mut vre = Vec::with_capacity(n);
+        let mut vim: Option<Vec<f64>> = if complex {
+            Some(Vec::with_capacity(n))
+        } else {
+            None
+        };
+        for c in 0..dim {
+            if let Some((r, rr, ii)) = entry_for_col[c]
+                && (rr != 0.0 || ii != 0.0)
+            {
+                row_idx.push(r);
+                vre.push(rr);
+                if let Some(v) = vim.as_mut() {
+                    v.push(ii);
+                }
+            }
+            col_ptr[c + 1] = row_idx.len();
+        }
+        Self::build(dim, dim, class, col_ptr, row_idx, vre, vim)
+    }
+
+    /// Tile this matrix `p` times down and `q` times across (`repmat(A, p, q)`).
+    #[must_use]
+    pub fn repmat(&self, p: usize, q: usize) -> SparseMatrix {
+        let (rows, cols) = (self.rows, self.cols);
+        let complex = self.im.is_some();
+        let mut col_ptr = Vec::with_capacity(cols * q + 1);
+        let mut row_idx = Vec::new();
+        let mut vre = Vec::new();
+        let mut vim: Option<Vec<f64>> = if complex { Some(Vec::new()) } else { None };
+        col_ptr.push(0);
+        for _bj in 0..q {
+            for j in 0..cols {
+                // Row-block `bi` ascending keeps rows sorted within the column.
+                for bi in 0..p {
+                    for k in self.col_ptr[j]..self.col_ptr[j + 1] {
+                        row_idx.push(self.row_idx[k] + bi * rows);
+                        vre.push(self.re[k]);
+                        if let (Some(v), Some(s)) = (vim.as_mut(), self.im.as_ref()) {
+                            v.push(s[k]);
+                        }
+                    }
+                }
+                col_ptr.push(row_idx.len());
+            }
+        }
+        Self::build(rows * p, cols * q, self.class, col_ptr, row_idx, vre, vim)
+    }
+
+    /// Sparse·dense matrix-vector product `y = A x` (complex lanes), used by the
+    /// iterative eigensolver. `x` has length `cols`; the result has length `rows`.
+    #[must_use]
+    pub fn matvec(&self, x: &[C64]) -> Vec<C64> {
+        let mut y = vec![C64::new(0.0, 0.0); self.rows];
+        for (j, &xj) in x.iter().enumerate().take(self.cols) {
+            for k in self.col_ptr[j]..self.col_ptr[j + 1] {
+                let v = C64::new(self.re[k], self.im.as_ref().map_or(0.0, |m| m[k]));
+                y[self.row_idx[k]] += v * xj;
+            }
+        }
+        y
+    }
+}
+
 /// Result class for a binary op between two sparse classes (double-dominant,
 /// matching FreeMat's promotion for sparse results which are always float/double).
 fn result_class(a: DataClass, b: DataClass) -> DataClass {
@@ -700,5 +929,94 @@ mod tests {
         assert_eq!(i, vec![2.0, 1.0]);
         assert_eq!(j, vec![1.0, 2.0]);
         assert_eq!(v, vec![5.0, 7.0]);
+    }
+
+    #[test]
+    fn emul_intersection() {
+        // A = [1 0 3; 0 2 0], B = [4 0 5; 0 6 0]; A.*B = [4 0 15; 0 12 0].
+        let a = SparseMatrix::from_dense_cols(
+            2,
+            3,
+            DataClass::Double,
+            &[1.0, 0.0, 0.0, 2.0, 3.0, 0.0],
+            None,
+        );
+        let b = SparseMatrix::from_dense_cols(
+            2,
+            3,
+            DataClass::Double,
+            &[4.0, 0.0, 0.0, 6.0, 5.0, 0.0],
+            None,
+        );
+        let c = a.emul(&b).unwrap();
+        assert_eq!(c.to_dense_cols().0, vec![4.0, 0.0, 0.0, 12.0, 15.0, 0.0]);
+    }
+
+    #[test]
+    fn conj_and_conjugate_transpose() {
+        // [1+2i, 0; 0, 3-1i] (col-major re=[1,0,0,3], im=[2,0,0,-1]).
+        let s = SparseMatrix::from_dense_cols(
+            2,
+            2,
+            DataClass::Double,
+            &[1.0, 0.0, 0.0, 3.0],
+            Some(&[2.0, 0.0, 0.0, -1.0]),
+        );
+        assert_eq!(s.conj().get(0, 0), (1.0, -2.0));
+        let ct = s.conjugate_transpose();
+        assert_eq!(ct.get(0, 0), (1.0, -2.0));
+        assert_eq!(ct.get(1, 1), (3.0, 1.0));
+        // real/imag parts drop the other component and prune.
+        assert_eq!(s.real_part().get(1, 1), (3.0, 0.0));
+        assert!(!s.real_part().is_complex());
+        assert_eq!(s.imag_part().get(1, 1), (-1.0, 0.0));
+    }
+
+    #[test]
+    fn diag_build_and_extract() {
+        let d = SparseMatrix::from_diagonal(&[1.0, 2.0, 3.0], None, 0, DataClass::Double);
+        assert_eq!(d.dims(), [3, 3]);
+        assert_eq!(d.get(1, 1), (2.0, 0.0));
+        assert_eq!(d.nnz(), 3);
+        // Super-diagonal build (k=1) → 4x4.
+        let d1 = SparseMatrix::from_diagonal(&[7.0, 8.0, 9.0], None, 1, DataClass::Double);
+        assert_eq!(d1.dims(), [4, 4]);
+        assert_eq!(d1.get(0, 1), (7.0, 0.0));
+        // Extract from a matrix.
+        let m = SparseMatrix::from_dense_cols(
+            3,
+            3,
+            DataClass::Double,
+            &[1.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 9.0],
+            None,
+        );
+        let (re, im, len) = m.get_diagonal(0);
+        assert_eq!((re, im, len), (vec![1.0, 5.0, 9.0], None, 3));
+    }
+
+    #[test]
+    fn repmat_tiles() {
+        // [1 0; 0 2] tiled 2x1 → 4x2.
+        let s = SparseMatrix::from_dense_cols(2, 2, DataClass::Double, &[1.0, 0.0, 0.0, 2.0], None);
+        let r = s.repmat(2, 1);
+        assert_eq!(r.dims(), [4, 2]);
+        assert_eq!(r.get(0, 0), (1.0, 0.0));
+        assert_eq!(r.get(2, 0), (1.0, 0.0));
+        assert_eq!(r.get(3, 1), (2.0, 0.0));
+        assert_eq!(r.nnz(), 4);
+    }
+
+    #[test]
+    fn matvec_matches_dense() {
+        // A = [1 0 3; 0 2 0]; x = [1; 1; 1]; A*x = [4; 2].
+        let a = SparseMatrix::from_dense_cols(
+            2,
+            3,
+            DataClass::Double,
+            &[1.0, 0.0, 0.0, 2.0, 3.0, 0.0],
+            None,
+        );
+        let y = a.matvec(&[C64::new(1.0, 0.0), C64::new(1.0, 0.0), C64::new(1.0, 0.0)]);
+        assert_eq!(y, vec![C64::new(4.0, 0.0), C64::new(2.0, 0.0)]);
     }
 }

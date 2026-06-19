@@ -174,6 +174,10 @@ impl SignumZero for f64 {
 fn b_conj(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     need(args, 1, "conj")?;
     let a = &args[0];
+    // Sparse stays sparse (negate the imaginary part).
+    if let Some(s) = a.as_sparse() {
+        return Ok(vec![Array::sparse(s.conj())]);
+    }
     if !a.is_complex() {
         return Ok(vec![a.clone()]);
     }
@@ -185,6 +189,9 @@ fn b_conj(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
 fn b_real(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     need(args, 1, "real")?;
     let a = &args[0];
+    if let Some(s) = a.as_sparse() {
+        return Ok(vec![Array::sparse(s.real_part())]);
+    }
     let dims = a.dims();
     let data = to_c64_vec(a).into_iter().map(|z| z.re).collect();
     Ok(vec![build_real(DataClass::Double, &dims, data)])
@@ -193,6 +200,9 @@ fn b_real(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
 fn b_imag(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     need(args, 1, "imag")?;
     let a = &args[0];
+    if let Some(s) = a.as_sparse() {
+        return Ok(vec![Array::sparse(s.imag_part())]);
+    }
     let dims = a.dims();
     let data = to_c64_vec(a).into_iter().map(|z| z.im).collect();
     Ok(vec![build_real(DataClass::Double, &dims, data)])

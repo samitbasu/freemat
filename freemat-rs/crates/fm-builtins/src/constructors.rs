@@ -168,6 +168,15 @@ fn b_repmat(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>>
     let rp: Vec<usize> = (0..rank)
         .map(|i| reps.get(i).copied().unwrap_or(1))
         .collect();
+
+    // Sparse stays sparse for 2-D tiling (a sparse matrix is 2-D; any higher
+    // replication count would make it N-D, which falls through to the dense path).
+    if let Some(s) = a.as_sparse()
+        && rp.iter().skip(2).all(|&x| x == 1)
+    {
+        return Ok(vec![Array::sparse(s.repmat(rp[0], rp[1]))]);
+    }
+
     let out_dims: Vec<usize> = sd.iter().zip(&rp).map(|(&s, &r)| s * r).collect();
     let out_total: usize = out_dims.iter().product();
 
@@ -245,6 +254,36 @@ fn b_diag(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     };
     let (r, c) = (dims[0], dims[1]);
     let is_vector = r == 1 || c == 1;
+
+    // Sparse stays sparse: a vector *builds* a sparse diagonal; a matrix
+    // *extracts* the k-th diagonal as a dense column (matching FreeMat).
+    if let Some(s) = a.as_sparse() {
+        if is_vector {
+            let (re, im) = if a.is_complex() {
+                let cv = fm_interp::value::to_c64_vec(a);
+                (
+                    cv.iter().map(|z| z.re).collect::<Vec<_>>(),
+                    Some(cv.iter().map(|z| z.im).collect::<Vec<_>>()),
+                )
+            } else {
+                (to_f64_vec(a), None)
+            };
+            let diag = fm_core::SparseMatrix::from_diagonal(&re, im.as_deref(), k, s.class());
+            return Ok(vec![Array::sparse(diag)]);
+        }
+        let (re, im, len) = s.get_diagonal(k);
+        let out = match im {
+            Some(imv) => fm_interp::value::build_complex(
+                &[len, 1],
+                re.iter()
+                    .zip(&imv)
+                    .map(|(&rr, &ii)| fm_core::C64::new(rr, ii))
+                    .collect(),
+            ),
+            None => build_real(s.class(), &[len, 1], re),
+        };
+        return Ok(vec![out]);
+    }
 
     if is_vector {
         // Build an M×M matrix placing the vector on the k-th diagonal.

@@ -127,8 +127,12 @@ fn sparse_binary(op: BinaryOp, lhs: &Array, rhs: &Array) -> Flow<Option<Array>> 
             (Some(a), None) if r_scalar.is_some() => Ok(Some(scale(a, r_scalar.unwrap()))),
             _ => Ok(None),
         },
-        // scalar .* sparse → scaled sparse.
+        // sparse .* sparse → sparse (pattern intersection); scalar .* sparse → scaled sparse.
         ElMul => match (l_sp, r_sp) {
+            (Some(a), Some(b)) => a
+                .emul(b)
+                .map(|m| Some(Array::sparse(m)))
+                .map_err(|e| Signal::Error(InterpError::msg(e))),
             (None, Some(b)) if l_scalar.is_some() => Ok(Some(scale(b, l_scalar.unwrap()))),
             (Some(a), None) if r_scalar.is_some() => Ok(Some(scale(a, r_scalar.unwrap()))),
             _ => Ok(None),
