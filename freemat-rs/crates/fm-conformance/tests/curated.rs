@@ -122,15 +122,18 @@ const CURATED: &[&str] = &[
     "handle/test_image1",
     "handle/test_contour1",
     // Stage 9 — sparse matrices (deterministic, no PRNG)
-    "sparse/test_sparse1",  // sparse↔full round-trip, all classes
-    "sparse/test_sparse2",  // sparse concatenation [A;B], [C,D]
-    "sparse/test_sparse3",  // sparse concatenation (single)
-    "sparse/test_sparse7",  // sparse linear indexing A(b)
-    "sparse/test_sparse15", // sparse 2-D indexing A(i,j)
-    "sparse/test_sparse18", // complex sparse 2-D indexing
-    "sparse/test_sparse27", // sparse linear-index assignment A(p) = scalar
-    "sparse/test_sparse28", // sparse linear-index assignment A(p) = vector
-    "sparse/test_sparse29", // linear-grow-past-end flattens (was a panic)
+    "sparse/test_sparse1",     // sparse↔full round-trip, all classes
+    "sparse/test_sparse2",     // sparse concatenation [A;B], [C,D]
+    "sparse/test_sparse3",     // sparse concatenation (single)
+    "sparse/test_sparse7",     // sparse linear indexing A(b)
+    "sparse/test_sparse15",    // sparse 2-D indexing A(i,j)
+    "sparse/test_sparse18",    // complex sparse 2-D indexing
+    "sparse/test_sparse27",    // sparse linear-index assignment A(p) = scalar
+    "sparse/test_sparse28",    // sparse linear-index assignment A(p) = vector
+    "sparse/test_sparse29",    // linear-grow-past-end flattens (was a panic)
+    "sparse/test_sparse45",    // eigs(A,k,sigma) — sparse shift-invert Arnoldi
+    "operators/test_sparse41", // sparse .* sparse stays sparse
+    "operators/test_sparse82", // sparse \\ (native sp_lu/sp_qr solve)
     // Correctness-bug pass — deterministic regressions for fixed root causes.
     // (These live in the *smaller* dirs so the per-test directory reload stays
     // cheap; the big `array`/`suite` gains are covered by the full-suite floor.)
@@ -225,7 +228,11 @@ fn curated_subset_passes() {
 /// N-D `int2bin`/`bin2int`, sparse-preserving indexed assignment + sparse-`lu`
 /// errors, `imwrite`/`imread`, single-complex scatter fix) raised the live total
 /// to 670/677 (99.0%).
-const PASS_FLOOR: usize = 665;
+///
+/// The sparse de-densification (native sparse `\`/`eigs`, sparsity-preserving
+/// `.*`/`real`/`imag`/`conj`/`'`/`diag`/`repmat`) raised it to 672/677 (99.3%)
+/// by adding `eigs` (`test_sparse45`).
+const PASS_FLOOR: usize = 668;
 
 /// **Fast pass-floor guard (gates `cargo test`).** Running the *whole* covered
 /// corpus takes minutes (it spins up a fresh interpreter and re-parses every

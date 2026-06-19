@@ -13,6 +13,7 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("inv", b_inv);
     table.add_builtin("det", b_det);
     table.add_builtin("eig", b_eig);
+    table.add_builtin("eigs", b_eigs);
     table.add_builtin("svd", b_svd);
     table.add_builtin("lu", b_lu);
     table.add_builtin("qr", b_qr);
@@ -104,6 +105,34 @@ fn b_eig(_i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array
 fn b_svd(_i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
     need(args, 1, "svd")?;
     fm_linalg::svd(&args[0], nargout).map_err(wrap)
+}
+
+/// `eigs(A, k, sigma)` — a subset of the (sparse) matrix `A`'s eigenvalues.
+/// `k` defaults to 6; the third argument is either a numeric shift `sigma`
+/// (eigenvalues nearest it) or a mode string (`'lm'`/`'sm'`/`'lr'`/`'sr'`/
+/// `'li'`/`'si'`), defaulting to largest magnitude (`'lm'`).
+fn b_eigs(_i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
+    use fm_linalg::EigsWhich;
+    need(args, 1, "eigs")?;
+    let k = args
+        .get(1)
+        .and_then(Array::as_f64)
+        .map_or(6, |v| v as usize);
+    let which = match args.get(2) {
+        None => EigsWhich::LargeMag,
+        Some(s) if s.class() == DataClass::Char => {
+            match s.as_string().unwrap_or_default().to_lowercase().as_str() {
+                "sm" => EigsWhich::SmallMag,
+                "lr" | "la" => EigsWhich::LargeReal,
+                "sr" | "sa" => EigsWhich::SmallReal,
+                "li" => EigsWhich::LargeImag,
+                "si" => EigsWhich::SmallImag,
+                _ => EigsWhich::LargeMag,
+            }
+        }
+        Some(s) => EigsWhich::Nearest(s.as_f64().unwrap_or(0.0)),
+    };
+    fm_linalg::eigs(&args[0], k, which, nargout.max(1)).map_err(wrap)
 }
 
 fn b_lu(_i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {

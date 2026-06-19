@@ -1436,6 +1436,36 @@ eigenproblem `eig(A,B)`. **Conformance 650/677 (96.0%) → 658/677 (97.2%), Δ +
   fitfun, gausfit, sparse-assign, sparse-lu-error, single-complex scatter) + 1 in `fm-io` (BMP
   round-trip). Full workspace test suite green (400 tests).
 
+### Sparse de-densification — native `\`/`eigs` + sparsity-preserving ops
+- **Conformance: 670/677 (99.0%) → 672/677 (99.3%), Δ +2 (no regressions).** Cleared the last
+  addressable gap (`eigs`, `test_sparse45` ×2); the 5 still-red are all out-of-scope. Driven by an
+  equivalence audit: where original FreeMat used a true sparse algorithm, freemat-rs now does too
+  (no densification); where FreeMat itself densified/errored, our behavior already matches.
+- **Native sparse `\` / `/`** (`fm-linalg::sparse_solve`) — `mldivide`/`mrdivide` branch on a sparse
+  left operand and solve through faer's sparse LU (square) or sparse QR least-squares (rectangular)
+  **without densifying `A`**; only the dense rhs is built, result is dense (matching FreeMat). Real
+  solved in `f64`, complex in `c64`; singular → error. Was: densify-then-dense-LU.
+- **`eigs`** (`fm-linalg::eigs`) — pure-Rust **shift-invert Arnoldi**, the ARPACK role with **no
+  native dependency**. OP is a sparse mat-vec (`A·x`) or a sparse solve `(A−σI)⁻¹·x` (faer `sp_lu`);
+  Krylov dim `ncv = min(n, max(2k+1,20))` (ARPACK's default, so small systems get a full/exact
+  Krylov); Ritz values via the existing dense `eig` of the small Hessenberg; `λ = σ + 1/θ`; select k
+  by criterion (nearest-σ / lm / sm / lr / sr / li / si). nargout 1 → eigenvalues, 2 → `[V,D]`.
+  (The high-level `arpack-ng` crate was rejected: dense/complex/extremal-only, no shift-invert;
+  `arpack-ng-sys` would add libarpack/BLAS/LAPACK/bindgen system deps — kept the build hermetic.)
+- **Sparsity-preserving ops** — new `SparseMatrix` methods (`emul`, `conjugate_transpose`,
+  `real_part`/`imag_part`/`conj`, `get_diagonal`/`from_diagonal`, `repmat`, `matvec`) wired into
+  `ops.rs` (`.*` sparse·sparse), `interp.rs` (conjugate transpose `'`), `elementary.rs`
+  (`real`/`imag`/`conj`), `constructors.rs` (`diag`, `repmat`). All keep results sparse instead of
+  densifying. (Numerically these already passed via densify — `testeq` compares `full(a)-full(b)` —
+  so the win is memory/behavior, not new conformance passes.)
+- **Kept densify-fallback (matches FreeMat result):** factor-returning `lu`/`det` on sparse (faer's
+  sparse `Lu` exposes no L/U/P factors); `inv`/`chol`/`qr`/`svd`/`eig`/reductions/comparisons on
+  sparse (FreeMat densifies these too). Tracked in `docs/REMAINING.md`.
+- **Deps:** none new (faer's sparse module was already available; arpack rejected). **Tests:**
+  fm-core (emul, conj/ctranspose, diag build/extract, repmat, matvec), fm-linalg (sparse solve
+  real+complex vs dense, singular→Err, `eigs` nearest-σ vs dense `eig`). **PASS_FLOOR 665 → 668**;
+  curated gained `sparse/test_sparse45`, `operators/test_sparse41`, `operators/test_sparse82`.
+
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,
   no GUI. Debug *engine* lives in `fm-interp`; new crates `fm-dap` (+ optional `fm-lsp`).

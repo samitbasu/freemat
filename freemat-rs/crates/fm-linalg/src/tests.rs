@@ -411,3 +411,29 @@ fn sparse_mldivide_singular_errors() {
     let b = mat(2, 1, &[1.0, 2.0]);
     assert!(mldivide(&sp, &b).is_err());
 }
+
+#[test]
+fn sparse_eigs_nearest_sigma_matches_dense() {
+    // Symmetric tridiagonal 5x5 (real spectrum); the 2 eigenvalues nearest 2.5
+    // must each equal some eigenvalue of the dense matrix.
+    let d = [
+        4.0, 1.0, 0.0, 0.0, 0.0, // col 0
+        1.0, 3.0, 1.0, 0.0, 0.0, // col 1
+        0.0, 1.0, 2.0, 1.0, 0.0, // col 2
+        0.0, 0.0, 1.0, 3.0, 1.0, // col 3
+        0.0, 0.0, 0.0, 1.0, 4.0, // col 4
+    ];
+    let dense = mat(5, 5, &d);
+    let sp = sparse_real(5, 5, &d);
+    let out = eigs(&sp, 2, EigsWhich::Nearest(2.5), 1).unwrap();
+    let got = to_c64(&out[0]);
+    assert_eq!(got.len(), 2);
+    let all = to_c64(&eig(&dense, 1).unwrap()[0]);
+    for g in &got {
+        let nearest = all
+            .iter()
+            .map(|e| (e - g).norm())
+            .fold(f64::INFINITY, f64::min);
+        assert!(nearest < 1e-10, "eigs value {g:?} not an eigenvalue of A");
+    }
+}

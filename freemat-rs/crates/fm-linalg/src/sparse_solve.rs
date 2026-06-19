@@ -12,7 +12,7 @@ use fm_core::SparseMatrix;
 use super::{LinalgError, MatData, Result, finish};
 
 /// Build a faer complex sparse matrix from our canonical CSC arrays.
-fn to_faer_c64(s: &SparseMatrix) -> Result<SparseColMat<usize, c64>> {
+pub(crate) fn to_faer_c64(s: &SparseMatrix) -> Result<SparseColMat<usize, c64>> {
     let (rows, cols) = (s.rows(), s.cols());
     let (re, im, row_idx, col_ptr) = (s.re(), s.im(), s.row_idx(), s.col_ptr());
     let mut entries: Vec<Triplet<usize, usize, c64>> = Vec::with_capacity(re.len());

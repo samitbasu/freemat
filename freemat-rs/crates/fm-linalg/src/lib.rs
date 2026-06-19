@@ -25,8 +25,10 @@ use faer::linalg::solvers::{Eigen, GeneralizedEigen, Llt, Solve, SolveLstsq, Svd
 use faer::{Mat, MatRef, Side, c64};
 use fm_core::{Array, C64};
 
+mod eigs;
 mod error;
 mod sparse_solve;
+pub use eigs::{EigsWhich, eigs};
 pub use error::LinalgError;
 
 /// A linalg result.
