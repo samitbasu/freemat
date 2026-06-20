@@ -16,6 +16,10 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let show_failures = args.iter().any(|a| a == "--failures");
     let show_passes = args.iter().any(|a| a == "--passes");
+    if args.iter().any(|a| a == "--timing") {
+        run_timing(&args);
+        return;
+    }
     let only: Vec<&str> = args
         .iter()
         .filter(|a| !a.starts_with("--"))
@@ -107,5 +111,65 @@ fn main() {
         for line in failure_lines {
             println!("{line}");
         }
+    }
+}
+
+/// `--timing` mode: measure per-test execution time and emit machine-readable
+/// CSV on stdout (`dir,name,outcome,reps,ns_per_iter`), one row per test, so an
+/// external script can join it against the original-FreeMat timings.
+///
+/// Usage: `fm-conformance --timing [--budget-ms N] [--max-reps N] [DIR...]`.
+fn run_timing(args: &[String]) {
+    let parse_opt = |flag: &str, default: u64| -> u64 {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    };
+    let budget_ms = parse_opt("--budget-ms", 100);
+    let max_reps = parse_opt("--max-reps", 200_000);
+    let budget = std::time::Duration::from_millis(budget_ms);
+
+    let skip_next: std::collections::HashSet<usize> = args
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| *a == "--budget-ms" || *a == "--max-reps")
+        .map(|(i, _)| i + 1)
+        .collect();
+    let only: Vec<&str> = args
+        .iter()
+        .enumerate()
+        .filter(|(i, a)| !a.starts_with("--") && !skip_next.contains(i))
+        .map(|(_, a)| a.as_str())
+        .collect();
+    let dirs: Vec<&str> = if only.is_empty() {
+        COVERED_DIRS.to_vec()
+    } else {
+        only
+    };
+
+    eprintln!(
+        "# fm-conformance timing: budget={budget_ms}ms max_reps={max_reps} dirs={}",
+        dirs.len()
+    );
+    println!("dir,name,outcome,reps,ns_per_iter");
+    for d in &dirs {
+        for t in fm_conformance::time_dir(d, budget, max_reps) {
+            let outcome = match t.outcome {
+                Outcome::Pass => "pass",
+                Outcome::Fail => "fail",
+                Outcome::Error => "error",
+            };
+            println!(
+                "{},{},{},{},{:.1}",
+                t.dir,
+                t.name,
+                outcome,
+                t.reps,
+                t.ns_per_iter()
+            );
+        }
+        eprintln!("# done {d}");
     }
 }

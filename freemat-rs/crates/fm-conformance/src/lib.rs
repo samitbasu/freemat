@@ -164,6 +164,125 @@ pub fn run_test_file(path: &Path) -> (Outcome, String) {
     }
 }
 
+/// Timing for one test: the outcome of its (first) run plus the per-iteration
+/// execution time measured by repeating the call under a fixed time budget.
+#[derive(Debug, Clone)]
+pub struct Timing {
+    /// Directory (relative to the test root), e.g. `"flow"`.
+    pub dir: String,
+    /// Test function name, e.g. `"test_for1"`.
+    pub name: String,
+    /// Outcome of the first (timed-warmup) call.
+    pub outcome: Outcome,
+    /// Number of times the test function was invoked while timing.
+    pub reps: u64,
+    /// Total wall-clock nanoseconds spent in the timing loop.
+    pub total_ns: u128,
+}
+
+impl Timing {
+    /// Mean per-invocation execution time, in nanoseconds (0 if not timed).
+    #[must_use]
+    pub fn ns_per_iter(&self) -> f64 {
+        if self.reps == 0 {
+            0.0
+        } else {
+            self.total_ns as f64 / self.reps as f64
+        }
+    }
+}
+
+/// Run a single test file and measure its per-invocation execution time.
+///
+/// Setup (building the interpreter, registering the standard library, defining
+/// the directory's `.m` files) is performed **once and excluded** from the
+/// measurement — only the repeated `call_function` is timed, mirroring how the
+/// original FreeMat driver times the test body with `tic`/`toc` and not process
+/// startup. The function is invoked in a loop until `budget` elapses (or
+/// `max_reps` is reached), so fast tests self-calibrate to many iterations and
+/// slow tests to few; the comparable figure is [`Timing::ns_per_iter`].
+///
+/// Tests that error (or panic) on their first call are not timed (`reps == 0`).
+#[must_use]
+pub fn time_test_file(
+    path: &Path,
+    dir_name: &str,
+    budget: std::time::Duration,
+    max_reps: u64,
+) -> Timing {
+    use std::time::Instant;
+
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+
+    let mut interp = Interpreter::new();
+    fm_builtins::register_standard_library(&mut interp);
+    let helpers = test_root().join("_helpers");
+    define_dir(&mut interp, &helpers);
+    define_dir(&mut interp, &dir);
+
+    let entry = interp
+        .load_file_main(path)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| stem.clone());
+
+    let call = |interp: &mut Interpreter| {
+        std::panic::catch_unwind(AssertUnwindSafe(|| {
+            interp.call_function(&entry, &[], 1, "", Span::empty(0))
+        }))
+    };
+
+    // First call: classify the outcome (and warm any lazy initialization).
+    let outcome = match call(&mut interp) {
+        Err(_) => Outcome::Error,
+        Ok(Err(_)) => Outcome::Error,
+        Ok(Ok(outputs)) => match outputs.first() {
+            None => Outcome::Fail,
+            Some(v) => match fm_interp::value::truth(v) {
+                Ok(true) => Outcome::Pass,
+                _ => Outcome::Fail,
+            },
+        },
+    };
+
+    let mut reps = 0u64;
+    let mut total_ns = 0u128;
+    if outcome != Outcome::Error {
+        let start = Instant::now();
+        loop {
+            let _ = call(&mut interp);
+            reps += 1;
+            if start.elapsed() >= budget || reps >= max_reps {
+                break;
+            }
+        }
+        total_ns = start.elapsed().as_nanos();
+    }
+
+    Timing {
+        dir: dir_name.to_string(),
+        name: stem,
+        outcome,
+        reps,
+        total_ns,
+    }
+}
+
+/// Time every test in a single named directory of the corpus.
+#[must_use]
+pub fn time_dir(name: &str, budget: std::time::Duration, max_reps: u64) -> Vec<Timing> {
+    let dir = test_root().join(name);
+    test_files_in(&dir)
+        .into_iter()
+        .map(|p| time_test_file(&p, name, budget, max_reps))
+        .collect()
+}
+
 /// Define every `.m` file in a directory (ignoring read/parse errors so one
 /// bad helper does not abort the whole directory).
 fn define_dir(interp: &mut Interpreter, dir: &Path) {
