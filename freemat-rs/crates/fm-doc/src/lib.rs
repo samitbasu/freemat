@@ -33,6 +33,7 @@
 //! (kept cheap — parsing runs in `docgen`/`--check`), and it does not implement
 //! the legacy `.doc`/`.m` converter (that is P6; see [`parser::legacy`]).
 
+mod fragment;
 mod macros;
 mod model;
 mod parser;
@@ -42,6 +43,7 @@ mod registry;
 // refer to it as `$crate::inventory` from any downstream crate.
 pub use inventory;
 
+pub use fragment::{CapturedFragment, FRAGMENTS, Fragment, fragment_by_hash};
 pub use macros::module_stem;
 pub use model::{DocEntry, DocRegistration, SectionEntry, SectionRegistration, SourceKind};
 pub use parser::{

@@ -15,6 +15,9 @@ fm-linalg = { version = "0.0.0", path = "../fm-linalg" }
 fm-parser = { version = "0.0.0", path = "../fm-parser" }
 fm-graphics = { version = "0.0.0", path = "../fm-graphics" }
 fm-io = { version = "0.0.0", path = "../fm-io" }
+# P3 smoke fixture: the `register_doc!` macro + inventory submission for the one
+# `cos` doc entry (P7 will depend on this for the full doc surface).
+fm-doc = { version = "0.0.0", path = "../fm-doc" }
 ndarray.workspace = true
 rand.workspace = true
 rand_distr.workspace = true

@@ -17,17 +17,18 @@ fm-core = { version = "0.0.0", path = "../fm-core" }
 fm-interp = { version = "0.0.0", path = "../fm-interp" }
 fm-builtins = { version = "0.0.0", path = "../fm-builtins" }
 fm-graphics = { version = "0.0.0", path = "../fm-graphics" }
+# P3: the canonical FragmentScript/CapturedFragment now live in fm-doc; the
+# capture engine consumes them so there is one shared model (no local copy).
+fm-doc = { version = "0.0.0", path = "../fm-doc" }
 rustyline.workspace = true
 miette = { workspace = true, features = ["fancy"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "net", "macros"] }
 axum = { workspace = true, features = ["ws"] }
 futures-util.workspace = true
 webbrowser.workspace = true
-# P2 help-system fragment capture: serialize FragmentScript/CapturedFragment.
-# These crates are already in [workspace.dependencies] (used by fm-graphics);
-# this only promotes serde_json from dev-deps and adds serde for the derives —
-# no new external crates and no edit to the root Cargo.toml.
-serde = { workspace = true, features = ["derive"] }
+# P2/P3 help-system fragment capture: (de)serialize FragmentScript /
+# CapturedFragment JSON for the `fm --capture-fragment` CLI path. The serde
+# *derives* now live on the types in fm-doc; fm-cli only needs serde_json here.
 serde_json.workspace = true
 
 [dev-dependencies]

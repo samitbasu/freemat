@@ -26,46 +26,18 @@
 //! run. (`tic`/`toc`/`clock`/`now` are not stubbed here — docs are expected to
 //! avoid them, per `docs/HELP_SYSTEM.md` §4.3.)
 
-// TODO(P3): unify with fm_doc::FragmentScript once fm-doc lands. The other
-// agent (P1) is concurrently creating the `fm-doc` crate which DEFINES
-// `FragmentScript`/`CapturedFragment` as the shared model. We deliberately keep
-// a local copy here (same field shapes) so P2 stays independently buildable and
-// does not race fm-doc's Cargo.toml / compile state. P3 reconciles the two.
+//! The shared `FragmentScript` / `CapturedFragment` model is owned by `fm-doc`
+//! (the single source of truth — it is what gets serialized into the generated
+//! fragment DB). This module re-uses those types directly; there is no local
+//! copy. The `fm --capture-fragment` JSON path and the in-process
+//! [`run_fragment`] API are unchanged.
 
 use std::fs;
 use std::path::PathBuf;
 
+use fm_doc::{CapturedFragment, FragmentScript};
 use fm_interp::Interpreter;
 use miette::{GraphicalReportHandler, GraphicalTheme};
-use serde::{Deserialize, Serialize};
-
-/// A scripted fragment to capture: the auxiliary files it needs on disk, the
-/// REPL input blocks to run (in order, in one session), the expected error
-/// count, and whether a figure should be captured.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct FragmentScript {
-    /// `fm-file` blocks made available on disk for the session: `(name, body)`.
-    pub files: Vec<(String, String)>,
-    /// One entry per `fm-exec` block (each may be multi-line). Run in order in
-    /// a single interpreter session; state persists across entries.
-    pub inputs: Vec<String>,
-    /// Sum of the blocks' `# errors: N` declarations (for cross-checking).
-    pub expect_errors: usize,
-    /// Whether any block was `fm-exec:figure` (capture the resulting `Scene`).
-    pub want_figure: bool,
-}
-
-/// The captured result of running a [`FragmentScript`].
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct CapturedFragment {
-    /// The exact terminal-format transcript (see module docs / §4.2).
-    pub transcript: String,
-    /// The number of errors actually raised by the session.
-    pub error_count: usize,
-    /// The captured Plotly `Scene` JSON (`Scene::to_message()`), if a figure
-    /// was requested and the session produced one.
-    pub figure: Option<String>,
-}
 
 /// The REPL prompt prefix used to echo input lines, matching `fm`'s prompt.
 const PROMPT: &str = "--> ";

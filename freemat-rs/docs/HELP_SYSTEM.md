@@ -269,14 +269,22 @@ scripts (scalars, matrices, complex, strings, errors, multi-output).
 
 ### 4.3 Caching & determinism
 
-- Key = `blake3(canonicalized fragment script)` (lib already pulls no hasher — add `blake3`
-  or reuse `rustc-hash` over a stable serialization; **blake3 recommended** for collision
-  safety across the on-disk DB). Pin the choice in P3.
-- Unchanged fragments are **not** re-run: docgen reads the existing DB, recaptures only
-  missing/changed keys.
+- Key = `blake3(canonicalized fragment script)` (`FragmentScript::content_hash`, over a
+  stable `serde_json` serialization). blake3 chosen (P3) for collision safety across the DB.
+- **Caching deferred (P3 decision).** The original plan ("unchanged fragments are not re-run;
+  docgen reads the existing DB, recaptures only missing/changed keys") is **unsound when the
+  DB *is* the generated artifact**: keying on the input hash and reusing the artifact's own
+  stored transcript lets a stale/corrupted transcript self-validate, masks interpreter output
+  drift (an unchanged input hash reuses old output forever, so `--check` stays green while the
+  committed docs no longer match the interpreter), and makes `docgen` unable to converge after
+  an engine change. So **`cargo xtask docgen` re-runs every fragment on each invocation** and
+  `--check` is therefore an honest gate. When the fragment surface is large (post-P7), a
+  proper cache may be reintroduced — but it must be a **separate store** keyed on
+  `(input hash, capture-engine version)` so engine changes bust it; it must never read back
+  the artifact under check.
 - Fragments must be **deterministic**: `rand`/`randn` seeded to a fixed value at capture
-  start; `tic`/`toc`/`clock`/`now` either avoided in docs or stubbed. docgen sets a fixed
-  RNG seed before each fragment script.
+  start (capture runs a suppressed `seed(1,0)` prelude); `tic`/`toc`/`clock`/`now` are avoided
+  in docs.
 
 ---
 

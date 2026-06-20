@@ -10,5 +10,9 @@
 pub mod capture;
 pub mod server;
 
-pub use capture::{CapturedFragment, FragmentScript, run_fragment};
+// The canonical model lives in fm-doc (P3 unification); re-exported here so the
+// fm-cli surface (`fm_cli::FragmentScript`, `fm_cli::CapturedFragment`) and the
+// `--capture-fragment` CLI path are unchanged for downstream callers.
+pub use capture::run_fragment;
+pub use fm_doc::{CapturedFragment, FragmentScript};
 pub use server::{ServerHandle, start};

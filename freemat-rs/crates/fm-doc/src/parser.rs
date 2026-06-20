@@ -14,10 +14,12 @@
 //! cross-links is layered on top.
 
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use serde::{Deserialize, Serialize};
 
 /// The shared executable model for a [`crate::DocEntry`] (§4.1). Defined here so
-/// it is the single source of truth; P2 (capture) and P3 (docgen) consume it.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// it is the single source of truth; P2 (capture, via `fm-cli`) and P3 (docgen,
+/// via `xtask`) both consume *this* type.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FragmentScript {
     /// `fm-file` blocks, in declaration order: `(name, contents)`.
     pub files: Vec<(String, String)>,
@@ -27,6 +29,25 @@ pub struct FragmentScript {
     pub expect_errors: usize,
     /// `true` if any `fm-exec:figure` block is present.
     pub want_figure: bool,
+}
+
+impl FragmentScript {
+    /// Content hash keying the generated fragment DB (§4.3): the lowercase hex
+    /// `blake3` digest of a canonical, stable serialization of the script.
+    ///
+    /// Canonicalization uses `serde_json` over the field-ordered struct (serde
+    /// preserves declaration order, and `Vec`s preserve element order), so the
+    /// same script always hashes identically across runs and machines, giving
+    /// stable git diffs and a reliable cache key. `expect_errors` /
+    /// `want_figure` participate so a doc edit that only changes the expected
+    /// error count or figure flag invalidates the cache.
+    #[must_use]
+    pub fn content_hash(&self) -> String {
+        // serde_json::to_vec on this plain struct is infallible in practice;
+        // fall back to a stable debug rendering if it ever weren't.
+        let canon = serde_json::to_vec(self).unwrap_or_else(|_| format!("{self:?}").into_bytes());
+        blake3::hash(&canon).to_hex().to_string()
+    }
 }
 
 /// How a fenced code block is classified by its info string (§3.1).

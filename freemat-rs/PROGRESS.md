@@ -1495,8 +1495,24 @@ eigenproblem `eig(A,B)`. **Conformance 650/677 (96.0%) → 658/677 (97.2%), Δ +
   figures captured from the retained `Scene` (no webserver). `fm --capture-fragment <json|->`
   CLI. Local `FragmentScript`/`CapturedFragment` (TODO(P3): unify with `fm_doc`). **14 tests pass.**
   All gates re-verified workspace-wide by main agent; `--capture-fragment` smoke-tested.
-- **P3–P8 — not started.** Next: P3 (`xtask` + `cargo xtask docgen`) — unifies the two
-  `FragmentScript` defs, collects the registry, runs/caches fragments → generated artifacts.
+- **P3 — done (2026-06-20):** `crates/xtask` + `cargo xtask docgen [--check]` and the
+  `.cargo/config.toml` alias. Unified `FragmentScript`/`CapturedFragment` into `fm-doc` (the
+  fm-cli `TODO(P3)` duplicate removed; fm-cli now depends on fm-doc). docgen collects the
+  registry (forcing `fm-builtins` linkage so its `inventory` sites are seen), validates
+  unknown section / dangling cross-link / `# errors:` mismatch / duplicate name, runs each
+  fragment in-process via `fm_cli::run_fragment`, and emits a deterministic rustfmt-clean
+  `crates/fm-doc/src/generated/fragments.rs` (`pub static FRAGMENTS`, hash-sorted, blake3 key,
+  `fragment_by_hash` lookup). One `register_doc!` smoke fixture on `cos` (+ a `mathfunctions`
+  `register_section!`) in `fm-builtins/src/trig.rs` exercises the pipeline end-to-end.
+  **Main-agent fix during verification:** the agent's cache read transcripts back from the
+  artifact it was checking (keyed on input hash), so a stale/corrupted transcript
+  self-validated and engine drift was masked — `--check` was hollow. Changed docgen to
+  **always re-run** every fragment (artifact is not its own cache); verified `--check` now
+  fails on a tampered transcript and passes when clean. Caching deferred (HELP_SYSTEM.md §4.3:
+  needs a separate, engine-version-keyed store). `blake3 1` added to workspace deps.
+  Gates re-verified workspace-wide. Note: `xtask` has no unit tests yet (docgen verified by
+  integration/tamper checks) — add in P8.
+- **P4–P8 — not started.** Next: P4 (browser `/help`) ∥ P5 (`help`/`helpwin` builtins).
 
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,

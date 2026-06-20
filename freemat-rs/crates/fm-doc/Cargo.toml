@@ -11,6 +11,12 @@ repository.workspace = true
 [dependencies]
 inventory.workspace = true
 pulldown-cmark.workspace = true
+# P3: serde derives on the shared FragmentScript/CapturedFragment (serialized by
+# the `fm --capture-fragment` JSON path), and blake3 to content-hash the
+# canonical fragment-script serialization for the generated fragment DB key.
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+blake3.workspace = true
 
 [lints]
 workspace = true

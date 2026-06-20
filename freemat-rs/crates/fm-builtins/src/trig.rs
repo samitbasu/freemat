@@ -8,6 +8,30 @@ use fm_interp::{FunctionTable, Interpreter};
 
 use crate::util::{map_double, need};
 
+// P3 smoke fixture — P7 will migrate the full doc surface.
+// The section the cos entry lives in must exist for docgen's unknown-section
+// validation; P7 will seed the full section set from section_descriptors.txt.
+fm_doc::register_section! {
+    id: "mathfunctions",
+    title: "Mathematical Functions",
+    summary: "Elementary and special mathematical functions.",
+}
+
+fm_doc::register_doc! {
+    name: "cos",
+    section: "mathfunctions",
+    summary: "Trigonometric cosine of the argument.",
+    body: r#"
+## Usage
+Computes `cos(x)` for an n-dimensional numeric array `x`, element-wise, in
+radians. Output has the same size as `x`.
+
+```fm-exec
+cos(0)
+```
+"#,
+}
+
 pub(crate) fn register(table: &mut FunctionTable) {
     macro_rules! reg {
         ($name:literal, $f:expr) => {

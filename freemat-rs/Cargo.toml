@@ -60,6 +60,10 @@ chrono = "0.4"
 # dialect parsing. See docs/HELP_SYSTEM.md §0.
 inventory = "0.3"
 pulldown-cmark = "0.12"
+# Help system (P3, docgen): content-hash the canonical fragment-script
+# serialization to key the generated fragment DB (collision-safe across the
+# on-disk DB). See docs/HELP_SYSTEM.md §4.3.
+blake3 = "1"
 
 [workspace.lints.rust]
 rust_2018_idioms = "warn"
