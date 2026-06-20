@@ -12,3 +12,6 @@ junk.dat
 test.bmp
 crates/fm-builtins/examples/scratch_probe.rs
 crates/fm-parser/examples/scratch_pp.rs
+
+# Help-system migration staging (regenerate with `cargo xtask migrate-docs`)
+docs/migration-staging/

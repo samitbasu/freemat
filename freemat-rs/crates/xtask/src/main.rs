@@ -27,6 +27,8 @@
 //! 5. **Emit** the fragment DB as deterministic, rustfmt-clean generated Rust at
 //!    `crates/fm-doc/src/generated/fragments.rs` (sorted by hash).
 
+mod migrate;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -54,23 +56,48 @@ fn force_builtin_linkage() {
 }
 
 fn main() -> ExitCode {
-    let mut args = std::env::args().skip(1);
-    let task = args.next();
-    let check = args.any(|a| a == "--check");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let task = args.first().map(String::as_str);
 
-    match task.as_deref() {
-        Some("docgen") | None => match docgen(check) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(report) => {
-                eprintln!("{report}");
-                ExitCode::FAILURE
+    match task {
+        Some("docgen") | None => {
+            let check = args.iter().any(|a| a == "--check");
+            match docgen(check) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(report) => {
+                    eprintln!("{report}");
+                    ExitCode::FAILURE
+                }
             }
-        },
+        }
+        Some("migrate-docs") => {
+            let section = flag_value(&args, "--section");
+            let out = flag_value(&args, "--out");
+            match migrate::migrate_docs(section.as_deref(), out.as_deref()) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("migrate-docs: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Some(other) => {
-            eprintln!("unknown xtask: {other:?}\n\nusage: cargo xtask docgen [--check]");
+            eprintln!(
+                "unknown xtask: {other:?}\n\nusage:\n  \
+                 cargo xtask docgen [--check]\n  \
+                 cargo xtask migrate-docs [--section <id>] [--out <dir>]"
+            );
             ExitCode::FAILURE
         }
     }
+}
+
+/// Read the value following `flag` in `args` (e.g. `--section foo`).
+fn flag_value(args: &[String], flag: &str) -> Option<String> {
+    args.iter()
+        .position(|a| a == flag)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 /// Errors accumulated during docgen; rendered together so authors see every
