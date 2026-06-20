@@ -24,6 +24,140 @@ use std::path::{Path, PathBuf};
 use crate::{rust_str, workspace_root};
 
 // ============================================================================
+// In-memory corpus model (shared by `migrate-docs` and `migrate-place`)
+// ============================================================================
+
+/// One converted help topic, in memory (the structural output of the
+/// legacy→dialect conversion). Both `migrate-docs` (writes staging text) and
+/// `migrate-place` (emits compiled `register_doc!` into `fm-builtins`) consume
+/// this — the conversion runs exactly once, in [`convert_corpus`].
+#[derive(Debug, Clone)]
+pub struct ConvertedDoc {
+    pub name: String,
+    pub aliases: Vec<String>,
+    pub section: String,
+    pub summary: String,
+    pub body_md: String,
+    pub has_fragment: bool,
+}
+
+/// One converted section (id + title), in memory.
+#[derive(Debug, Clone)]
+pub struct ConvertedSection {
+    pub id: String,
+    pub title: String,
+}
+
+/// The full converted corpus: every section (sorted by id) and every doc
+/// (sorted by `(section, name)`), already deduped of nothing — placement-time
+/// concerns (name dedup, fragment probing, cross-link resolution) are the
+/// caller's job.
+pub struct Corpus {
+    pub sections: Vec<ConvertedSection>,
+    pub docs: Vec<ConvertedDoc>,
+}
+
+/// Convert the entire legacy corpus in memory (the same conversion path
+/// `migrate-docs` writes to staging). Returns sections + docs, deterministically
+/// sorted. `legacy` is the FreeMat checkout root (`<workspace>/../FreeMat`).
+pub fn convert_corpus(legacy: &Path) -> Result<Corpus, String> {
+    let doc_root = legacy.join("doc");
+    if !doc_root.is_dir() {
+        return Err(format!(
+            "legacy doc dir not found: {} (expected the FreeMat checkout beside the rust port)",
+            doc_root.display()
+        ));
+    }
+
+    let descriptors = read_section_descriptors(legacy)?;
+    let section_ids: Vec<String> = section_dirs(&doc_root)?;
+
+    let mut sections: Vec<ConvertedSection> = Vec::new();
+    let mut docs: Vec<ConvertedDoc> = Vec::new();
+
+    for sec in &section_ids {
+        let sec_dir = doc_root.join(sec);
+        let title = descriptors.get(sec).cloned().unwrap_or_else(|| {
+            section_title_from_sec_doc(&doc_root, sec).unwrap_or_else(|| sec.clone())
+        });
+        sections.push(ConvertedSection {
+            id: sec.clone(),
+            title,
+        });
+
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&sec_dir)
+            .map_err(|e| format!("reading {}: {e}", sec_dir.display()))?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "doc"))
+            .collect();
+        files.sort();
+
+        for f in &files {
+            let text = std::fs::read_to_string(f)
+                .map_err(|e| format!("{}: read error: {e}", f.display()))?;
+            if let Ok(d) = convert_doc_page(&text, sec) {
+                docs.push(ConvertedDoc {
+                    name: d.name,
+                    aliases: d.aliases,
+                    section: d.section,
+                    summary: d.summary,
+                    body_md: d.body,
+                    has_fragment: d.has_fragment,
+                });
+            }
+        }
+    }
+
+    // Secondary: the inline-@Module toolbox `.m` files.
+    let mut module_docs: Vec<ConvertedDoc> = Vec::new();
+    let mut module_sections: BTreeMap<String, String> = BTreeMap::new();
+    for path in find_module_m_files(legacy) {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if !text.contains("@Module") {
+            continue;
+        }
+        if let Some(d) = convert_module_m(&text) {
+            let sec_id = d.section.to_ascii_lowercase();
+            module_sections
+                .entry(sec_id.clone())
+                .or_insert_with(|| sec_id.clone());
+            module_docs.push(ConvertedDoc {
+                name: d.name,
+                aliases: d.aliases,
+                section: sec_id,
+                summary: d.summary,
+                body_md: d.body,
+                has_fragment: d.has_fragment,
+            });
+        }
+    }
+    // Only add a section for the `.m` modules if the `.doc` corpus didn't
+    // already define one with that id (the `freemat` section overlaps).
+    let known: std::collections::HashSet<String> = sections.iter().map(|s| s.id.clone()).collect();
+    for (id, title) in module_sections {
+        if !known.contains(&id) {
+            sections.push(ConvertedSection { id, title });
+        }
+    }
+    docs.extend(module_docs);
+
+    sections.sort_by(|a, b| a.id.cmp(&b.id));
+    docs.sort_by(|a, b| (&a.section, &a.name).cmp(&(&b.section, &b.name)));
+    Ok(Corpus { sections, docs })
+}
+
+/// Locate the legacy FreeMat checkout (`<workspace>/../FreeMat`).
+pub fn legacy_root() -> Result<PathBuf, String> {
+    let root = workspace_root()?;
+    Ok(root
+        .parent()
+        .ok_or("cannot find parent of workspace root")?
+        .join("FreeMat"))
+}
+
+// ============================================================================
 // CLI entry point
 // ============================================================================
 

@@ -584,14 +584,12 @@ mod tests {
 
     #[test]
     fn fm_exec_transcript_from_db() {
-        // The trig.rs `cos` fixture's exact fragment is in the generated DB.
-        let e = entry("cos", "## Example\n```fm-exec\ncos(0)\n```\n");
+        // The migrated `pi` topic's exact fragment (`pi` then `cos(pi)`) is in
+        // the generated DB, so its captured transcript is substituted here.
+        let e = entry("pi", "## Example\n```fm-exec\npi\ncos(pi)\n```\n");
         let reg = registry_with(vec![e]);
         let out = render_text(&e, &reg, &TextOpts::default());
-        assert!(
-            out.contains("  --> cos(0)"),
-            "transcript input echoed: {out:?}"
-        );
+        assert!(out.contains("  --> pi"), "transcript input echoed: {out:?}");
         assert!(out.contains("ans ="), "transcript output present: {out:?}");
     }
 

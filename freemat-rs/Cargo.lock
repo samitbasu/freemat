@@ -3171,6 +3171,8 @@ dependencies = [
  "fm-builtins",
  "fm-cli",
  "fm-doc",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

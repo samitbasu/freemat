@@ -18,6 +18,7 @@ mod baseconv;
 mod bitops;
 mod cellstruct;
 mod constructors;
+mod docs;
 mod elementary;
 mod fitfun;
 mod graphics;

@@ -21,6 +21,10 @@ fm-cli = { version = "0.0.0", path = "../fm-cli" }
 # Linking fm-builtins forces its `register_doc!`/`register_section!` inventory
 # submission sites into the xtask binary so `Registry::global()` collects them.
 fm-builtins = { version = "0.0.0", path = "../fm-builtins" }
+# Serialize FragmentScript / parse the captured `error_count` when probing
+# fragments in the crash-isolated `fm --capture-fragment` subprocess (P7).
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

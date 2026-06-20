@@ -28,6 +28,7 @@
 //!    `crates/fm-doc/src/generated/fragments.rs` (sorted by hash).
 
 mod migrate;
+mod place;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -81,11 +82,22 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Some("migrate-place") => {
+            let staging = flag_value(&args, "--staging");
+            match place::migrate_place(staging.as_deref()) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("migrate-place: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Some(other) => {
             eprintln!(
                 "unknown xtask: {other:?}\n\nusage:\n  \
                  cargo xtask docgen [--check]\n  \
-                 cargo xtask migrate-docs [--section <id>] [--out <dir>]"
+                 cargo xtask migrate-docs [--section <id>] [--out <dir>]\n  \
+                 cargo xtask migrate-place [--staging <dir>]"
             );
             ExitCode::FAILURE
         }

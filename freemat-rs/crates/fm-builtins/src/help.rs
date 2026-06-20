@@ -242,17 +242,24 @@ mod tests {
     fn help_section_lists_topics() {
         let out = run("help mathfunctions");
         assert!(out.contains("cos"), "lists cos topic: {out:?}");
+        // Summary text comes from the migrated corpus (the `.doc` \page title).
         assert!(
-            out.contains("Trigonometric cosine"),
+            out.contains("Trigonometric Cosine"),
             "topic summary: {out:?}"
         );
     }
 
     #[test]
     fn help_topic_renders_text_and_transcript() {
+        // `cos`'s migrated page renders its title + body (its example fragment is
+        // a figure plot, downgraded to display-only, so no live transcript).
         let out = run("help cos");
-        assert!(out.contains("COS — Trigonometric cosine"), "title: {out:?}");
-        assert!(out.contains("--> cos(0)"), "captured transcript: {out:?}");
+        assert!(out.contains("COS — Trigonometric Cosine"), "title: {out:?}");
+        assert!(out.contains("Usage"), "renders body headings: {out:?}");
+
+        // A topic with a kept-live fragment renders its captured transcript.
+        let out = run("help pi");
+        assert!(out.contains("-->"), "captured transcript present: {out:?}");
     }
 
     #[test]

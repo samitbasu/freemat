@@ -1,14 +1,14 @@
 //! P4 proof: the browser help routes are served by the *same* embedded server
 //! as `/` and `/ws`. Starts the server (`fm_cli::start`), then issues plain
 //! HTTP/1.0 GETs (no extra HTTP-client dependency) against `/help`,
-//! `/help/cos`, and `/help/search?q=cos`, asserting:
+//! `/help/cos`, `/help/pi`, and `/help/search?q=cos`, asserting:
 //! - all return `200 OK`,
-//! - the `cos` page contains the rendered Usage section and the captured
-//!   transcript (`--> cos(0)` … `ans =` … `1`),
+//! - the `cos` page renders its uppercased title and Usage section,
+//! - the `pi` page renders its captured transcript (input echo `-->`),
 //! - search returns the `cos` topic.
 //!
-//! `cos` is the one real doc entry today (the P3 fixture in `fm-builtins`,
-//! linked into `fm-cli`), so the global registry the routes read includes it.
+//! The full migrated corpus (help-system P7) is linked into `fm-cli` via
+//! `fm-builtins`, so the global registry the routes read includes these topics.
 
 use std::time::Duration;
 
@@ -54,21 +54,29 @@ async fn help_routes_serve_index_topic_and_search() {
         "index has a search box: {body}"
     );
 
-    // /help/cos — the topic page, 200, with Usage + captured transcript.
+    // /help/cos — the topic page, 200, with the uppercased title + Usage
+    // section. (`cos`'s migrated example is a figure plot, downgraded to
+    // display-only, so it has no captured transcript — the transcript-rendering
+    // assertions below use `pi`, which keeps a live `fm-exec` fragment.)
     let (status, body) = http_get(addr, "/help/cos").await;
     assert!(status.contains("200"), "GET /help/cos status: {status}");
     assert!(body.contains("COS"), "uppercased title: {body}");
     assert!(body.contains("<h2>Usage</h2>"), "Usage section: {body}");
+
+    // /help/pi — a topic with a kept-live fragment: its captured transcript is
+    // rendered (input echo `-->`, HTML-escaped, in an `fm-transcript` block) and
+    // the executable source is highlighted.
+    let (status, body) = http_get(addr, "/help/pi").await;
+    assert!(status.contains("200"), "GET /help/pi status: {status}");
     assert!(
         body.contains("fm-transcript"),
         "captured transcript block present: {body}"
     );
     // The transcript is HTML-escaped: `-->` becomes `--&gt;`.
     assert!(
-        body.contains("--&gt; cos(0)"),
+        body.contains("--&gt;"),
         "transcript input echo present: {body}"
     );
-    assert!(body.contains("ans ="), "transcript ans display: {body}");
     assert!(
         body.contains("class=\"language-fm-exec\""),
         "exec source highlighted: {body}"

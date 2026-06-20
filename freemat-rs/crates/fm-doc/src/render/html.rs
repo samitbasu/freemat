@@ -387,9 +387,10 @@ mod tests {
 
     #[test]
     fn fm_exec_block_gets_transcript_when_in_db() {
-        // The cos fixture's exact fragment is in the generated DB.
-        let body = "## Example\n```fm-exec\ncos(0)\n```\n";
-        let e = entry("cos", body);
+        // The migrated `pi` topic's exact fragment (`pi` then `cos(pi)`) is in
+        // the generated DB, so its captured transcript is rendered here.
+        let body = "## Example\n```fm-exec\npi\ncos(pi)\n```\n";
+        let e = entry("pi", body);
         let reg = registry_with(vec![e]);
         let html = render_page(&e, &reg);
         assert!(
@@ -401,7 +402,7 @@ mod tests {
             "transcript block present: {html}"
         );
         assert!(
-            html.contains("--&gt; cos(0)") && html.contains("ans ="),
+            html.contains("--&gt; pi") && html.contains("ans ="),
             "captured transcript text present (escaped): {html}"
         );
     }
