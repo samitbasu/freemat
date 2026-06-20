@@ -1,0 +1,16 @@
+[package]
+name = "fm-doc"
+description = "FreeMat-rs help system: doc registry, register_doc! macro, and markdown-dialect parser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+inventory.workspace = true
+pulldown-cmark.workspace = true
+
+[lints]
+workspace = true
