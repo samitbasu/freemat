@@ -45,7 +45,7 @@ The `pwd` command returns the current directory location.  First,
 we use the simplest form of the `cd` command, in which the directory
 name argument is given unquoted.
 
-```fm-exec
+```fm
 pwd
 cd ..
 pwd
@@ -54,7 +54,7 @@ pwd
 Next, we use the ``traditional'' form of the function call, using
 both the parenthesis and a variable to store the quoted string.
 
-```fm-exec
+```fm
 a = pwd;
 cd(a)
 pwd
@@ -408,19 +408,19 @@ For compatibility with some environments, the function `dir` can also be used in
 ## Example
 First, we use the simplest form of the `ls` command, in which the directory name argument is given unquoted.
 
-```fm-exec
+```fm
 ls m*.m
 ```
 
 Next, we use the ``traditional'' form of the function call, using both the parenthesis and the quoted string.
 
-```fm-exec
+```fm
 ls('m*.m')
 ```
 
 In the third version, we use only the quoted string argument without parenthesis.
 
-```fm-exec
+```fm
 ls 'm*.m'
 ```
 "#,
@@ -468,7 +468,7 @@ Returns a `string` describing the current working directory.  The general syntax
 ## Example
 The `pwd` function is fairly straightforward.
 
-```fm-exec
+```fm
 pwd
 ```
 "#,

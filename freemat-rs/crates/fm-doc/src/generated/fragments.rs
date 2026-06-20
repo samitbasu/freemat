@@ -38,13 +38,6 @@ pub static FRAGMENTS: &[(&str, Fragment)] = &[
         },
     ),
     (
-        "071898c61990063722f72b0d18e78fc41ae08334c1dd9152d883ac58f3b3c30c",
-        Fragment {
-            transcript: "--> pwd\n\nans =\n\n/home/samitbasu/Devel/freemat\n",
-            figure: None,
-        },
-    ),
-    (
         "07ca1a19c719770049de884514c31d824daebeb5aa672fa0fb4be793751dd737",
         Fragment {
             transcript: "--> A = [1,2,0;4,1,-1]\n\nA =\n\n    1    2    0\n    4    1   -1\n\n--> A'\n\nans =\n\n    1    4\n    2    1\n    0   -1\n\n--> A = [1+i,2-i]\n\nA =\n\n   1 + 1i   2 - 1i\n\n--> A.'\n\nans =\n\n   1 + 1i\n   2 - 1i\n",
@@ -124,7 +117,7 @@ pub static FRAGMENTS: &[(&str, Fragment)] = &[
     (
         "1eb1fc89215dd54b7dd5db8dbe899d999d51925bc7effbb6b0a2eb8eff380c3b",
         Fragment {
-            transcript: "--> fp = fopen('test.dat','w','ieee-le')\n\nfp =\n\n9\n\n--> fwrite(fp,float([1.2,4.3,2.1]))\n\nans =\n\n3\n\n--> fclose(fp)\n\nans =\n\n0\n\n--> fp = fopen('test.dat','r','ieee-le')\n\nfp =\n\n10\n\n--> fread(fp,[1,3],'float')\n\nans =\n\n   1.2000\n   4.3000\n   2.1000\n\n--> fclose(fp)\n\nans =\n\n0\n\n--> fp = fopen('test.dat','a+','le')\n\nfp =\n\n11\n\n--> fwrite(fp,float([pi,e]))\n\nans =\n\n2\n\n--> fclose(fp)\n\nans =\n\n0\n\n--> fp = fopen('test.dat','r','ieee-le')\n\nfp =\n\n12\n\n--> fread(fp,[1,5],'float')\n\nans =\n\n   1.2000\n   4.3000\n   2.1000\n   3.1416\n   2.7183\n\n--> fclose(fp)\n\nans =\n\n0\n",
+            transcript: "--> fp = fopen('test.dat','w','ieee-le')\n\nfp =\n\n8\n\n--> fwrite(fp,float([1.2,4.3,2.1]))\n\nans =\n\n3\n\n--> fclose(fp)\n\nans =\n\n0\n\n--> fp = fopen('test.dat','r','ieee-le')\n\nfp =\n\n9\n\n--> fread(fp,[1,3],'float')\n\nans =\n\n   1.2000\n   4.3000\n   2.1000\n\n--> fclose(fp)\n\nans =\n\n0\n\n--> fp = fopen('test.dat','a+','le')\n\nfp =\n\n10\n\n--> fwrite(fp,float([pi,e]))\n\nans =\n\n2\n\n--> fclose(fp)\n\nans =\n\n0\n\n--> fp = fopen('test.dat','r','ieee-le')\n\nfp =\n\n11\n\n--> fread(fp,[1,5],'float')\n\nans =\n\n   1.2000\n   4.3000\n   2.1000\n   3.1416\n   2.7183\n\n--> fclose(fp)\n\nans =\n\n0\n",
             figure: None,
         },
     ),
@@ -332,13 +325,6 @@ pub static FRAGMENTS: &[(&str, Fragment)] = &[
         },
     ),
     (
-        "4997fc2e65498dfbdcd980aa3d039a768592d0a2ed35fa459f763b80c4bf0936",
-        Fragment {
-            transcript: "--> ls m*.m\n--> ls('m*.m')\n\nans =\n\n\n\n--> ls 'm*.m'\n",
-            figure: None,
-        },
-    ),
-    (
         "4a2373e603a3e2874c12ce96fa6767a7b2de856c0fd373dd962a39749070a3ff",
         Fragment {
             transcript: "--> polyder([2,3,4])\n\nans =\n\n   4   3\n\n--> polyder([2,3,4],7)\n\nans =\n\n   4   3\n\n--> [n,d] = polyder([2,3,4],5)\n\nn =\n\n   4   3\n",
@@ -362,7 +348,7 @@ pub static FRAGMENTS: &[(&str, Fragment)] = &[
     (
         "4d3b45dd45e93bb5ff5509c3fa55378500e54f460ba3356a567540f7f7cfea88",
         Fragment {
-            transcript: "--> fp = fopen('testtext','w');\n--> fprintf(fp,'String 1\\n');\n--> fprintf(fp,'String 2\\n');\n--> fclose(fp);\n--> fp = fopen('testtext','r')\n\nfp =\n\n8\n\n--> fgetline(fp)\n\nans =\n\nString 1\n\n--> fgetline(fp)\n\nans =\n\nString 2\n\n--> fclose(fp);\n",
+            transcript: "--> fp = fopen('testtext','w');\n--> fprintf(fp,'String 1\\n');\n--> fprintf(fp,'String 2\\n');\n--> fclose(fp);\n--> fp = fopen('testtext','r')\n\nfp =\n\n7\n\n--> fgetline(fp)\n\nans =\n\nString 1\n\n--> fgetline(fp)\n\nans =\n\nString 2\n\n--> fclose(fp);\n",
             figure: None,
         },
     ),
@@ -531,13 +517,6 @@ pub static FRAGMENTS: &[(&str, Fragment)] = &[
         "6c8efe79096be0cade3e311a9b78a8d67709e26ef30386f63a02c528041706bc",
         Fragment {
             transcript: "--> [a,b] = ndgrid(1:2,3:5)\n\na =\n\n   1   1   1\n   2   2   2\n\n\nb =\n\n   3   4   5\n   3   4   5\n\n--> [a,b,c] = ndgrid(1:2,3:5,0:1)\n\na =\n\n   1   1   1\n   2   2   2\n\n\nb =\n\n   3   4   5\n   3   4   5\n\n--> [a,b,c] = ndgrid(1:3)\n\na =\n\n   1   1   1\n   2   2   2\n   3   3   3\n\n\nb =\n\n   1   2   3\n   1   2   3\n   1   2   3\n",
-            figure: None,
-        },
-    ),
-    (
-        "6d8909b7e5fe4c03d8c7280e03ceea0db1c30f205ff9e964f4c56a628a83e2d6",
-        Fragment {
-            transcript: "--> pwd\n\nans =\n\n/home/samitbasu/Devel/freemat/freemat-rs\n\n--> cd ..\n--> pwd\n\nans =\n\n/home/samitbasu/Devel/freemat\n\n--> a = pwd;\n--> cd(a)\n\nans =\n\n/home/samitbasu/Devel/freemat\n\n--> pwd\n\nans =\n\n/home/samitbasu/Devel/freemat\n",
             figure: None,
         },
     ),
@@ -839,13 +818,6 @@ pub static FRAGMENTS: &[(&str, Fragment)] = &[
         "b4ad97ce2242d983fbebe63739a81bd9ba5ca3787523123da9aee1ce9e61ecbd",
         Fragment {
             transcript: "--> upper('this Is Strange CAPitalizaTion')\n\nans =\n\nTHIS IS STRANGE CAPITALIZATION\n\n--> upper({'This','Is','Strange','CAPitalizaTion'})\n\nans =\n\n{\n  ['THIS']  ['IS']  ['STRANGE']  ['CAPITALIZATION']\n}\n",
-            figure: None,
-        },
-    ),
-    (
-        "b669a24d9ed61e0e4a790090c8d47161caa15182d493f8ed530a663517dc616b",
-        Fragment {
-            transcript: "--> fp = fopen('test.dat','rb');\n--> x = fread(fp,[512,inf],'float');\n--> feof(fp)\n\nans =\n\n1\n\n--> x = fread(fp,[1,1],'float');\n--> feof(fp)\n\nans =\n\n1\n",
             figure: None,
         },
     ),

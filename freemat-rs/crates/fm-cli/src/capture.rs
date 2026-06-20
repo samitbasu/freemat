@@ -267,13 +267,13 @@ impl Staging {
     }
 }
 
-/// Write the fragment's `files` into a fresh temp dir and chdir into it.
-/// Returns `None` (running in the current dir) if there are no files or the
-/// temp dir cannot be created — capture then still works for file-less scripts.
+/// Create a fresh temp dir, write the fragment's `files` into it, and chdir
+/// there. Done for *every* fragment (even file-less ones) so that fragments
+/// which write files (`save`, `csvwrite`, `fwrite`, …) never pollute the
+/// caller's working directory (e.g. the repo root during `docgen`). Returns
+/// `None` only if the temp dir can't be created, in which case capture falls
+/// back to the current dir.
 fn stage_files(script: &FragmentScript) -> Option<Staging> {
-    if script.files.is_empty() {
-        return None;
-    }
     let prev = std::env::current_dir().ok()?;
     // Unique temp dir without an external crate: temp_dir + pid + a counter.
     let base = std::env::temp_dir();

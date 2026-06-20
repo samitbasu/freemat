@@ -401,6 +401,21 @@ keep the current path (rare, not hot).
 
 ---
 
+## Help / documentation system — **done** (separate effort)
+
+The Rust-native help system that replaces FreeMat's C++/Qt + Doxygen docs pipeline is
+complete (phases P0–P8). Design contract: [`HELP_SYSTEM.md`](./HELP_SYSTEM.md); roadmap:
+[`HELP_REGEN_PLAN.md`](./HELP_REGEN_PLAN.md); contributor guide:
+[`WRITING_DOCS.md`](./WRITING_DOCS.md). In short: docs are embedded via `register_doc!`
+next to builtins; `cargo xtask docgen` recaptures executed `fm-exec` fragment transcripts
+into a compiled-in DB (CI-gated by `docgen --check`); `help <name>` renders terminal text
+(+ a clickable OSC 8 browser URL) and `helpwin` opens the rich browser page (`/help`,
+KaTeX + highlight.js + Plotly figures). ~558 legacy Doxygen pages were machine-migrated
+(`cargo xtask migrate-docs` / `migrate-place`). See `PROGRESS.md` for status and the
+deferred fragment-fidelity follow-up.
+
+---
+
 ## Open follow-ups (decide as they surface, not blocking)
 - 2D-only first vs early interactive 3D (recommend 2D Plotly traces first, 3D `surf`/`mesh`
   in Stage 9).

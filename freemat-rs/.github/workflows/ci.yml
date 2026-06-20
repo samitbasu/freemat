@@ -28,3 +28,5 @@ jobs:
         run: cargo build --workspace
       - name: Test
         run: cargo test --workspace
+      - name: Docs up to date (help system)
+        run: cargo xtask docgen --check

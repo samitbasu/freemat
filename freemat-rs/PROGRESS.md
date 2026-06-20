@@ -1541,8 +1541,37 @@ eigenproblem `eig(A,B)`. **Conformance 650/677 (96.0%) → 658/677 (97.2%), Δ +
   `help coss` (did-you-mean cos), `helpwin cos` (opens / graceful no-server message).
 - **P4∥P5 layer complete.** The full pipeline works: docgen captures fragments → browser
   serves rich `/help` pages → terminal `help` renders text + clickable URL → `helpwin` opens
-  the browser. Next: P6 (legacy Doxygen `.doc` → dialect converter) → P7 (bulk migration).
-- **P6–P8 — not started.**
+  the browser.
+- **P6 — done (2026-06-20):** `cargo xtask migrate-docs` — legacy Doxygen `.doc` → dialect
+  converter (`crates/xtask/src/migrate.rs`, 14 tests). Implements the §1 mapping (`\page`,
+  `\section`, `<tt>`, `\verbatim`, `\if FRAGMENT`→`fm-exec`/`:figure`, `\f[..\f]`→`$$`, `\ref`
+  →cross-link, drop `\verbinclude`/`\image`). Converts 568 pages (335 with fragments), 0 parse
+  failures. Staging output is gitignored (regenerable).
+- **P7 — done (2026-06-20):** `cargo xtask migrate-place` (`crates/xtask/src/place.rs`) places
+  all **558** converted docs into `crates/fm-builtins/src/docs/` (29 section modules), compiled
+  in via `mod docs;`. Deterministic; global name dedup (10 collisions dropped); **fragment
+  probing** via `fm --capture-fragment` subprocess keeps a doc's `fm-exec` blocks live only if
+  they run as declared, else downgrades to display-only `fm`; cross-link resolution. Removed the
+  P3 `cos` smoke fixture. **158 live / 171 downgraded** initially.
+- **P8 — done (2026-06-20):** integration & polish.
+  - **Capture hygiene fix:** `run_fragment` now always runs in a fresh temp CWD (was: only when
+    a fragment had aux files), so file-writing fragments (`save`/`csvwrite`/…) never pollute the
+    repo root during docgen.
+  - **Environment-nondeterminism fix:** added `pwd`/`cd`/`dir`/`ls`/`tempname`/… to the
+    migrate-place non-determinism downgrade list (alongside `tic`/`toc`/…). This also removed
+    machine-specific paths (`/home/...`, `/tmp/fm-capture-...`) that P7 had baked into the DB —
+    they would have broken `docgen --check` on any other checkout. Final DB: **163 fragments**,
+    zero env-specific paths, byte-deterministic across runs.
+  - **CI:** added `cargo xtask docgen --check` as a step in `.github/workflows/ci.yml`.
+  - **Contributor note:** `docs/WRITING_DOCS.md` (dialect, the edit→docgen→**rebuild**→run
+    workflow, determinism rules, re-enabling downgraded fragments). `docs/PLAN.md` updated.
+  - docgen test coverage: validated by every CI `--check` run + a manual tamper test (proved
+    `--check` fails on a corrupted transcript) + migrate's 14 unit tests.
+- **Deferred fragment-fidelity follow-up:** ~171 example fragments are display-only because the
+  builtins they exercise (graphics/IO/typecast/threading) error or crash in today's headless
+  interpreter. As those mature, re-running `cargo xtask migrate-place` auto-promotes any example
+  that now runs cleanly back to a live `fm-exec` block.
+- **Help system COMPLETE (P0–P8).**
 
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,

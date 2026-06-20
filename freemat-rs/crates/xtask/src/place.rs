@@ -491,11 +491,18 @@ fn downgrade_exec_blocks(body: &str) -> String {
     out
 }
 
-/// Builtins whose output depends on the wall clock / timing and therefore make a
-/// captured transcript non-reproducible (so `docgen --check` would never stay
-/// green). The RNG is seeded for determinism, so `rand`/`randn` are *not* here.
+/// Builtins whose output depends on the environment (wall clock / timing, or the
+/// working directory) and therefore make a captured transcript non-reproducible
+/// across runs and machines (so `docgen --check` would never stay green). The RNG
+/// is seeded for determinism, so `rand`/`randn` are *not* here. The directory
+/// builtins matter because capture runs each fragment in a fresh temp dir (so a
+/// printed `pwd` would vary every run) — and even without that, the path would be
+/// machine-specific.
 const NONDETERMINISTIC_BUILTINS: &[&str] = &[
+    // Wall-clock / timing.
     "tic", "toc", "clock", "now", "time", "date", "cputime", "etime", "datestr", "datenum",
+    // Working-directory / filesystem-listing (path or listing is environment-specific).
+    "pwd", "cd", "dir", "ls", "tempdir", "tempname", "getpath", "what",
 ];
 
 /// If any `fm-exec` input in `script` calls a non-deterministic builtin (as a
