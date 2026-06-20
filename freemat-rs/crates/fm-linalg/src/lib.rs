@@ -548,16 +548,23 @@ pub fn eig(a: &Array, nargout: usize) -> Result<Vec<Array>> {
 /// `>=2` returns `[V, D]` such that `A*V = B*V*D` (eigenvectors in the columns
 /// of `V`, eigenvalues on the diagonal of `D`).
 ///
-/// **Method.** We use faer's QZ-algorithm generalized eigensolver
-/// ([`GeneralizedEigen`], the analogue of LAPACK `dggev`/`zggev` that FreeMat
-/// itself calls). It returns eigenvectors `U` and the pencil factors `S_a`,
-/// `S_b`; the generalized eigenvalues are `lambda_i = S_a[i] / S_b[i]` and the
-/// eigenvectors satisfy `A*U = B*U*diag(lambda)`. This is backward-stable and
-/// meets the conformance tolerance (`~8*max|d|*eps*n`) for the general,
-/// symmetric-definite, real/single, and complex cases uniformly — unlike a
-/// `B\A`-then-standard-`eig` reduction, whose accuracy degrades with the
-/// conditioning of `B` and of `M`'s eigenvectors at the larger sizes the suite
-/// exercises (up to 100×100).
+/// **Method.** A hybrid that is fast in the common case and robust in the rest:
+///
+/// 1. *Reduce to the standard problem.* When `B` is nonsingular, `A v = lambda B v`
+///    is equivalent to `C v = lambda v` for `C = B^{-1} A` (same eigenvectors).
+///    We form `C` with one LU solve and call faer's standard `Eigen` (Francis QR).
+///    This is an order of magnitude faster than the QZ pencil solver and, crucially,
+///    free of the occasional catastrophic QZ convergence stalls `GeneralizedEigen`
+///    exhibits on random pencils (seconds vs milliseconds at n≈100).
+/// 2. *Refine + certify.* The reduction's accuracy degrades with `cond(B)`, so a
+///    few steps of inverse iteration against the original pencil refine the handful
+///    of columns whose residual exceeds the conformance scale, and we then verify
+///    every eigenpair clears the suite's tolerance (`~8*max|d|*eps*n`).
+/// 3. *QZ fallback.* If `B` is singular / too ill-conditioned for the reduction to
+///    certify (or has infinite eigenvalues), fall back to faer's QZ
+///    [`GeneralizedEigen`] (the analogue of LAPACK `dggev`/`zggev`) plus the same
+///    refinement. This guarantees correctness for every input while paying the
+///    slower, occasionally-stalling QZ only when genuinely required.
 ///
 /// 2-norm of a complex vector.
 fn cnorm(v: &[c64]) -> f64 {
@@ -578,10 +585,26 @@ fn pencil_residual(a: &Mat<c64>, b: &Mat<c64>, n: usize, v: &[c64], lambda: c64)
 /// of the pencil `(A, B)`: `w = (A - lambda*B) \ (B*v)`, renormalize, and update
 /// `lambda` by the generalized Rayleigh quotient `(w* A w)/(w* B w)`. The update
 /// is kept only if it reduces the residual `||A*w - lambda*B*w||`.
-fn refine_eigenpair(a: &Mat<c64>, b: &Mat<c64>, n: usize, v: &mut Vec<c64>, lambda: &mut c64) {
+fn refine_eigenpair(
+    a: &Mat<c64>,
+    b: &Mat<c64>,
+    n: usize,
+    v: &mut Vec<c64>,
+    lambda: &mut c64,
+    tol: f64,
+) -> bool {
     let before = pencil_residual(a, b, n, v, *lambda);
-    if before == 0.0 {
-        return;
+    // faer's solvers are backward-stable, so the vast majority of columns are
+    // already far below the test tolerance; only refine the rare column whose
+    // residual exceeds `tol`. This keeps the refinement pass O(n^3) plus a
+    // per-column LU for just the handful that need it. `tol` is set comfortably
+    // under the suite's acceptance bound (see `eig_gen`), and `before` is a
+    // 2-norm — an upper bound on the entrywise residual the tests actually
+    // check — so skipping here never lets a failing column through. Returns
+    // whether the pair was changed, so the caller can stop iterating once a
+    // column has converged.
+    if before <= tol {
+        return false;
     }
     // Shifted matrix A - lambda*B.
     let shifted = a - b * faer::Scale(*lambda);
@@ -593,7 +616,7 @@ fn refine_eigenpair(a: &Mat<c64>, b: &Mat<c64>, n: usize, v: &mut Vec<c64>, lamb
     let mut w: Vec<c64> = (0..n).map(|i| rhs[(i, 0)]).collect();
     let wn = cnorm(&w);
     if !wn.is_finite() || wn == 0.0 {
-        return;
+        return false;
     }
     for x in &mut w {
         *x /= wn;
@@ -618,6 +641,9 @@ fn refine_eigenpair(a: &Mat<c64>, b: &Mat<c64>, n: usize, v: &mut Vec<c64>, lamb
     if after.is_finite() && after < before {
         *v = w;
         *lambda = new_lambda;
+        true
+    } else {
+        false
     }
 }
 
@@ -635,46 +661,128 @@ pub fn eig_gen(a: &Array, b: &Array, nargout: usize) -> Result<Vec<Array>> {
     }
     let n = am.rows;
 
-    // Always solve in the complex domain (the eigenvalues / eigenvectors are
+    // We solve in the complex domain throughout (eigenvalues/eigenvectors are
     // complex in general); `build_from_c64` narrows real results back to double.
-    let decomp = GeneralizedEigen::<f64>::new(am.view(), bm.view())
-        .map_err(|_| LinalgError::new("eig(A,B) failed to converge"))?;
-
-    let s_a = decomp.S_a();
-    let s_b = decomp.S_b();
-    let mut evals: Vec<c64> = (0..n).map(|i| s_a[i] / s_b[i]).collect();
-    let u = decomp.U();
-
-    // Refine each (eigenvector, eigenvalue) pair with one step of inverse
-    // iteration against the pencil. faer's QZ is backward-stable but, at the
-    // larger sizes the conformance suite exercises (up to 100x100), a moderately
-    // ill-conditioned eigenvector occasionally leaves the residual
-    // `||A*v - lambda*B*v||` a small factor above the tight test tolerance
-    // (`8*max|d|*eps*n`). One inverse-iteration step — `w = (A - lambda*B) \ (B*v)`,
-    // renormalized, with `lambda` updated by the generalized Rayleigh quotient —
-    // is quadratically convergent and reliably brings the residual under the
-    // bound, matching the accuracy LAPACK's `?ggev` gives FreeMat. The step is
-    // accepted per-column only if it does not increase the residual (a guard for
-    // pathological/defective columns).
-    //
-    // We always refine (even for the eigenvalues-only form) so the single-output
-    // `g = eig(A,B)` and the diagonal of the two-output `[V,D] = eig(A,B)` return
-    // the *same* refined eigenvalues — the suite cross-checks `sort(g)` against
-    // `sort(diag(D))` to the same tolerance.
     let a_mat = Mat::<c64>::from_fn(n, n, |i, j| am.data[i + j * n]);
     let b_mat = Mat::<c64>::from_fn(n, n, |i, j| bm.data[i + j * n]);
-    let mut vdata = Vec::with_capacity(n * n);
+
+    // Fast path: when B is nonsingular, the pencil reduces to the standard
+    // eigenproblem of `C = B^{-1} A` (`A v = lambda B v` ⇔ `C v = lambda v`, same
+    // eigenvectors). faer's standard `Eigen` (Francis QR) is both far faster and
+    // free of the occasional catastrophic QZ convergence stalls that
+    // `GeneralizedEigen` exhibits on random pencils (seconds vs milliseconds at
+    // n≈100). The reduction's accuracy degrades with cond(B), so we *verify* the
+    // residual of every eigenpair and fall back to QZ if the reduction — even
+    // after refinement — cannot certify the conformance tolerance.
+    if let Some(out) = eig_gen_reduced(&a_mat, &b_mat, n, nargout) {
+        return Ok(out);
+    }
+
+    // Fallback: QZ generalized eigensolver (handles singular / very
+    // ill-conditioned B and infinite eigenvalues), then the same refinement.
+    let decomp = GeneralizedEigen::<f64>::new(am.view(), bm.view())
+        .map_err(|_| LinalgError::new("eig(A,B) failed to converge"))?;
+    let s_a = decomp.S_a();
+    let s_b = decomp.S_b();
+    let evals: Vec<c64> = (0..n).map(|i| s_a[i] / s_b[i]).collect();
+    let u = decomp.U();
+    let init: Vec<(c64, Vec<c64>)> = (0..n)
+        .map(|j| (evals[j], (0..n).map(|i| u[(i, j)]).collect()))
+        .collect();
+    let (evals, vdata) = refine_eigenpairs(&a_mat, &b_mat, n, init);
+    Ok(assemble_eig(n, nargout, evals, vdata))
+}
+
+/// Reduce-to-standard fast path for [`eig_gen`]. Returns `None` (so the caller
+/// falls back to QZ) when B is singular / too ill-conditioned to certify the
+/// conformance residual tolerance even after refinement.
+fn eig_gen_reduced(
+    a_mat: &Mat<c64>,
+    b_mat: &Mat<c64>,
+    n: usize,
+    nargout: usize,
+) -> Option<Vec<Array>> {
+    // C = B^{-1} A via LU. A near-singular B yields a huge/non-finite C, which
+    // we reject below (the QZ fallback handles it).
+    let lu = b_mat.partial_piv_lu();
+    let c = lu.solve(a_mat.as_ref());
+    if (0..n).any(|j| (0..n).any(|i| !c[(i, j)].re.is_finite() || !c[(i, j)].im.is_finite())) {
+        return None;
+    }
+    let decomp: Eigen<f64> = Eigen::new(c.as_ref()).ok()?;
+    let s = decomp.S();
+    let u = decomp.U();
+    let init: Vec<(c64, Vec<c64>)> = (0..n)
+        .map(|j| (s[j], (0..n).map(|i| u[(i, j)]).collect()))
+        .collect();
+    let (evals, vdata) = refine_eigenpairs(a_mat, b_mat, n, init);
+
+    // Certify: every column's residual must clear the suite's tightest bound
+    // (`8*max|d|*eps*n`, used by eig4; eig5's is strictly larger). `pencil_residual`
+    // is a 2-norm — an upper bound on the entrywise residual the tests check — so
+    // passing here guarantees the test passes. Otherwise, fall back to QZ.
+    let max_abs_lambda = evals
+        .iter()
+        .filter(|e| e.is_finite())
+        .map(|e| e.norm())
+        .fold(0.0_f64, f64::max);
+    let accept = 8.0 * (n as f64) * f64::EPSILON * max_abs_lambda;
     for j in 0..n {
-        let mut v: Vec<c64> = (0..n).map(|i| u[(i, j)]).collect();
-        let mut lambda = evals[j];
-        if lambda.is_finite() {
-            refine_eigenpair(&a_mat, &b_mat, n, &mut v, &mut lambda);
+        let v = &vdata[j * n..(j + 1) * n];
+        if evals[j].is_finite() && pencil_residual(a_mat, b_mat, n, v, evals[j]) > accept {
+            return None;
         }
-        evals[j] = lambda;
+    }
+    Some(assemble_eig(n, nargout, evals, vdata))
+}
+
+/// Refine a set of initial `(lambda, eigenvector)` estimates of the pencil
+/// `(A, B)` with inverse iteration, returning the eigenvalues and the
+/// column-major eigenvector buffer. Only columns whose residual exceeds the
+/// threshold are refined (faer leaves the vast majority already accurate), so
+/// the pass is O(n^3) plus a per-column LU for just the few that need it.
+///
+/// The same routine refines both fast-path and QZ estimates, and is run for the
+/// eigenvalues-only form too, so single-output `g = eig(A,B)` and the diagonal
+/// of `[V,D] = eig(A,B)` return identical eigenvalues (the suite cross-checks
+/// `sort(g)` against `sort(diag(D))`).
+fn refine_eigenpairs(
+    a_mat: &Mat<c64>,
+    b_mat: &Mat<c64>,
+    n: usize,
+    init: Vec<(c64, Vec<c64>)>,
+) -> (Vec<c64>, Vec<c64>) {
+    // Threshold keyed on `max|d|` (the suite's scale) with a factor of 4 — half
+    // of eig4's `8*max|d|*eps*n` bound, well under eig5's — so any column the
+    // suite would reject is refined while well-conditioned columns skip the LU.
+    let max_abs_lambda = init
+        .iter()
+        .filter(|(l, _)| l.is_finite())
+        .map(|(l, _)| l.norm())
+        .fold(0.0_f64, f64::max);
+    let refine_tol = 4.0 * (n as f64) * f64::EPSILON * max_abs_lambda;
+    let mut evals = Vec::with_capacity(n);
+    let mut vdata = Vec::with_capacity(n * n);
+    for (mut lambda, mut v) in init {
+        if lambda.is_finite() {
+            // A few inverse-iteration steps; quadratically convergent, so this
+            // closes the small residual gap left by the reduction in one or two.
+            for _ in 0..4 {
+                if !refine_eigenpair(a_mat, b_mat, n, &mut v, &mut lambda, refine_tol) {
+                    break;
+                }
+            }
+        }
+        evals.push(lambda);
         vdata.extend_from_slice(&v);
     }
+    (evals, vdata)
+}
+
+/// Assemble the `eig_gen` return value from refined eigenvalues + eigenvectors.
+fn assemble_eig(n: usize, nargout: usize, evals: Vec<c64>, vdata: Vec<c64>) -> Vec<Array> {
     if nargout < 2 {
-        return Ok(vec![build_from_c64(n, 1, evals)]);
+        return vec![build_from_c64(n, 1, evals)];
     }
     let v_arr = build_from_c64(n, n, vdata);
     let mut ddata = vec![c64::new(0.0, 0.0); n * n];
@@ -682,7 +790,7 @@ pub fn eig_gen(a: &Array, b: &Array, nargout: usize) -> Result<Vec<Array>> {
         ddata[i + i * n] = e;
     }
     let d_arr = build_from_c64(n, n, ddata);
-    Ok(vec![v_arr, d_arr])
+    vec![v_arr, d_arr]
 }
 
 /// Cholesky factorization (upper triangular `R` with `R'*R == A`).

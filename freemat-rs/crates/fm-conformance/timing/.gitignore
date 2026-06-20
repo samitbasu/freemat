@@ -1,0 +1,8 @@
+# transient run logs
+fm_run.log
+rs_timings.log
+# scratch files written by the FreeMat io tests (test_save/test_load) into cwd
+test.csv
+test_load1.txt
+tmp.mat
+junk.dat
