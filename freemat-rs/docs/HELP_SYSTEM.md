@@ -23,7 +23,7 @@ section.
 | 2 | Artifact embedding | **Generated Rust source, checked in**, under `crates/fm-doc/src/generated/` | Reviewable git diffs; no startup parse; `cargo build` stays hermetic (no network, no codegen build-script surprise). |
 | 3 | Browser rendering | **Runtime md→HTML** via `pulldown-cmark` | Single source of truth (the in-binary registry); no pre-render duplication; `/help` reflects the running binary exactly. |
 | 4 | Figure capture | **Plotly scene JSON** captured through the graphics sink, embedded in the fragment DB; rendered only in the browser. Terminal omits figures (prints a `[figure: name]` placeholder). | Reuses the existing `fm-graphics` `Scene` + Plotly browser stack. |
-| 5 | Browser math | **KaTeX** (self-hosted assets) | Faster, no layout reflow, smaller than MathJax, offline-friendly. |
+| 5 | Browser math | **KaTeX** | Faster, no layout reflow, smaller than MathJax. Loaded via **CDN to match the existing Plotly frontend** (`web/index.html` loads Plotly from a CDN with a "vendor for offline" note); KaTeX + highlight.js follow the same pattern, with the same documented vendoring escape hatch. |
 | 6 | `help` browser behavior | `help <name>` **prints text and shows the browser URL but does NOT auto-open** a browser. When stdout is a TTY that supports OSC 8, the URL is rendered as a **clickable terminal hyperlink** (graceful fallback to a bare URL otherwise). `helpwin <name>` opens the browser. | Matches original FreeMat (`help` = text, `helpwin` = window); auto-opening on every `help` in a terminal REPL is hostile, but a clickable link makes the page one click away. |
 
 New workspace dependencies these introduce (add to root `Cargo.toml`
@@ -373,10 +373,17 @@ Derived at runtime from `body_md` + fragment DB. A small markdown→plain-text p
   box), `GET /help/<name>` (one page), `GET /help/search?q=…` (JSON, name+summary substring +
   resolution).
 - Page render: `body_md` → HTML via `pulldown-cmark`; KaTeX renders `$`/`$$`; highlight.js
-  styles `fm`/`text`/`fm-exec` blocks; `fm-exec` shows the captured transcript; `fm-exec:figure`
+  styles `fm`/`text`/`fm-exec` blocks; `fm-exec` shows the captured transcript (looked up via
+  `fm_doc::fragment_by_hash` on the entry's `fragment_script().content_hash()`); `fm-exec:figure`
   embeds the Plotly `Scene` JSON into a `<div>` rendered by the same Plotly client code the
-  graphics view uses. Cross-links become `<a href="/help/name">`. KaTeX + highlight.js assets
-  are self-hosted under `web/` (no CDN), consistent with the "self-contained binary" goal.
+  graphics view uses. Cross-links become `<a href="/help/name">`. KaTeX + highlight.js + Plotly
+  load via CDN (per decision §0 #5), with the existing "vendor for offline" note.
+- **Per-block transcript (known v1 limitation):** the fragment DB stores ONE combined
+  transcript per DocEntry (all `fm-exec` blocks run as one session). The renderer places that
+  transcript beneath the entry's `fm-exec` block; for the common single-`fm-exec` page this is
+  exact. Pages with multiple `fm-exec` blocks render the combined transcript once after the
+  final block. True per-block interleaving (capturing a transcript slice per block) is a
+  deferred model refinement (revisit in P8 if the migrated corpus needs it).
 
 ---
 
