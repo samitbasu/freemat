@@ -23,6 +23,12 @@ tokio = { workspace = true, features = ["rt-multi-thread", "sync", "net", "macro
 axum = { workspace = true, features = ["ws"] }
 futures-util.workspace = true
 webbrowser.workspace = true
+# P2 help-system fragment capture: serialize FragmentScript/CapturedFragment.
+# These crates are already in [workspace.dependencies] (used by fm-graphics);
+# this only promotes serde_json from dev-deps and adds serde for the derives —
+# no new external crates and no edit to the root Cargo.toml.
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "net", "macros", "time"] }

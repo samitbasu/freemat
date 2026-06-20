@@ -1466,6 +1466,38 @@ eigenproblem `eig(A,B)`. **Conformance 650/677 (96.0%) → 658/677 (97.2%), Δ +
   real+complex vs dense, singular→Err, `eigs` nearest-σ vs dense `eig`). **PASS_FLOOR 665 → 668**;
   curated gained `sparse/test_sparse45`, `operators/test_sparse41`, `operators/test_sparse82`.
 
+### Help-system regeneration (multi-agent effort — plan in `docs/HELP_REGEN_PLAN.md`)
+- **Goal:** replace the legacy C++/Qt + Doxygen docs pipeline with a Rust-native one — docs
+  embedded via a `register_doc!` macro next to each builtin; `cargo xtask docgen` regenerates
+  artifacts; `fm-exec` fragments re-run through the interpreter to capture REPL transcripts;
+  help shown as terminal text (`help`) + browser page (`helpwin`).
+- **P0 — done (2026-06-20):** authored `docs/HELP_SYSTEM.md` — the authoritative contract
+  (DocEntry model, markdown dialect incl. `fm-exec`/`fm-file`/`figure` fences, `register_doc!`
+  API, fragment-capture format, generated-artifact format, runtime `help`/`helpwin` contract).
+  Locked the open choices: `inventory` registration · checked-in generated-Rust fragment DB ·
+  runtime `pulldown-cmark` md→HTML · Plotly scene-JSON figures (browser only) · KaTeX · `help`
+  prints text + URL (no auto-open), `helpwin` opens browser. **Corrected the legacy map:** the
+  port-from source is **~597 Doxygen `.doc` pages** (`../FreeMat/doc/**`, 334 with fragments),
+  not inline `@Module` blocks (only 2 `.m` files still have those).
+- **P1 — done (2026-06-20):** new `crates/fm-doc` crate. `DocEntry`/`SourceKind`/`SectionEntry`
+  model; `inventory`-based `Registry` (deterministic `(section,name)` sort, duplicate-name =
+  hard error, `resolve` with alias/case-insensitive/Damerau-Levenshtein-≤2 "did you mean");
+  `register_doc!`/`register_section!` macros (cross-crate, fill `RustBuiltin{krate,module}`);
+  forward markdown-dialect parser (`parse_body`, `fragment_script` — classifies
+  `text`/`fm`/`fm-exec`/`fm-exec:figure`/`fm-file:NAME` fences, `# errors:` lines, headings,
+  `$`/`$$` math, `[text](name)` cross-links). Defines the shared `FragmentScript`. `parser::legacy`
+  is a stub (P6). Deps added to root: `inventory 0.3`, `pulldown-cmark 0.12`. **28 tests pass.**
+- **P2 — done (2026-06-20):** fragment capture engine in `fm-cli` (`src/capture.rs`).
+  `run_fragment(&FragmentScript) -> CapturedFragment`; byte-for-byte REPL parity by reusing
+  `Interpreter::echo`/`Array::format` (no re-implemented formatting); `--> ` prompt + miette
+  error rendering matching `eval_line`; one persistent session across blocks; aux `.m` files
+  staged to a temp dir + `load_file`d; RNG seeded via `seed(1,0)` prelude for determinism;
+  figures captured from the retained `Scene` (no webserver). `fm --capture-fragment <json|->`
+  CLI. Local `FragmentScript`/`CapturedFragment` (TODO(P3): unify with `fm_doc`). **14 tests pass.**
+  All gates re-verified workspace-wide by main agent; `--capture-fragment` smoke-tested.
+- **P3–P8 — not started.** Next: P3 (`xtask` + `cargo xtask docgen`) — unifies the two
+  `FragmentScript` defs, collects the registry, runs/caches fragments → generated artifacts.
+
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,
   no GUI. Debug *engine* lives in `fm-interp`; new crates `fm-dap` (+ optional `fm-lsp`).

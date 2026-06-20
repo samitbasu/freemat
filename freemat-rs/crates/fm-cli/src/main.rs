@@ -29,6 +29,17 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::SUCCESS;
     }
 
+    // `--capture-fragment <script.json>` (or `-` / omitted = stdin) reads a
+    // `FragmentScript` as JSON, runs it through the headless capture engine
+    // (help-system P2), and writes the resulting `CapturedFragment` as JSON to
+    // stdout. Used by `cargo xtask docgen` for crash-isolated fragment capture.
+    {
+        let args: Vec<String> = std::env::args().collect();
+        if let Some(pos) = args.iter().position(|a| a == "--capture-fragment") {
+            return capture_fragment_cli(args.get(pos + 1).map(String::as_str));
+        }
+    }
+
     // `--no-gfx` skips the embedded graphics webserver (and browser auto-open).
     // Handy for headless runs, scripted/piped input, and benchmarking, where a
     // background tokio server is pure overhead.
@@ -114,6 +125,47 @@ fn eval_line(interp: &mut Interpreter, line: &str, reporter: &GraphicalReportHan
                 eprintln!("error: {e}");
             }
             let _ = std::io::stdout().flush();
+        }
+    }
+}
+
+/// Handle `fm --capture-fragment [<script.json>|-]`: read a `FragmentScript`
+/// JSON (from the given path, or stdin if the path is missing or `-`), run it,
+/// and print the `CapturedFragment` JSON to stdout. Diagnostics go to stderr.
+fn capture_fragment_cli(path: Option<&str>) -> std::process::ExitCode {
+    let input = match path {
+        None | Some("-") => {
+            let mut s = String::new();
+            if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut s) {
+                eprintln!("error reading fragment script from stdin: {e}");
+                return std::process::ExitCode::FAILURE;
+            }
+            s
+        }
+        Some(p) => match std::fs::read_to_string(p) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("error reading fragment script '{p}': {e}");
+                return std::process::ExitCode::FAILURE;
+            }
+        },
+    };
+    let script: fm_cli::FragmentScript = match serde_json::from_str(&input) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error parsing fragment script JSON: {e}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let captured = fm_cli::run_fragment(&script);
+    match serde_json::to_string(&captured) {
+        Ok(json) => {
+            println!("{json}");
+            std::process::ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error serializing captured fragment: {e}");
+            std::process::ExitCode::FAILURE
         }
     }
 }
