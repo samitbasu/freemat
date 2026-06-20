@@ -22,6 +22,10 @@ ndarray.workspace = true
 rand.workspace = true
 rand_distr.workspace = true
 chrono.workspace = true
+# Help system (P5): `help`/`helpwin` builtins — open the browser help page and
+# detect OSC 8 hyperlink support for the clickable `Browser:` line.
+webbrowser.workspace = true
+supports-hyperlinks.workspace = true
 
 [lints]
 workspace = true

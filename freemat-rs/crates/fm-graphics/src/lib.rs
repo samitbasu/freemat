@@ -29,6 +29,14 @@ pub trait GraphicsSink: Send + Sync {
     /// non-suppressed plotting command). Implementations should be cheap /
     /// non-blocking (e.g. broadcast over a channel).
     fn publish(&self, scene: &Scene);
+
+    /// The base `http://host:port` URL of the help/graphics server backing this
+    /// sink, if any (help-system P5). `help`/`helpwin` use it to form the
+    /// `{base}/help/<name>` page URL. The default returns `None` so non-server
+    /// sinks (library/conformance test stubs) need no change.
+    fn base_url(&self) -> Option<String> {
+        None
+    }
 }
 
 #[cfg(test)]

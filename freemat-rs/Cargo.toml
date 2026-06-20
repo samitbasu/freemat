@@ -64,6 +64,10 @@ pulldown-cmark = "0.12"
 # serialization to key the generated fragment DB (collision-safe across the
 # on-disk DB). See docs/HELP_SYSTEM.md §4.3.
 blake3 = "1"
+# Help system (P5, `help`): detect OSC 8 hyperlink support so `help <name>`
+# renders the browser URL as a clickable terminal link. See docs/HELP_SYSTEM.md
+# §0 #6 / §6.2.
+supports-hyperlinks = "3"
 
 [workspace.lints.rust]
 rust_2018_idioms = "warn"

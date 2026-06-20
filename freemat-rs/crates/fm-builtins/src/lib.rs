@@ -21,6 +21,7 @@ mod constructors;
 mod elementary;
 mod fitfun;
 mod graphics;
+mod help;
 mod inspection;
 mod interp_ops;
 mod linalg;
@@ -118,6 +119,8 @@ pub fn register_into(table: &mut FunctionTable) {
     // Stage 8: MAT save/load, file I/O, FFT, regex. Registered last so its
     // `exist` (which also checks for files on disk) shadows the interp_ops one.
     fm_io::register(table);
+    // Help system (P5): `help`/`helpwin`.
+    help::register(table);
 }
 
 #[cfg(test)]

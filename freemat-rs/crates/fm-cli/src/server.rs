@@ -68,6 +68,12 @@ impl GraphicsSink for ServerHandle {
             let _ = self.tx.send(json);
         }
     }
+
+    /// The running server's base URL, so `help`/`helpwin` can form the
+    /// `{base}/help/<name>` page URL (help-system P5).
+    fn base_url(&self) -> Option<String> {
+        Some(self.url())
+    }
 }
 
 /// Start the graphics webserver on `127.0.0.1:<port>` (port `0` = OS-chosen).

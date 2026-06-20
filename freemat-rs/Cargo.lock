@@ -652,6 +652,8 @@ dependencies = [
  "ndarray",
  "rand 0.9.4",
  "rand_distr",
+ "supports-hyperlinks",
+ "webbrowser",
 ]
 
 [[package]]

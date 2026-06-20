@@ -1524,7 +1524,24 @@ eigenproblem `eig(A,B)`. **Conformance 650/677 (96.0%) → 658/677 (97.2%), Δ +
   server and GETs the routes. **Main agent independently re-verified all gates AND manually
   curled a live `fm` server**: `/help`, `/help/cos` (transcript `--> cos(0)`/`ans =`/`1`
   renders), `/help/search?q=cos` JSON, `/help/nonesuch` → 404. fm-doc 37 tests, help_browser 1.
-- **P5 — in progress:** `help`/`helpwin` builtins + terminal rendering (OSC 8 links).
+- **P5 — done (2026-06-20):** `help`/`helpwin` builtins + terminal rendering. Pure
+  `fm-doc::render::text::render_text(entry, registry, &TextOpts{width,ansi,hyperlink_base})`
+  (§6.4): uppercase title, `-`-underlined headings, code/emphasis strip (or ANSI), indented
+  `text`/`fm` fences, transcript inlined from the DB (`fragment_by_hash`), `[figure: name]
+  (see helpwin name)` for `:figure`, math delimiters stripped, OSC 8 cross-links (+ a
+  `visible_width` that skips escapes for wrapping). `help`/`helpwin` live in `fm-builtins`
+  (`help.rs`); they read the server URL via a **defaulted `GraphicsSink::base_url()`** seam
+  (fm-graphics trait default; `ServerHandle` returns its url) — zero main.rs churn — and print
+  through `Interpreter::emit`. `help` = sections / section topics / topic text + a `Browser:`
+  line (OSC 8 clickable when TTY + `supports-hyperlinks`, bare URL else, or a `helpwin` hint
+  when no server) — never auto-opens; `helpwin` opens the browser via `webbrowser`. Added
+  `supports-hyperlinks` dep. fm-doc 50 tests, fm-builtins help 7. **Main agent re-verified all
+  gates AND drove a live REPL:** `help cos` (title/heading/wrapped prose/indented transcript +
+  Browser URL with server, hint without), `help` (section list), `help mathfunctions`,
+  `help coss` (did-you-mean cos), `helpwin cos` (opens / graceful no-server message).
+- **P4∥P5 layer complete.** The full pipeline works: docgen captures fragments → browser
+  serves rich `/help` pages → terminal `help` renders text + clickable URL → `helpwin` opens
+  the browser. Next: P6 (legacy Doxygen `.doc` → dialect converter) → P7 (bulk migration).
 - **P6–P8 — not started.**
 
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)

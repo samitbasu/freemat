@@ -18,3 +18,4 @@
 //! in from the fragment DB by content hash (§6.5).
 
 pub mod html;
+pub mod text;
