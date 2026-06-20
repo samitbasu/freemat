@@ -8,6 +8,7 @@
 //! captures their transcripts byte-for-byte for the docs pipeline.
 
 pub mod capture;
+mod help;
 pub mod server;
 
 // The canonical model lives in fm-doc (P3 unification); re-exported here so the

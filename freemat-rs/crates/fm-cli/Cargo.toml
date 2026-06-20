@@ -30,6 +30,9 @@ webbrowser.workspace = true
 # CapturedFragment JSON for the `fm --capture-fragment` CLI path. The serde
 # *derives* now live on the types in fm-doc; fm-cli only needs serde_json here.
 serde_json.workspace = true
+# P4 browser help: serde derives on the /help/search query + JSON response
+# types (axum's Query/Json extractors).
+serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "net", "macros", "time"] }

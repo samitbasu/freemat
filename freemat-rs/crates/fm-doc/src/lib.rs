@@ -38,6 +38,7 @@ mod macros;
 mod model;
 mod parser;
 mod registry;
+pub mod render;
 
 // Re-export `inventory` so the `register_doc!`/`register_section!` macros can
 // refer to it as `$crate::inventory` from any downstream crate.

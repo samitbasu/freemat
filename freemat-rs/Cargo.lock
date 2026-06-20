@@ -667,6 +667,7 @@ dependencies = [
  "futures-util",
  "miette",
  "rustyline",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.24.0",

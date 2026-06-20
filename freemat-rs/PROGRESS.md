@@ -1512,7 +1512,20 @@ eigenproblem `eig(A,B)`. **Conformance 650/677 (96.0%) → 658/677 (97.2%), Δ +
   needs a separate, engine-version-keyed store). `blake3 1` added to workspace deps.
   Gates re-verified workspace-wide. Note: `xtask` has no unit tests yet (docgen verified by
   integration/tamper checks) — add in P8.
-- **P4–P8 — not started.** Next: P4 (browser `/help`) ∥ P5 (`help`/`helpwin` builtins).
+- **P4 — done (2026-06-20):** browser help serving. Pure HTML renderer in `fm-doc`
+  (`render::html::render_page`/`render_index`) — md→HTML via pulldown-cmark, `fm`/`text`/
+  `fm-exec` code blocks classed for highlight.js, captured transcript looked up via
+  `fragment_by_hash` and emitted in `<pre class="fm-transcript">`, `fm-exec:figure` → a
+  `data-plotly` div, `$`/`$$` math left for KaTeX auto-render, `[text](name)` → `/help/<name>`
+  anchors. axum routes added to the EXISTING server (`fm-cli/src/help.rs`, wired in
+  `server.rs`): `GET /help` (index+search box), `GET /help/{name}` (resolve→page / did-you-mean
+  404 / 404), `GET /help/search?q=` (JSON). KaTeX + highlight.js + Plotly via CDN (matching the
+  existing frontend's Plotly CDN + "vendor for offline" note). Integration test boots the real
+  server and GETs the routes. **Main agent independently re-verified all gates AND manually
+  curled a live `fm` server**: `/help`, `/help/cos` (transcript `--> cos(0)`/`ans =`/`1`
+  renders), `/help/search?q=cos` JSON, `/help/nonesuch` → 404. fm-doc 37 tests, help_browser 1.
+- **P5 — in progress:** `help`/`helpwin` builtins + terminal rendering (OSC 8 links).
+- **P6–P8 — not started.**
 
 ### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
 - Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,

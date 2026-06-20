@@ -111,10 +111,12 @@ pub fn start(port: u16) -> Result<ServerHandle, String> {
                 }
             };
             rt.block_on(async move {
-                let app = Router::new()
-                    .route("/", get(|| async { Html(INDEX_HTML) }))
-                    .route("/ws", get(ws_handler))
-                    .with_state(state);
+                let app = crate::help::add_routes(
+                    Router::new()
+                        .route("/", get(|| async { Html(INDEX_HTML) }))
+                        .route("/ws", get(ws_handler)),
+                )
+                .with_state(state);
                 // Adopt the std listener into this runtime.
                 let listener = match tokio::net::TcpListener::from_std(std_listener) {
                     Ok(l) => l,
