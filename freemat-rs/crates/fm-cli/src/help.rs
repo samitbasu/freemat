@@ -281,9 +281,38 @@ fn shell(title: &str, body: &str) -> String {
             (ax.series || []).forEach(function (s) {{
               if (s.kind === "line") {{
                 data.push({{ type: "scatter", mode: "lines", x: s.x, y: s.y,
-                             name: s.name || "" }});
+                             name: s.name || "", line: s.color ? {{ color: s.color }} : {{}} }});
               }} else if (s.kind === "surface") {{
-                data.push({{ type: "surface", z: s.z, x: s.x, y: s.y }});
+                data.push({{ type: "surface", z: s.z, x: s.x, y: s.y,
+                             colorscale: s.colormap || "Viridis" }});
+              }} else if (s.kind === "image") {{
+                data.push({{ type: "heatmap", z: s.data, colorscale: s.colormap || "Viridis" }});
+              }} else if (s.kind === "contour") {{
+                data.push({{ type: "contour", z: s.z, x: s.x, y: s.y,
+                             colorscale: s.colormap || "Viridis" }});
+              }} else if (s.kind === "bar") {{
+                var b = {{ type: "bar", name: s.name || "" }};
+                if (s.horizontal) {{ b.orientation = "h"; b.y = s.x; b.x = s.y; }}
+                else {{ b.x = s.x; b.y = s.y; }}
+                if (s.color) b.marker = {{ color: s.color }};
+                data.push(b);
+              }} else if (s.kind === "stem") {{
+                var xs = [], ys = [];
+                for (var k = 0; k < s.x.length; k++) {{ xs.push(s.x[k], s.x[k], null); ys.push(0, s.y[k], null); }}
+                data.push({{ type: "scatter", mode: "lines", x: xs, y: ys, connectgaps: false,
+                             line: s.color ? {{ color: s.color }} : {{}}, showlegend: false }});
+                data.push({{ type: "scatter", mode: "markers", x: s.x, y: s.y,
+                             marker: {{ symbol: "circle", color: s.color || undefined }}, name: s.name || "" }});
+              }} else if (s.kind === "stairs") {{
+                data.push({{ type: "scatter", mode: "lines", x: s.x, y: s.y,
+                             line: {{ shape: "hv", color: s.color || undefined }}, name: s.name || "" }});
+              }} else if (s.kind === "errorbar") {{
+                data.push({{ type: "scatter", mode: "lines+markers", x: s.x, y: s.y,
+                             error_y: {{ type: "data", array: s.e, visible: true }},
+                             line: s.color ? {{ color: s.color }} : {{}}, name: s.name || "" }});
+              }} else if (s.kind === "line3d") {{
+                data.push({{ type: "scatter3d", mode: "lines", x: s.x, y: s.y, z: s.z,
+                             line: s.color ? {{ color: s.color }} : {{}}, name: s.name || "" }});
               }}
             }});
           }});

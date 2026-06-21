@@ -249,6 +249,16 @@ pub enum Series {
     Image(ImageSeries),
     /// A 2-D contour plot (`contour`).
     Contour(ContourSeries),
+    /// A bar chart (`bar`, `barh`).
+    Bar(BarSeries),
+    /// A stem plot (`stem`).
+    Stem(StemSeries),
+    /// A staircase step plot (`stairs`).
+    Stairs(StairsSeries),
+    /// A line with symmetric vertical error bars (`errorbar`).
+    Errorbar(ErrorbarSeries),
+    /// A 3-D line plot (`plot3`).
+    Line3d(Line3dSeries),
 }
 
 /// A 2-D line series: x/y data plus style/color/marker/legend.
@@ -318,6 +328,97 @@ pub struct ImageSeries {
     /// Colormap name.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub colormap: String,
+}
+
+/// A bar chart: x positions and bar heights, with an orientation.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct BarSeries {
+    /// Bar positions (category centers).
+    pub x: Vec<f64>,
+    /// Bar heights.
+    pub y: Vec<f64>,
+    /// `true` = horizontal bars (`barh`), `false` = vertical (`bar`).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub horizontal: bool,
+    /// CSS / `rgb(r,g,b)` color string; empty = let the frontend cycle.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub color: String,
+    /// Legend display name (empty = auto / none).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+}
+
+/// A stem plot: markers atop vertical stems rising from the baseline.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct StemSeries {
+    /// X data.
+    pub x: Vec<f64>,
+    /// Y data (stem heights).
+    pub y: Vec<f64>,
+    /// CSS / `rgb(r,g,b)` color string; empty = let the frontend cycle.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub color: String,
+    /// Marker symbol (default `o`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub marker: String,
+    /// Legend display name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+}
+
+/// A staircase step plot (`stairs`): a piecewise-constant line.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct StairsSeries {
+    /// X data.
+    pub x: Vec<f64>,
+    /// Y data.
+    pub y: Vec<f64>,
+    /// CSS / `rgb(r,g,b)` color string; empty = let the frontend cycle.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub color: String,
+    /// Legend display name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+}
+
+/// A line with symmetric vertical error bars (`errorbar`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ErrorbarSeries {
+    /// X data.
+    pub x: Vec<f64>,
+    /// Y data.
+    pub y: Vec<f64>,
+    /// Symmetric error magnitudes (one per point).
+    pub e: Vec<f64>,
+    /// CSS / `rgb(r,g,b)` color string; empty = let the frontend cycle.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub color: String,
+    /// Legend display name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+}
+
+/// A 3-D line plot (`plot3`): x/y/z polyline.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Line3dSeries {
+    /// X data.
+    pub x: Vec<f64>,
+    /// Y data.
+    pub y: Vec<f64>,
+    /// Z data.
+    pub z: Vec<f64>,
+    /// Line style (`-`, `--`, `:`, `-.`, or empty = no line).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub line_style: String,
+    /// Marker symbol (or empty = none).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub marker: String,
+    /// CSS / `rgb(r,g,b)` color string; empty = let the frontend cycle.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub color: String,
+    /// Legend display name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
 }
 
 /// Helper for `skip_serializing_if` on `bool` fields.

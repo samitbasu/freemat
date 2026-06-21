@@ -11,8 +11,9 @@
 
 use fm_core::{Array, DataClass};
 use fm_graphics::{
-    AxisLimits, ContourSeries, ImageSeries, Legend, LineSeries, Scale, Series, SurfaceSeries,
-    default_color, parse_linespec,
+    AxisLimits, BarSeries, ContourSeries, ErrorbarSeries, ImageSeries, Legend, Line3dSeries,
+    LineSeries, Scale, Series, StairsSeries, StemSeries, SurfaceSeries, default_color,
+    parse_linespec,
 };
 use fm_interp::error::Flow;
 use fm_interp::value::{build_real, to_f64_vec};
@@ -51,6 +52,26 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("mesh", |i, a, _n| surface(i, a, true));
     table.add_builtin("image", b_image);
     table.add_builtin("imagesc", b_image);
+    table.add_builtin("bar", |i, a, _n| bar(i, a, false));
+    table.add_builtin("barh", |i, a, _n| bar(i, a, true));
+    table.add_builtin("hist", b_hist);
+    table.add_builtin("stem", b_stem);
+    table.add_builtin("stairs", b_stairs);
+    table.add_builtin("errorbar", b_errorbar);
+    table.add_builtin("plot3", b_plot3);
+    table.add_builtin("peaks", b_peaks);
+}
+
+/// Split args into `(x, y)`, supplying the implicit `x = 1:n` when only `y` is
+/// given. Used by the chart-type builtins (`bar`, `stem`, `stairs`).
+fn xy_args(args: &[Array]) -> (Vec<f64>, Vec<f64>) {
+    if args.len() >= 2 && !args[1].is_char() {
+        (to_f64_vec(&args[0]), to_f64_vec(&args[1]))
+    } else {
+        let y = to_f64_vec(&args[0]);
+        let x: Vec<f64> = (1..=y.len()).map(|k| k as f64).collect();
+        (x, y)
+    }
 }
 
 /// Read a single string argument (linespec, label text, on/off, ...).
@@ -843,6 +864,301 @@ fn b_image(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     let h = i.graphics.register_series(fig, axes_idx, ObjKind::Image);
     i.graphics.dirty = true;
     Ok(vec![handle(h)])
+}
+
+// ---- bar / barh / hist ------------------------------------------------------
+
+/// `bar(y)` / `bar(x,y)` / `barh(...)` — a vertical (or horizontal) bar chart.
+fn bar(i: &mut Interpreter, args: &[Array], horizontal: bool) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return err("bar: not enough arguments");
+    }
+    let (x, y) = xy_args(args);
+    clear_current_series_unless_hold(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    let color = default_color(ax.series.len());
+    ax.series.push(Series::Bar(BarSeries {
+        x,
+        y,
+        horizontal,
+        color,
+        name: String::new(),
+    }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Line);
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+/// `hist(y)` / `hist(y, nbins)` — compute a histogram (bins + counts) and draw
+/// it as a bar chart. With output args, return `[n, x]` (counts and centers)
+/// like MATLAB/FreeMat (no plot in that case).
+fn b_hist(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return err("hist: not enough arguments");
+    }
+    let data = to_f64_vec(&args[0]);
+    let finite: Vec<f64> = data.iter().copied().filter(|v| v.is_finite()).collect();
+    // Second arg: either a bin count (scalar) or explicit bin centers (vector).
+    let centers: Vec<f64> = match args.get(1) {
+        Some(a) if to_f64_vec(a).len() > 1 => to_f64_vec(a),
+        other => {
+            let nbins = other
+                .map(|a| a.as_f64().unwrap_or(10.0).round().max(1.0) as usize)
+                .unwrap_or(10);
+            histogram_centers(&finite, nbins)
+        }
+    };
+    let counts = histogram_counts(&finite, &centers);
+    if nargout >= 1 {
+        // Return [n, x] without plotting.
+        let n = counts.len();
+        let mut out = vec![build_real(DataClass::Double, &[1, n], counts)];
+        if nargout >= 2 {
+            out.push(build_real(DataClass::Double, &[1, centers.len()], centers));
+        }
+        return Ok(out);
+    }
+    clear_current_series_unless_hold(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    let color = default_color(ax.series.len());
+    ax.series.push(Series::Bar(BarSeries {
+        x: centers,
+        y: counts,
+        horizontal: false,
+        color,
+        name: String::new(),
+    }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Line);
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+/// Evenly-spaced bin centers spanning the data range (FreeMat `hist` default).
+fn histogram_centers(data: &[f64], nbins: usize) -> Vec<f64> {
+    let nbins = nbins.max(1);
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for &v in data {
+        lo = lo.min(v);
+        hi = hi.max(v);
+    }
+    if !lo.is_finite() || !hi.is_finite() {
+        lo = 0.0;
+        hi = 1.0;
+    }
+    if (hi - lo).abs() < f64::EPSILON {
+        lo -= 0.5;
+        hi += 0.5;
+    }
+    let width = (hi - lo) / nbins as f64;
+    (0..nbins).map(|k| lo + width * (k as f64 + 0.5)).collect()
+}
+
+/// Count data points into bins whose edges are midway between the centers
+/// (FreeMat/MATLAB `hist` binning).
+fn histogram_counts(data: &[f64], centers: &[f64]) -> Vec<f64> {
+    let mut counts = vec![0.0; centers.len()];
+    if centers.is_empty() {
+        return counts;
+    }
+    // Edges: midpoints between adjacent centers, with the outer bins unbounded.
+    let mut edges = Vec::with_capacity(centers.len() + 1);
+    edges.push(f64::NEG_INFINITY);
+    for w in centers.windows(2) {
+        edges.push((w[0] + w[1]) / 2.0);
+    }
+    edges.push(f64::INFINITY);
+    for &v in data {
+        // Find the bin whose [edge[k], edge[k+1]) contains v.
+        let mut bin = 0;
+        for k in 0..centers.len() {
+            if v >= edges[k] && (v < edges[k + 1] || k + 1 == centers.len()) {
+                bin = k;
+                break;
+            }
+        }
+        counts[bin] += 1.0;
+    }
+    counts
+}
+
+// ---- stem / stairs ----------------------------------------------------------
+
+/// `stem(y)` / `stem(x,y)` — markers on vertical stems.
+fn b_stem(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return err("stem: not enough arguments");
+    }
+    let (x, y) = xy_args(args);
+    clear_current_series_unless_hold(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    let color = default_color(ax.series.len());
+    ax.series.push(Series::Stem(StemSeries {
+        x,
+        y,
+        color,
+        marker: "o".into(),
+        name: String::new(),
+    }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Line);
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+/// `stairs(y)` / `stairs(x,y)` — staircase step plot.
+fn b_stairs(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return err("stairs: not enough arguments");
+    }
+    let (x, y) = xy_args(args);
+    clear_current_series_unless_hold(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    let color = default_color(ax.series.len());
+    ax.series.push(Series::Stairs(StairsSeries {
+        x,
+        y,
+        color,
+        name: String::new(),
+    }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Line);
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+// ---- errorbar ---------------------------------------------------------------
+
+/// `errorbar(x, y, e)` (or `errorbar(y, e)`) — line with symmetric error bars.
+fn b_errorbar(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let (x, y, e) = match args.len() {
+        0 | 1 => return err("errorbar: expected errorbar(x,y,e) or errorbar(y,e)"),
+        2 => {
+            let y = to_f64_vec(&args[0]);
+            let x: Vec<f64> = (1..=y.len()).map(|k| k as f64).collect();
+            (x, y, to_f64_vec(&args[1]))
+        }
+        _ => (
+            to_f64_vec(&args[0]),
+            to_f64_vec(&args[1]),
+            to_f64_vec(&args[2]),
+        ),
+    };
+    clear_current_series_unless_hold(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    let color = default_color(ax.series.len());
+    ax.series.push(Series::Errorbar(ErrorbarSeries {
+        x,
+        y,
+        e,
+        color,
+        name: String::new(),
+    }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Line);
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+// ---- plot3 ------------------------------------------------------------------
+
+/// `plot3(x, y, z[, linespec])` — a 3-D line plot.
+fn b_plot3(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.len() < 3 {
+        return err("plot3: expected plot3(x,y,z)");
+    }
+    clear_current_series_unless_hold(i);
+    let x = to_f64_vec(&args[0]);
+    let y = to_f64_vec(&args[1]);
+    let z = to_f64_vec(&args[2]);
+    let mut spec = fm_graphics::LineSpec::default();
+    if let Some(s) = args.get(3).and_then(Array::as_string) {
+        let parsed = parse_linespec(&s);
+        if parsed.valid {
+            spec = parsed;
+        }
+    }
+    let (fig, axes_idx) = current_axes_loc(i);
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    let color = if spec.color.is_empty() {
+        default_color(ax.series.len())
+    } else {
+        spec.color.clone()
+    };
+    let line_style = if spec.line_style.is_empty() && spec.marker.is_empty() {
+        "-".to_string()
+    } else {
+        spec.line_style.clone()
+    };
+    ax.series.push(Series::Line3d(Line3dSeries {
+        x,
+        y,
+        z,
+        line_style,
+        marker: spec.marker.clone(),
+        color,
+        name: String::new(),
+    }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Line);
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+// ---- peaks ------------------------------------------------------------------
+
+/// `peaks` / `peaks(n)` — the classic demo surface. Returns the `n×n` matrix.
+///
+/// FreeMat/MATLAB's `peaks` plots a `surf` when called with *zero* output
+/// arguments. The interpreter always invokes builtins with `nargout >= 1`
+/// (every expression statement requests one output, bound to `ans`), so we
+/// cannot distinguish a bare `peaks` from `Z = peaks` here — and returning the
+/// matrix is the form needed by the dominant uses (`surf(peaks)`, `Z=peaks`,
+/// `mesh(peaks(30))`). To plot the demo surface, use `surf(peaks)`.
+fn b_peaks(_i: &mut Interpreter, args: &[Array], _nargout: usize) -> Flow<Vec<Array>> {
+    let n = args
+        .first()
+        .and_then(Array::as_f64)
+        .map(|v| v.round().max(1.0) as usize)
+        .unwrap_or(49);
+    let (z, rows, cols) = peaks_matrix(n);
+    // Column-major flatten for the Array.
+    let mut col_major = vec![0.0; rows * cols];
+    for r in 0..rows {
+        for c in 0..cols {
+            col_major[c * rows + r] = z[r][c];
+        }
+    }
+    Ok(vec![build_real(
+        DataClass::Double,
+        &[rows, cols],
+        col_major,
+    )])
+}
+
+/// The classic `peaks` surface on an `n×n` grid over `[-3, 3]²`.
+/// `z = 3*(1-x)^2*exp(-x^2-(y+1)^2) - 10*(x/5-x^3-y^5)*exp(-x^2-y^2)
+///       - 1/3*exp(-(x+1)^2-y^2)` (FreeMat/MATLAB definition).
+fn peaks_matrix(n: usize) -> (Vec<Vec<f64>>, usize, usize) {
+    let n = n.max(1);
+    let lin: Vec<f64> = if n == 1 {
+        vec![0.0]
+    } else {
+        (0..n)
+            .map(|k| -3.0 + 6.0 * k as f64 / (n as f64 - 1.0))
+            .collect()
+    };
+    let mut z = vec![vec![0.0; n]; n];
+    for r in 0..n {
+        let y = lin[r];
+        for c in 0..n {
+            let x = lin[c];
+            z[r][c] = 3.0 * (1.0 - x).powi(2) * (-(x * x) - (y + 1.0).powi(2)).exp()
+                - 10.0 * (x / 5.0 - x.powi(3) - y.powi(5)) * (-(x * x) - y * y).exp()
+                - (1.0 / 3.0) * (-(x + 1.0).powi(2) - y * y).exp();
+        }
+    }
+    (z, n, n)
 }
 
 // `semilogx`/`semilogy`/`loglog` set the scale then delegate to plot.

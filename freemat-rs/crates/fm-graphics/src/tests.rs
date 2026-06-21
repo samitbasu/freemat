@@ -1,7 +1,8 @@
 //! Unit tests for scene construction, linespec parsing, and JSON serialization.
 
 use crate::{
-    Axes, ContourSeries, Figure, LineSeries, Scale, Scene, Series, default_color, parse_linespec,
+    Axes, BarSeries, ContourSeries, ErrorbarSeries, Figure, Line3dSeries, LineSeries, Scale, Scene,
+    Series, StairsSeries, StemSeries, default_color, parse_linespec,
 };
 
 #[test]
@@ -148,4 +149,126 @@ fn contour_series_roundtrips() {
     assert_eq!(scene, back);
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v["figures"][0]["axes"][0]["series"][0]["kind"], "contour");
+}
+
+// ---- Chart-type series serialization ----------------------------------------
+
+/// Push a single series into a fresh scene and return its JSON value.
+fn one_series_json(s: Series) -> serde_json::Value {
+    let mut scene = Scene::new();
+    scene
+        .figure_mut_or_insert(1)
+        .current_axes_mut()
+        .series
+        .push(s);
+    let msg = scene.to_message().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&msg).unwrap();
+    v["scene"]["figures"][0]["axes"][0]["series"][0].clone()
+}
+
+#[test]
+fn bar_series_serializes_with_kind_and_fields() {
+    let s = one_series_json(Series::Bar(BarSeries {
+        x: vec![1.0, 2.0, 3.0],
+        y: vec![4.0, 5.0, 6.0],
+        horizontal: true,
+        color: "rgb(0,0,255)".into(),
+        ..Default::default()
+    }));
+    assert_eq!(s["kind"], "bar");
+    assert_eq!(s["x"], serde_json::json!([1.0, 2.0, 3.0]));
+    assert_eq!(s["y"], serde_json::json!([4.0, 5.0, 6.0]));
+    assert_eq!(s["horizontal"], true);
+    assert_eq!(s["color"], "rgb(0,0,255)");
+}
+
+#[test]
+fn bar_vertical_omits_horizontal_flag() {
+    let s = one_series_json(Series::Bar(BarSeries {
+        x: vec![1.0],
+        y: vec![2.0],
+        ..Default::default()
+    }));
+    assert_eq!(s["kind"], "bar");
+    assert!(s.get("horizontal").is_none());
+}
+
+#[test]
+fn stem_series_serializes_with_kind_and_marker() {
+    let s = one_series_json(Series::Stem(StemSeries {
+        x: vec![1.0, 2.0],
+        y: vec![3.0, 4.0],
+        marker: "o".into(),
+        ..Default::default()
+    }));
+    assert_eq!(s["kind"], "stem");
+    assert_eq!(s["x"], serde_json::json!([1.0, 2.0]));
+    assert_eq!(s["y"], serde_json::json!([3.0, 4.0]));
+    assert_eq!(s["marker"], "o");
+}
+
+#[test]
+fn stairs_series_serializes_with_kind() {
+    let s = one_series_json(Series::Stairs(StairsSeries {
+        x: vec![1.0, 2.0, 3.0],
+        y: vec![1.0, 4.0, 9.0],
+        ..Default::default()
+    }));
+    assert_eq!(s["kind"], "stairs");
+    assert_eq!(s["y"], serde_json::json!([1.0, 4.0, 9.0]));
+}
+
+#[test]
+fn errorbar_series_serializes_with_error_data() {
+    let s = one_series_json(Series::Errorbar(ErrorbarSeries {
+        x: vec![1.0, 2.0],
+        y: vec![10.0, 20.0],
+        e: vec![0.5, 0.7],
+        ..Default::default()
+    }));
+    assert_eq!(s["kind"], "errorbar");
+    assert_eq!(s["e"], serde_json::json!([0.5, 0.7]));
+}
+
+#[test]
+fn line3d_series_serializes_with_xyz() {
+    let s = one_series_json(Series::Line3d(Line3dSeries {
+        x: vec![1.0, 2.0],
+        y: vec![3.0, 4.0],
+        z: vec![5.0, 6.0],
+        line_style: "-".into(),
+        ..Default::default()
+    }));
+    assert_eq!(s["kind"], "line3d");
+    assert_eq!(s["x"], serde_json::json!([1.0, 2.0]));
+    assert_eq!(s["y"], serde_json::json!([3.0, 4.0]));
+    assert_eq!(s["z"], serde_json::json!([5.0, 6.0]));
+    assert_eq!(s["line_style"], "-");
+}
+
+#[test]
+fn chart_series_roundtrip_through_json() {
+    let mut scene = Scene::new();
+    let ax = scene.figure_mut_or_insert(1).current_axes_mut();
+    ax.series.push(Series::Bar(BarSeries {
+        x: vec![1.0],
+        y: vec![2.0],
+        horizontal: true,
+        ..Default::default()
+    }));
+    ax.series.push(Series::Stem(StemSeries {
+        x: vec![1.0],
+        y: vec![2.0],
+        marker: "o".into(),
+        ..Default::default()
+    }));
+    ax.series.push(Series::Line3d(Line3dSeries {
+        x: vec![1.0],
+        y: vec![2.0],
+        z: vec![3.0],
+        ..Default::default()
+    }));
+    let json = serde_json::to_string(&scene).unwrap();
+    let back: Scene = serde_json::from_str(&json).unwrap();
+    assert_eq!(scene, back);
 }

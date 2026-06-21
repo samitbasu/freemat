@@ -86,11 +86,90 @@
         return t;
       }
 
+      function barToTrace(s, idx) {
+        const t = {
+          type: "bar", name: s.name || ("series " + (idx + 1)),
+        };
+        if (s.horizontal) { t.orientation = "h"; t.y = s.x; t.x = s.y; }
+        else { t.x = s.x; t.y = s.y; }
+        if (s.color) t.marker = { color: s.color };
+        return t;
+      }
+
+      function stemToTrace(s, idx) {
+        // Build vertical stems plus a marker at each tip; scatter with a base.
+        const xs = [], ys = [];
+        for (let k = 0; k < s.x.length; k++) {
+          xs.push(s.x[k], s.x[k], null);
+          ys.push(0, s.y[k], null);
+        }
+        const color = s.color || undefined;
+        // The stems are one scatter trace (null-gap segments from base to tip);
+        // the tip markers are added as a second trace by the caller.
+        return {
+          type: "scatter", mode: "lines", x: xs, y: ys, connectgaps: false,
+          name: s.name || ("series " + (idx + 1)),
+          line: color ? { color } : {},
+        };
+      }
+
+      function stemMarkers(s, idx) {
+        const color = s.color || undefined;
+        return {
+          type: "scatter", mode: "markers", x: s.x, y: s.y,
+          name: s.name || ("series " + (idx + 1)),
+          marker: { symbol: MARKERS[s.marker] || "circle", color },
+          showlegend: false,
+        };
+      }
+
+      function stairsToTrace(s, idx) {
+        const t = {
+          type: "scatter", mode: "lines", x: s.x, y: s.y,
+          line: { shape: "hv" },
+          name: s.name || ("series " + (idx + 1)),
+        };
+        if (s.color) t.line.color = s.color;
+        return t;
+      }
+
+      function errorbarToTrace(s, idx) {
+        const t = {
+          type: "scatter", mode: "lines+markers", x: s.x, y: s.y,
+          error_y: { type: "data", array: s.e, visible: true },
+          name: s.name || ("series " + (idx + 1)),
+          line: {}, marker: {},
+        };
+        if (s.color) { t.line.color = s.color; t.marker.color = s.color; t.error_y.color = s.color; }
+        return t;
+      }
+
+      function line3dToTrace(s, idx) {
+        let mode = "lines";
+        const hasMarker = s.marker && s.marker.length > 0;
+        const hasLine = s.line_style && s.line_style.length > 0;
+        if (hasLine && hasMarker) mode = "lines+markers";
+        else if (hasMarker && !hasLine) mode = "markers";
+        const t = {
+          type: "scatter3d", mode, x: s.x, y: s.y, z: s.z,
+          name: s.name || ("series " + (idx + 1)),
+          line: { dash: DASH[s.line_style] || "solid" },
+        };
+        if (s.color) { t.line.color = s.color; }
+        if (hasMarker) { t.marker = { symbol: MARKERS[s.marker] || "circle" }; if (s.color) t.marker.color = s.color; }
+        return t;
+      }
+
       function seriesToTrace(s, i) {
         if (s.kind === "line") return lineToTrace(s, i);
         if (s.kind === "surface") return surfaceToTrace(s);
         if (s.kind === "image") return imageToTrace(s);
         if (s.kind === "contour") return contourToTrace(s);
+        if (s.kind === "bar") return barToTrace(s, i);
+        if (s.kind === "stem") return stemToTrace(s, i);
+        if (s.kind === "stairs") return stairsToTrace(s, i);
+        if (s.kind === "errorbar") return errorbarToTrace(s, i);
+        if (s.kind === "line3d") return line3dToTrace(s, i);
         return null;
       }
 
@@ -127,14 +206,20 @@
         (ax.series || []).forEach((s, i) => {
           const t = seriesToTrace(s, i);
           if (!t) return;
-          // 2-D traces bind to this subplot's axes; 3-D surface uses scene.
-          if (s.kind === "surface") {
+          // 2-D traces bind to this subplot's axes; 3-D surface/line use scene.
+          if (s.kind === "surface" || s.kind === "line3d") {
             t.scene = "scene" + suffix;
           } else {
             t.xaxis = xref; t.yaxis = yref;
           }
           if (names && names[i]) t.name = names[i];
           data.push(t);
+          // Stem plots need a second trace for the tip markers.
+          if (s.kind === "stem") {
+            const m = stemMarkers(s, i);
+            m.xaxis = xref; m.yaxis = yref;
+            data.push(m);
+          }
         });
         if ((ax.title || "").length) {
           layout.annotations = layout.annotations || [];
