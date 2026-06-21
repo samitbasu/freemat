@@ -818,7 +818,7 @@ pub fn chol(a: &Array) -> Result<Array> {
 }
 
 /// Which norm to compute.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NormKind {
     /// 2-norm (default): spectral for matrices, Euclidean for vectors.
     Two,
@@ -828,6 +828,10 @@ pub enum NormKind {
     Inf,
     /// Frobenius norm.
     Fro,
+    /// Negative-infinity norm: min absolute value (vectors only).
+    NegInf,
+    /// General `p`-norm for a vector: `(sum |v_i|^p)^(1/p)`.
+    P(f64),
 }
 
 /// Norm of a matrix or vector.
@@ -880,6 +884,25 @@ pub fn norm(a: &Array, p: NormKind) -> Result<Array> {
             }
         }
         NormKind::Fro => view.norm_l2(),
+        NormKind::NegInf => {
+            if !is_vector {
+                return Err(LinalgError::new(
+                    "norm: -inf norm is only defined for vectors",
+                ));
+            }
+            (0..am.data.len())
+                .map(|i| am.data[i].norm())
+                .fold(f64::INFINITY, f64::min)
+        }
+        NormKind::P(p) => {
+            if !is_vector {
+                return Err(LinalgError::new(
+                    "norm: only 1, 2, inf, and 'fro' norms are supported for matrices",
+                ));
+            }
+            let s: f64 = (0..am.data.len()).map(|i| am.data[i].norm().powf(p)).sum();
+            s.powf(1.0 / p)
+        }
     };
     Ok(Array::double(val))
 }

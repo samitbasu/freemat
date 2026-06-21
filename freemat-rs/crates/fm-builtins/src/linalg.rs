@@ -183,16 +183,17 @@ fn b_norm(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
                 }
             } else {
                 let v = p.as_f64().unwrap_or(2.0);
-                if v.is_infinite() {
+                if v == f64::INFINITY {
                     NormKind::Inf
+                } else if v == f64::NEG_INFINITY {
+                    NormKind::NegInf
                 } else if v == 1.0 {
                     NormKind::One
                 } else if v == 2.0 {
                     NormKind::Two
                 } else {
-                    return Err(Signal::Error(InterpError::msg(
-                        "norm: only 1, 2, inf, and 'fro' norms are supported",
-                    )));
+                    // General p-norm (vectors only; matrices error in fm_linalg).
+                    NormKind::P(v)
                 }
             }
         }

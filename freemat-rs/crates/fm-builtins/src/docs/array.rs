@@ -230,7 +230,7 @@ corresponding dimension.
 The following examples show some uses of `circshift` on N-dimensional
 arrays.
 
-```fm
+```fm-exec
 x = int32(rand(4,5)*10)
 circshift(x,[1,0])
 circshift(x,[0,-1])
@@ -561,7 +561,7 @@ where `x` is matrix, and `n` is the dimension to reverse.
 The following examples show some uses of `flipdim` on N-dimensional
 arrays.
 
-```fm
+```fm-exec
 x = int32(rand(4,5,3)*10)
 flipdim(x,1)
 flipdim(x,2)
@@ -588,14 +588,14 @@ the second dimension is reversed.
 ## Example
 The following example shows `fliplr` applied to a 2D matrix.
 
-```fm
+```fm-exec
 x = int32(rand(4)*10)
 fliplr(x)
 ```
 
 For a 3D array, note how the columns in each slice are flipped.
 
-```fm
+```fm-exec
 x = int32(rand(4,4,3)*10)
 fliplr(x)
 ```
@@ -620,14 +620,14 @@ the first dimension is reversed.
 ## Example
 The following example shows `flipud` applied to a 2D matrix.
 
-```fm
+```fm-exec
 x = int32(rand(4)*10)
 flipud(x)
 ```
 
 For a 3D array, note how the rows in each slice are flipped.
 
-```fm
+```fm-exec
 x = int32(rand(4,4,3)*10)
 flipud(x)
 ```
@@ -978,7 +978,7 @@ For a vector, the regular norm calculations are performed:
 ## Examples
 Here are the various norms calculated for a sample matrix
 
-```fm
+```fm-exec
 A = float(rand(3,4))
 norm(A,1)
 norm(A,2)
@@ -988,7 +988,7 @@ norm(A,'fro')
 
 Next, we calculate some vector norms.
 
-```fm
+```fm-exec
 A = float(rand(4,1))
 norm(A,1)
 norm(A,2)
@@ -1505,7 +1505,7 @@ which `size(x,p) == 1`).
 Here are some simple examples of using `shiftdim` to remove the singleton
 dimensions of an array, and then restore them:
 
-```fm
+```fm-exec
 x = uint8(10*randn(1,1,1,3,2));
 [y,n] = shiftdim(x);
 n
@@ -1519,13 +1519,13 @@ Note that these operations (where shifting involves only singleton dimensions)
 do not actually cause data to be resorted, only the size of the arrays change.
 This is not true for the following example, which triggers a call to `permute`:
 
-```fm
+```fm-exec
 z = shiftdim(x,4);
 ```
 
  Note that `z` is now the transpose of `x`
 
-```fm
+```fm-exec
 squeeze(x)
 squeeze(z)
 ```
@@ -1583,7 +1583,7 @@ phase of `a` between `-pi,pi`.
 ## Example
 Here are some examples of sorting on numerical arrays.
 
-```fm
+```fm-exec
 A = int32(10*rand(4,3))
 [B,IX] = sort(A)
 [B,IX] = sort(A,2)
@@ -1592,7 +1592,7 @@ A = int32(10*rand(4,3))
 
 Here we sort a cell array of strings.
 
-```fm
+```fm-exec
 a = {'hello','abba','goodbye','jockey','cake'}
 b = sort(a)
 ```
@@ -1706,7 +1706,7 @@ and is a synonym for `y = x.'`.
 Here is an example of the transpose of a complex matrix.  Note that
 the entries are not conjugated.
 
-```fm
+```fm-exec
 A = [1+i,2+i;3-2*i,4+2*i]
 transpose(A)
 ```

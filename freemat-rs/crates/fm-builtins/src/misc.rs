@@ -32,6 +32,83 @@ pub(crate) fn register(table: &mut FunctionTable) {
         need(a, 1, "gammaln")?;
         Ok(vec![map_double(&a[0], |x| gamma(x).abs().ln())])
     });
+    table.add_builtin("erfinv", |_i, a, _n| {
+        need(a, 1, "erfinv")?;
+        Ok(vec![map_double(&a[0], erfinv)])
+    });
+    table.add_builtin("idiv", b_idiv);
+}
+
+/// `idiv(a, b)` — integer (truncating-toward-zero) division, element-wise with
+/// scalar broadcast. Mirrors FreeMat's `IdivFunction`.
+fn b_idiv(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 2, "idiv")?;
+    let a = to_f64_vec(&args[0]);
+    let b = to_f64_vec(&args[1]);
+    let (dims, n) = if args[0].numel() == 1 {
+        (args[1].dims(), b.len())
+    } else {
+        (args[0].dims(), a.len())
+    };
+    if a.len() != 1 && b.len() != 1 && a.len() != b.len() {
+        return err("idiv: arguments must be the same size or scalar");
+    }
+    let at = |v: &[f64], i: usize| if v.len() == 1 { v[0] } else { v[i] };
+    let data: Vec<f64> = (0..n)
+        .map(|i| {
+            let d = at(&b, i);
+            if d == 0.0 {
+                0.0
+            } else {
+                (at(&a, i) / d).trunc()
+            }
+        })
+        .collect();
+    Ok(vec![build_real(DataClass::Double, &dims, data)])
+}
+
+/// Inverse error function via the Giles (2010) rational approximation, refined
+/// with one Newton step using `erf`.
+fn erfinv(x: f64) -> f64 {
+    if x <= -1.0 {
+        return f64::NEG_INFINITY;
+    }
+    if x >= 1.0 {
+        return f64::INFINITY;
+    }
+    if x == 0.0 {
+        return 0.0;
+    }
+    let w = -((1.0 - x) * (1.0 + x)).ln();
+    let mut p;
+    if w < 5.0 {
+        let w = w - 2.5;
+        p = 2.810_226_36e-08;
+        p = 3.432_739_39e-07 + p * w;
+        p = -3.523_387_7e-06 + p * w;
+        p = -4.391_506_54e-06 + p * w;
+        p = 0.000_218_580_87 + p * w;
+        p = -0.001_253_725_03 + p * w;
+        p = -0.004_177_681_64 + p * w;
+        p = 0.246_640_727 + p * w;
+        p = 1.501_409_41 + p * w;
+    } else {
+        let w = w.sqrt() - 3.0;
+        p = -0.000_200_214_257;
+        p = 0.000_100_950_24 + p * w;
+        p = 0.001_349_343_78 + p * w;
+        p = -0.003_673_428_44 + p * w;
+        p = 0.005_739_507_73 + p * w;
+        p = -0.007_622_461_3 + p * w;
+        p = 0.009_438_870_47 + p * w;
+        p = 1.001_674_06 + p * w;
+        p = 2.832_976_82 + p * w;
+    }
+    let mut r = p * x;
+    // One Newton refinement: f(r) = erf(r) - x.
+    let e = erf(r) - x;
+    r -= e / (2.0 / std::f64::consts::PI.sqrt() * (-r * r).exp());
+    r
 }
 
 /// `vec(A)` — flatten to a column vector (FreeMat's `A(:)`).

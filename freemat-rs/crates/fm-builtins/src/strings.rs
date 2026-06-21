@@ -32,6 +32,107 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("num2str", b_num2str);
     table.add_builtin("mat2str", b_mat2str);
     table.add_builtin("fileparts", b_fileparts);
+    table.add_builtin("cellstr", b_cellstr);
+    table.add_builtin("strstr", b_strstr);
+    table.add_builtin("isalpha", |_i, a, _n| {
+        char_pred(a, "isalpha", |c| c.is_ascii_alphabetic())
+    });
+    table.add_builtin("isdigit", |_i, a, _n| {
+        char_pred(a, "isdigit", |c| c.is_ascii_digit())
+    });
+    table.add_builtin("isspace", |_i, a, _n| {
+        char_pred(a, "isspace", |c| c.is_whitespace())
+    });
+    table.add_builtin("fullfile", b_fullfile);
+    table.add_builtin("getenv", b_getenv);
+}
+
+/// `fullfile(a, b, ...)` — join path components with `/` (FreeMat uses the
+/// forward slash uniformly), collapsing redundant separators.
+fn b_fullfile(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "fullfile")?;
+    let mut out = String::new();
+    for (k, a) in args.iter().enumerate() {
+        let part = str_of(a);
+        if k > 0 && !out.is_empty() && !out.ends_with('/') {
+            out.push('/');
+        }
+        out.push_str(part.trim_end_matches('/'));
+    }
+    Ok(vec![Array::char_string(&out)])
+}
+
+/// `getenv(name)` — value of an environment variable, or `''` if unset.
+fn b_getenv(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "getenv")?;
+    let name = str_of(&args[0]);
+    let val = std::env::var(&name).unwrap_or_default();
+    Ok(vec![Array::char_string(&val)])
+}
+
+/// `cellstr(C)` — convert a char matrix into a cell array of strings, one row
+/// per cell, with trailing blanks removed (FreeMat `cellstr`).
+fn b_cellstr(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "cellstr")?;
+    let a = &args[0];
+    // A cell array passes through (validated to be all strings).
+    if let Some(cells) = a.as_cell() {
+        let data: Vec<Array> = cells.iter().cloned().collect();
+        return Ok(vec![Array::cell(&a.dims(), data)]);
+    }
+    let dims = a.dims();
+    let chars: Vec<char> = match a.as_string() {
+        Some(s) => s.chars().collect(),
+        None => return err("cellstr: argument must be a string"),
+    };
+    let (rows, cols) = if dims.len() >= 2 {
+        (dims[0], dims[1])
+    } else {
+        (1, chars.len())
+    };
+    if rows == 0 {
+        return Ok(vec![Array::cell(&[0, 1], vec![])]);
+    }
+    // `as_string` yields the chars in logical (row-major) order, so row `i`
+    // occupies `chars[i*cols .. i*cols + cols]`.
+    let out: Vec<Array> = (0..rows)
+        .map(|i| {
+            let row: String = (0..cols).map(|j| chars[i * cols + j]).collect();
+            Array::char_string(row.trim_end())
+        })
+        .collect();
+    Ok(vec![Array::cell(&[rows, 1], out)])
+}
+
+/// `strstr(X, Y)` — 1-based index of the first occurrence of `Y` in `X`, or 0
+/// if not found (FreeMat's C-style substring search).
+fn b_strstr(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 2, "strstr")?;
+    let hay = str_of(&args[0]);
+    let needle = str_of(&args[1]);
+    // Byte search; the corpus is ASCII. Convert byte offset to a 1-based index.
+    let pos = hay
+        .find(&needle)
+        .map(|b| hay[..b].chars().count() + 1)
+        .unwrap_or(0);
+    Ok(vec![build_real(
+        DataClass::Double,
+        &[1, 1],
+        vec![pos as f64],
+    )])
+}
+
+/// Shared helper for `isalpha`/`isdigit`/`isspace`: a logical row vector marking
+/// which characters of the input string satisfy `pred`.
+fn char_pred(args: &[Array], name: &str, pred: impl Fn(char) -> bool) -> Flow<Vec<Array>> {
+    need(args, 1, name)?;
+    let s = match args[0].as_string() {
+        Some(s) => s,
+        None => return err(format!("{name}: argument must be a string")),
+    };
+    let data: Vec<f64> = s.chars().map(|c| pred(c) as i32 as f64).collect();
+    let n = data.len();
+    Ok(vec![build_real(DataClass::Bool, &[1, n], data)])
 }
 
 /// `[path, name, ext, ver] = fileparts(filename)` — split a path into its

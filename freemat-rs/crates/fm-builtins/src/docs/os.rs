@@ -320,7 +320,7 @@ is equivalent to `[dir1 dirsep dir2 dirsep ... dirn dirsep filename]`.
 
 ## Example
 
-```fm
+```fm-exec
 fullfile('path','to','my','file.m')
 ```
 "#,
@@ -347,7 +347,7 @@ variable to return.  The return is a string.
 Here is an example of using the `getenv` function to
 get the value for the `HOME` variable
 
-```fm
+```fm-exec
 getenv('HOME')
 ```
 "#,

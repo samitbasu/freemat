@@ -19,6 +19,9 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("fliplr", |_i, a, _n| flip(a, 1));
     table.add_builtin("flipud", |_i, a, _n| flip(a, 0));
     table.add_builtin("flip", b_flip);
+    table.add_builtin("flipdim", b_flipdim);
+    table.add_builtin("shiftdim", b_shiftdim);
+    table.add_builtin("transpose", b_transpose);
     table.add_builtin("rot90", b_rot90);
     table.add_builtin("circshift", b_circshift);
     table.add_builtin("sub2ind", b_sub2ind);
@@ -136,6 +139,28 @@ fn b_sort(_i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Arra
         .filter_map(Array::as_string)
         .any(|s| s.eq_ignore_ascii_case("descend"));
     let dims = a.dims();
+
+    // Cell-of-strings: lexicographic sort, preserving the cell's shape.
+    if let Some(cells) = a.as_cell() {
+        let flat: Vec<Array> = mem_cell(cells);
+        let strs: Vec<String> = flat.iter().filter_map(Array::as_string).collect();
+        if strs.len() != flat.len() {
+            return err("sort: cell array input must be a cell array of strings");
+        }
+        let mut order: Vec<usize> = (0..strs.len()).collect();
+        order.sort_by(|&x, &y| {
+            let ord = strs[x].cmp(&strs[y]);
+            if descend { ord.reverse() } else { ord }
+        });
+        let data: Vec<Array> = order.iter().map(|&k| flat[k].clone()).collect();
+        let sorted = Array::cell(&dims, data);
+        let idx: Vec<f64> = order.iter().map(|&k| (k + 1) as f64).collect();
+        let mut out = vec![sorted];
+        if nargout >= 2 {
+            out.push(build_real(DataClass::Double, &dims, idx));
+        }
+        return Ok(out);
+    }
     let (rows, cols, by_col) = if dims.len() == 2 && dims[0] == 1 {
         // Row vector: sort the single row.
         (1usize, dims[1], false)
@@ -300,7 +325,8 @@ fn b_squeeze(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>
     Ok(vec![permute_by(a, &kept, &perm)])
 }
 
-/// Flip along `axis` (0 = rows/up-down, 1 = cols/left-right) for a 2-D array.
+/// Flip along `axis` (0-based). Handles N-D arrays by reversing the
+/// coordinate along `axis` while leaving every other coordinate fixed.
 fn flip(args: &[Array], axis: usize) -> Flow<Vec<Array>> {
     need(args, 1, "flip")?;
     let a = &args[0];
@@ -308,17 +334,20 @@ fn flip(args: &[Array], axis: usize) -> Flow<Vec<Array>> {
     while dims.len() < 2 {
         dims.push(1);
     }
-    let (r, c) = (dims[0], dims[1]);
-    let mut perm = Vec::with_capacity(r * c);
-    for j in 0..c {
-        for i in 0..r {
-            let (si, sj) = if axis == 0 {
-                (r - 1 - i, j)
-            } else {
-                (i, c - 1 - j)
-            };
-            perm.push(si + sj * r);
-        }
+    let total: usize = dims.iter().product();
+    let str = strides(&dims);
+    let len = dims.get(axis).copied().unwrap_or(1);
+    let mut perm = Vec::with_capacity(total);
+    for lin in 0..total {
+        // Source position = lin with the `axis` coordinate reversed.
+        let src = if axis < dims.len() && len > 1 {
+            let coord = (lin / str[axis]) % len;
+            let delta = (len - 1 - coord) as i64 - coord as i64;
+            (lin as i64 + delta * str[axis] as i64) as usize
+        } else {
+            lin
+        };
+        perm.push(src);
     }
     Ok(vec![permute_by(a, &dims, &perm)])
 }
@@ -332,7 +361,86 @@ fn b_flip(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     } else {
         dims.iter().position(|&d| d != 1).unwrap_or(0)
     };
-    flip(args, axis.min(1))
+    flip(args, axis)
+}
+
+/// `flipdim(A, dim)` — flip along the given (1-based) dimension. N-D aware.
+fn b_flipdim(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 2, "flipdim")?;
+    let axis = (args[1].as_f64().unwrap_or(1.0) as usize).saturating_sub(1);
+    flip(&args[..1], axis)
+}
+
+/// `transpose(A)` — non-conjugate transpose of a 2-D array (the `.'` operator).
+fn b_transpose(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "transpose")?;
+    let a = &args[0];
+    let mut dims = a.dims();
+    while dims.len() < 2 {
+        dims.push(1);
+    }
+    if dims.len() != 2 {
+        return err("transpose: argument must be 2-D");
+    }
+    let (r, c) = (dims[0], dims[1]);
+    // result[i, j] (shape [c, r]) = source[j, i].
+    let mut perm = Vec::with_capacity(r * c);
+    for j in 0..r {
+        for i in 0..c {
+            perm.push(j + i * r);
+        }
+    }
+    Ok(vec![permute_by(a, &[c, r], &perm)])
+}
+
+/// `[B, nshifts] = shiftdim(A)` collapses leading singleton dimensions;
+/// `shiftdim(A, n)` shifts dimensions left by `n` (a circular permute) or, for
+/// negative `n`, prepends `|n|` singleton dimensions. Mirrors FreeMat.
+fn b_shiftdim(_i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "shiftdim")?;
+    let a = &args[0];
+    let dims = a.dims();
+    if args.len() < 2 {
+        // Remove leading singleton dimensions.
+        let nshift = dims.iter().take_while(|&&d| d == 1).count();
+        // But never collapse a true scalar away entirely.
+        let nshift = nshift.min(dims.len().saturating_sub(1));
+        let mut new_dims: Vec<usize> = dims[nshift..].to_vec();
+        while new_dims.len() < 2 {
+            new_dims.push(1);
+        }
+        let perm: Vec<usize> = (0..a.numel()).collect();
+        let mut out = vec![permute_by(a, &squeeze_trailing(new_dims), &perm)];
+        if nargout >= 2 {
+            out.push(build_real(DataClass::Double, &[1, 1], vec![nshift as f64]));
+        }
+        return Ok(out);
+    }
+    let n = args[1].as_f64().unwrap_or(0.0) as i64;
+    if n == 0 {
+        return Ok(vec![a.clone()]);
+    }
+    if n < 0 {
+        // Prepend |n| singleton dimensions: reshape.
+        let mut new_dims = vec![1usize; (-n) as usize];
+        new_dims.extend_from_slice(&dims);
+        let perm: Vec<usize> = (0..a.numel()).collect();
+        return Ok(vec![permute_by(a, &squeeze_trailing(new_dims), &perm)]);
+    }
+    // n > 0: circular left-shift of the dimension order by n.
+    let nd = dims.len().max(2);
+    let mut full = dims.clone();
+    while full.len() < nd {
+        full.push(1);
+    }
+    let n = (n as usize) % nd;
+    let order: Vec<usize> = (0..nd).map(|d| (d + n) % nd).collect();
+    let order_arr = build_real(
+        DataClass::Double,
+        &[1, nd],
+        order.iter().map(|&o| (o + 1) as f64).collect(),
+    );
+    permute(&[a.clone(), order_arr], false)
 }
 
 /// `rot90(A)` / `rot90(A, k)` — rotate a 2-D array 90° counter-clockwise `k`
@@ -383,29 +491,37 @@ fn b_circshift(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Arra
     while dims.len() < 2 {
         dims.push(1);
     }
-    let (r, c) = (dims[0], dims[1]);
-    let shifts = to_f64_vec(&args[1]);
-    let (sr, sc) = if shifts.len() >= 2 {
-        (shifts[0] as i64, shifts[1] as i64)
+    let shifts_in = to_f64_vec(&args[1]);
+    // Per-dimension shift amounts. A scalar `k` shifts the first non-singleton
+    // dimension; a vector shifts dimension `d` by `shifts[d]`.
+    let mut shifts = vec![0i64; dims.len()];
+    if shifts_in.len() == 1 {
+        let s = shifts_in[0] as i64;
+        let d = dims.iter().position(|&d| d != 1).unwrap_or(0);
+        shifts[d] = s;
     } else {
-        // Shift the first non-singleton dimension.
-        let s = shifts.first().copied().unwrap_or(0.0) as i64;
-        if dims[0] == 1 { (0, s) } else { (s, 0) }
-    };
-    let wrap = |idx: i64, len: usize| -> usize {
-        if len == 0 {
-            0
-        } else {
-            ((idx).rem_euclid(len as i64)) as usize
+        for (d, s) in shifts_in.iter().enumerate() {
+            if d < shifts.len() {
+                shifts[d] = *s as i64;
+            }
         }
-    };
-    let mut perm = Vec::with_capacity(r * c);
-    for j in 0..c {
-        for i in 0..r {
-            let si = wrap(i as i64 - sr, r);
-            let sj = wrap(j as i64 - sc, c);
-            perm.push(si + sj * r);
+    }
+    let total: usize = dims.iter().product();
+    let str = strides(&dims);
+    let mut perm = Vec::with_capacity(total);
+    for lin in 0..total {
+        let mut src = lin;
+        for d in 0..dims.len() {
+            let len = dims[d];
+            if len <= 1 || shifts[d] == 0 {
+                continue;
+            }
+            let coord = (lin / str[d]) % len;
+            let new_coord = (coord as i64 - shifts[d]).rem_euclid(len as i64) as usize;
+            // Replace the d-th coordinate with new_coord.
+            src = src - coord * str[d] + new_coord * str[d];
         }
+        perm.push(src);
     }
     Ok(vec![permute_by(a, &dims, &perm)])
 }

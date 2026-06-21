@@ -124,13 +124,13 @@ one of the builtin types.  The current list of supported types is
 ## Example
 Here is an example of a typecast from a float to an 8-bit integer
 
-```fm
+```fm-exec
 cast(pi,'uint8')
 ```
 
 and here we cast an array of arbitrary integers to a logical array
 
-```fm
+```fm-exec
 cast([1 0 3 0],'logical')
 ```
 "#,
@@ -173,7 +173,7 @@ where each row contains a string from the corresponding argument.
 Here is an example of the first technique being used to generate
 a string containing some ASCII characters
 
-```fm
+```fm-exec
 char([32:64;65:97])
 ```
 
@@ -181,14 +181,14 @@ In the next example, we form a character array from a set of
 strings in a cell array.  Note that the character array is padded
 with spaces to make the rows all have the same length.
 
-```fm
+```fm-exec
 char({'hello','to','the','world'})
 ```
 
 In the last example, we pass the individual strings as explicit
 arguments to `char`
 
-```fm
+```fm-exec
 char('hello','to','the','world')
 ```
 "#,
@@ -284,34 +284,35 @@ saturation rules.  Note that both `NaN` and `Inf` are both preserved under type 
 The following piece of code demonstrates several uses of `double`.  First,
 we convert from an integer (the argument is an integer because no decimal is present):
 
-```fm
+```fm-exec
 double(200)
 ```
 
 In the next example, a single precision argument is passed in (the presence of
 the `f` suffix implies single precision).
 
-```fm
+```fm-exec
 double(400.0f)
 ```
 
 In the next example, a complex argument is passed in.
 
-```fm
+```fm-exec
 double(3.0+4.0*i)
 ```
 
 In the next example, a string argument is passed in.  The string argument
 is converted into an integer array corresponding to the ASCII values of each character.
 
-```fm
+```fm-exec
 double('helo')
 ```
 
 In the last example, a cell-array is passed in.  For cell-arrays
 and structure arrays, the result is an error.
 
-```fm
+```fm-exec
+# errors: 1
 double({4})
 ```
 "#,
@@ -339,20 +340,20 @@ The following piece of code demonstrates several uses of `float`.
 First, we convert from an integer (the argument is an integer
 because no decimal is present):
 
-```fm
+```fm-exec
 float(200)
 ```
 
 In the next example, a double precision argument is passed
 in
 
-```fm
+```fm-exec
 float(400.0)
 ```
 
 In the next example, a complex argument is passed in.
 
-```fm
+```fm-exec
 float(3.0+4.0*i)
 ```
 
@@ -360,14 +361,15 @@ In the next example, a string argument is passed in.  The string
 argument is converted into an integer array corresponding to the
 ASCII values of each character.
 
-```fm
+```fm-exec
 float('helo')
 ```
 
 In the last example, a cell-array is passed in.  For cell-arrays
 and structure arrays, the result is an error.
 
-```fm
+```fm-exec
+# errors: 1
 float({4})
 ```
 "#,
@@ -394,7 +396,7 @@ to that range).  Note that both `NaN` and `Inf` both map to 0.
 ## Example
 The following piece of code demonstrates several uses of `int16`.  First, the routine uses
 
-```fm
+```fm-exec
 int16(100)
 int16(-100)
 ```
@@ -402,35 +404,36 @@ int16(-100)
 In the next example, an integer outside the range  of the type is passed in.
 The result is truncated to the range of the data type.
 
-```fm
+```fm-exec
 int16(40000)
 ```
 
 In the next example, a positive double precision argument is passed in.
 The result is the signed integer that is closest to the argument.
 
-```fm
+```fm-exec
 int16(pi)
 ```
 
 In the next example, a complex argument is passed in.  The result is the
 signed complex integer that is closest to the argument.
 
-```fm
+```fm-exec
 int16(5+2*i)
 ```
 
 In the next example, a string argument is passed in.  The string argument is
 converted into an integer array corresponding to the ASCII values of each character.
 
-```fm
+```fm-exec
 int16('helo')
 ```
 
 In the last example, a cell-array is passed in.  For cell-arrays and
 structure arrays, the result is an error.
 
-```fm
+```fm-exec
+# errors: 1
 int16({4})
 ```
 "#,
@@ -487,7 +490,7 @@ it is truncated to that range).  Note that both `NaN` and `Inf` both map to 0.
 ## Example
 The following piece of code demonstrates several uses of `int32`.  First, the routine uses
 
-```fm
+```fm-exec
 int32(100)
 int32(-100)
 ```
@@ -495,35 +498,36 @@ int32(-100)
 In the next example, an integer outside the range  of the type is passed in.  The
 result is truncated to the range of the data type.
 
-```fm
+```fm-exec
 int32(40e9)
 ```
 
 In the next example, a positive double precision argument is passed in.  The
 result is the signed integer that is closest to the argument.
 
-```fm
+```fm-exec
 int32(pi)
 ```
 
 In the next example, a complex argument is passed in.  The result is the signed
 complex integer that is closest to the argument.
 
-```fm
+```fm-exec
 int32(5+2*i)
 ```
 
 In the next example, a string argument is passed in.  The string argument is
 converted into an integer array corresponding to the ASCII values of each character.
 
-```fm
+```fm-exec
 int32('helo')
 ```
 
 In the last example, a cell-array is passed in.  For cell-arrays and structure
 arrays, the result is an error.
 
-```fm
+```fm-exec
+# errors: 1
 int32({4})
 ```
 "#,
@@ -550,7 +554,7 @@ truncated to that range).  Note that both `NaN` and `Inf` both map to 0.
 ## Example
 The following piece of code demonstrates several uses of `int64`.  First, the routine uses
 
-```fm
+```fm-exec
 int64(100)
 int64(-100)
 ```
@@ -558,35 +562,36 @@ int64(-100)
 In the next example, an integer outside the range  of the type is passed in.
 The result is truncated to the range of the data type.
 
-```fm
+```fm-exec
 int64(40e9)
 ```
 
 In the next example, a positive double precision argument is passed in.  The
 result is the signed integer that is closest to the argument.
 
-```fm
+```fm-exec
 int64(pi)
 ```
 
 In the next example, a complex argument is passed in.  The result is the
 complex signed integer that is closest to the argument.
 
-```fm
+```fm-exec
 int64(5+2*i)
 ```
 
 In the next example, a string argument is passed in.  The string argument is
 converted into an integer array corresponding to the ASCII values of each character.
 
-```fm
+```fm-exec
 int64('helo')
 ```
 
 In the last example, a cell-array is passed in.  For cell-arrays and structure
 arrays, the result is an error.
 
-```fm
+```fm-exec
+# errors: 1
 int64({4})
 ```
 "#,
@@ -614,7 +619,7 @@ both `NaN` and `Inf` both map to 0.
 ## Example
 The following piece of code demonstrates several uses of `int8`.  First, the routine uses
 
-```fm
+```fm-exec
 int8(100)
 int8(-100)
 ```
@@ -622,35 +627,36 @@ int8(-100)
 In the next example, an integer outside the range  of the type is passed in.
 The result is truncated to the range of the type.
 
-```fm
+```fm-exec
 int8(400)
 ```
 
 In the next example, a positive double precision argument is passed in.
 The result is the signed integer that is closest to the argument.
 
-```fm
+```fm-exec
 int8(pi)
 ```
 
 In the next example, a complex argument is passed in.  The result is the
 signed complex integer that is closest to the argument.
 
-```fm
+```fm-exec
 int8(5+2*i)
 ```
 
 In the next example, a string argument is passed in.  The string argument
 is converted into an integer array corresponding to the ASCII values of each character.
 
-```fm
+```fm-exec
 int8('helo')
 ```
 
 In the last example, a cell-array is passed in.  For cell-arrays and
 structure arrays, the result is an error.
 
-```fm
+```fm-exec
+# errors: 1
 int8({4})
 ```
 "#,
@@ -726,7 +732,7 @@ where `x` is an `n`-dimensional numerical array.
 Here we take an array containing ASCII codes for a string, and
 convert it into a string.
 
-```fm
+```fm-exec
 a = [104,101,108,108,111]
 string(a)
 ```
@@ -755,47 +761,48 @@ both `NaN` and `Inf` both map to 0.
 ## Example
 The following piece of code demonstrates several uses of `uint16`.
 
-```fm
+```fm-exec
 uint16(200)
 ```
 
 In the next example, an integer outside the range  of the type is passed in.
 The result is truncated to the maximum value of the data type.
 
-```fm
+```fm-exec
 uint16(99400)
 ```
 
 In the next example, a negative integer is passed in.  The result is
 truncated to zero.
 
-```fm
+```fm-exec
 uint16(-100)
 ```
 
 In the next example, a positive double precision argument is passed in.
 The result is the unsigned integer that is closest to the argument.
 
-```fm
+```fm-exec
 uint16(pi)
 ```
 
 In the next example, a complex argument is passed in.  The result is the
 complex unsigned integer that is closest to the argument.
 
-```fm
+```fm-exec
 uint16(5+2*i)
 ```
 
 In the next example, a string argument is passed in.  The string argument is converted into an integer array corresponding to the ASCII values of each character.
 
-```fm
+```fm-exec
 uint16('helo')
 ```
 
 In the last example, a cell-array is passed in.  For cell-arrays and structure arrays, the result is an error.
 
-```fm
+```fm-exec
+# errors: 1
 uint16({4})
 ```
 "#,
@@ -822,49 +829,50 @@ truncated to that range. Note that both `NaN` and `Inf` both map to 0.
 ## Example
 The following piece of code demonstrates several uses of `uint32`.
 
-```fm
+```fm-exec
 uint32(200)
 ```
 
 In the next example, an integer outside the range of the type is passed in.
 The result is truncated to the maximum value of the data type.
 
-```fm
+```fm-exec
 uint32(40e9)
 ```
 
 In the next example, a negative integer is passed in.  The result is
 truncated to zero.
 
-```fm
+```fm-exec
 uint32(-100)
 ```
 
 In the next example, a positive double precision argument is passed in.
 The result is the unsigned integer that is closest to the argument.
 
-```fm
+```fm-exec
 uint32(pi)
 ```
 
 In the next example, a complex argument is passed in.  The result is the
 complex unsigned integer that is closest to the argument.
 
-```fm
+```fm-exec
 uint32(5+2*i)
 ```
 
 In the next example, a string argument is passed in.  The string argument
 is converted into an integer array corresponding to the ASCII values of each character.
 
-```fm
+```fm-exec
 uint32('helo')
 ```
 
 In the last example, a cell-array is passed in.  For cell-arrays and
 structure arrays, the result is an error.
 
-```fm
+```fm-exec
+# errors: 1
 uint32({4})
 ```
 "#,
@@ -891,48 +899,49 @@ truncated to that range.  Note that both `NaN` and `Inf` both map to 0.
 ## Example
 The following piece of code demonstrates several uses of `uint64`.
 
-```fm
+```fm-exec
 uint64(200)
 ```
 
 In the next example, an integer outside the range  of the type is passed in.
 The result is truncated to the maximum value of the data type.
 
-```fm
+```fm-exec
 uint64(40e9)
 ```
 
 In the next example, a negative integer is passed in.  The result is zero.
 
-```fm
+```fm-exec
 uint64(-100)
 ```
 
 In the next example, a positive double precision argument is passed in.
 The result is the unsigned integer that is closest to the argument.
 
-```fm
+```fm-exec
 uint64(pi)
 ```
 
 In the next example, a complex argument is passed in.  The result is the
 complex unsigned integer that is closest to the argument.
 
-```fm
+```fm-exec
 uint64(5+2*i)
 ```
 
 In the next example, a string argument is passed in.  The string argument is
 converted into an integer array corresponding to the ASCII values of each character.
 
-```fm
+```fm-exec
 uint64('helo')
 ```
 
 In the last example, a cell-array is passed in.  For cell-arrays and structure
 arrays, the result is an error.
 
-```fm
+```fm-exec
+# errors: 1
 uint64({4})
 ```
 "#,
@@ -960,49 +969,50 @@ both `NaN` and `Inf` both map to 0.
 ## Example
 The following piece of code demonstrates several uses of `uint8`.
 
-```fm
+```fm-exec
 uint8(200)
 ```
 
 In the next example, an integer outside the range  of the type is passed in.
 The result is truncated to the maximum value of the data type.
 
-```fm
+```fm-exec
 uint8(400)
 ```
 
 In the next example, a negative integer is passed in.  The result is
 trunated to zero.
 
-```fm
+```fm-exec
 uint8(-100)
 ```
 
 In the next example, a positive double precision argument is passed in.
 The result is the unsigned integer that is closest to the argument.
 
-```fm
+```fm-exec
 uint8(pi)
 ```
 
 In the next example, a complex argument is passed in.  The result is
 complex unsigned integer that is closest to the argument.
 
-```fm
+```fm-exec
 uint8(5+2*i)
 ```
 
 In the next example, a string argument is passed in.  The string argument
 is converted into an integer array corresponding to the ASCII values of each character.
 
-```fm
+```fm-exec
 uint8('helo')
 ```
 
 In the last example, a cell-array is passed in.  For cell-arrays and
 structure arrays, the result is an error.
 
-```fm
+```fm-exec
+# errors: 1
 uint8({4})
 ```
 "#,

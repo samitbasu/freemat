@@ -20,13 +20,75 @@ use crate::util::need;
 
 thread_local! {
     static SEEDED: RefCell<Option<StdRng>> = const { RefCell::new(None) };
+    /// The 64-bit seed last applied via a control-string form (or `seed`), so
+    /// `rand('state')` can report a state vector that round-trips through
+    /// `rand('state', s)`.
+    static STATE_SEED: RefCell<Option<u64>> = const { RefCell::new(None) };
+}
+
+/// Apply a deterministic seed to the generator and remember it.
+fn apply_seed(seed: u64) {
+    SEEDED.with(|cell| *cell.borrow_mut() = Some(StdRng::seed_from_u64(seed)));
+    STATE_SEED.with(|cell| *cell.borrow_mut() = Some(seed));
+}
+
+/// Recognize the RNG-control string forms shared by `rand`/`randn`:
+///   `rand('state')` / `'seed'` / `'twister'`            → return state vector
+///   `rand('state', s)` (scalar) or (captured vector)    → reseed, return []
+/// Returns `Some(result)` if `args` is a control-string call, else `None` so the
+/// caller proceeds with normal size-argument handling.
+fn rng_control(args: &[Array]) -> Option<Flow<Vec<Array>>> {
+    let first = args.first()?;
+    let kind = first.as_string()?;
+    let kind = kind.to_ascii_lowercase();
+    if !matches!(kind.as_str(), "state" | "seed" | "twister") {
+        return None;
+    }
+    if args.len() == 1 {
+        // Report the current state as a single-element vector (the stored seed,
+        // defaulting to 0). This round-trips through `rand('state', s)`.
+        let s = STATE_SEED.with(|c| c.borrow().unwrap_or(0));
+        return Some(Ok(vec![build_real(
+            DataClass::Double,
+            &[1, 1],
+            vec![s as f64],
+        )]));
+    }
+    // `rand('state', s)` — `s` may be the scalar 0 (reset), any scalar, or a
+    // previously captured state vector (we use its first element).
+    let arg = &args[1];
+    let seed = if arg.numel() == 0 {
+        0u64
+    } else {
+        to_f64_vec(arg).first().copied().unwrap_or(0.0) as u64
+    };
+    apply_seed(seed);
+    Some(Ok(vec![Array::empty()]))
 }
 
 pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("rand", b_rand);
     table.add_builtin("randn", b_randn);
     table.add_builtin("randi", b_randi);
+    table.add_builtin("randperm", b_randperm);
     table.add_builtin("seed", b_seed);
+}
+
+/// `randperm(n)` — a random permutation of `1:n` (Fisher–Yates).
+fn b_randperm(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "randperm")?;
+    let n = args[0].as_f64().unwrap_or(0.0).max(0.0) as usize;
+    let mut perm: Vec<f64> = (1..=n).map(|x| x as f64).collect();
+    // Fisher–Yates using the shared (possibly seeded) generator.
+    if n > 1 {
+        let swaps = draw(n - 1, |rng| rng.random::<f64>());
+        for (i, &r) in swaps.iter().enumerate() {
+            // pick j in [i, n)
+            let j = i + ((r * (n - i) as f64) as usize).min(n - i - 1);
+            perm.swap(i, j);
+        }
+    }
+    Ok(vec![build_real(DataClass::Double, &[1, n], perm)])
 }
 
 /// Draw `count` values using `f`, from the seeded generator if one is active,
@@ -63,6 +125,9 @@ fn dims_from_args(args: &[Array]) -> Vec<usize> {
 }
 
 fn b_rand(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if let Some(r) = rng_control(args) {
+        return r;
+    }
     let dims = dims_from_args(args);
     let count: usize = dims.iter().product();
     let data = draw(count, |rng| rng.random::<f64>());
@@ -70,6 +135,9 @@ fn b_rand(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
 }
 
 fn b_randn(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if let Some(r) = rng_control(args) {
+        return r;
+    }
     let dims = dims_from_args(args);
     let count: usize = dims.iter().product();
     let normal = StandardNormal;
@@ -119,8 +187,6 @@ fn b_seed(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     let a = args[0].as_f64().unwrap_or(0.0) as u64;
     let b = args.get(1).and_then(Array::as_f64).unwrap_or(0.0) as u64;
     let seed = a.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(b);
-    SEEDED.with(|cell| {
-        *cell.borrow_mut() = Some(StdRng::seed_from_u64(seed));
-    });
+    apply_seed(seed);
     Ok(vec![])
 }

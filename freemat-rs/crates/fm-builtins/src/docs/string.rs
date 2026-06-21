@@ -49,7 +49,7 @@ where `x` is an `N x M` array of characters as a string.
 ## Example
 Here is an example of how to use `cellstr`
 
-```fm
+```fm-exec
 a = ['quick';'brown';'fox  ';'is   ']
 cellstr(a)
 ```
@@ -115,7 +115,7 @@ classic ASCII sense (a through z, and A through Z).
 ## Example
 A simple example of `isalpha`:
 
-```fm
+```fm-exec
 isalpha('numb3r5')
 ```
 "#,
@@ -141,7 +141,7 @@ where `s` is a `string`.
 ## Example
 A simple example of `isdigit`:
 
-```fm
+```fm-exec
 isdigit('numb3r5')
 ```
 "#,
@@ -169,7 +169,7 @@ tab.
 ## Example
 A simple example of `isspace`:
 
-```fm
+```fm-exec
 isspace('  hello there world ')
 ```
 "#,
@@ -575,7 +575,7 @@ zero.
 ## Example
 Some examples of `strstr` in action
 
-```fm
+```fm-exec
 strstr('hello','lo')
 strstr('quick brown fox','own')
 strstr('free stuff','lunch')

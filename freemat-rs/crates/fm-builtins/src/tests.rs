@@ -1548,3 +1548,151 @@ fn conv2_full_real() {
         vec![1.0, 1.0, 0.0, 1.0, 2.0, 1.0, 0.0, 1.0, 1.0]
     );
 }
+
+// ---- crash-fix & new-builtin regression tests (flip/sort/rand pass) ---------
+
+/// Helper: column-major f64 data of variable `name`.
+fn data_of(i: &fm_interp::Interpreter, name: &str) -> Vec<f64> {
+    fm_interp::value::to_f64_vec(i.context.lookup(name).unwrap())
+}
+
+#[test]
+fn fliplr_nd_integer_does_not_panic() {
+    // Regression: fliplr/flipud on an N-D integer array used to panic.
+    let mut i = interp();
+    i.run("a = int32(reshape(1:12,2,2,3)); b = fliplr(a); s = size(b);")
+        .unwrap();
+    assert_eq!(data_of(&i, "s"), vec![2.0, 2.0, 3.0]);
+    // First page of a [1 3;2 4] page flipped left-right is [3 1;4 2].
+    i.run("p = b(:,:,1);").unwrap();
+    assert_eq!(data_of(&i, "p"), vec![3.0, 4.0, 1.0, 2.0]);
+    assert_eq!(
+        i.context.lookup("b").unwrap().class(),
+        fm_core::DataClass::Int32
+    );
+}
+
+#[test]
+fn flipud_nd_does_not_panic() {
+    let mut i = interp();
+    i.run("a = reshape(1:12,2,2,3); b = flipud(a); p = b(:,:,1);")
+        .unwrap();
+    // [1 3;2 4] flipped up-down -> [2 4;1 3].
+    assert_eq!(data_of(&i, "p"), vec![2.0, 1.0, 4.0, 3.0]);
+}
+
+#[test]
+fn circshift_nd_does_not_panic() {
+    let mut i = interp();
+    i.run("a = reshape(1:8,2,2,2); b = circshift(a,[1 0 0]); p = b(:,:,1);")
+        .unwrap();
+    // page1 = [1 3;2 4], shift rows down by 1 -> [2 4;1 3].
+    assert_eq!(data_of(&i, "p"), vec![2.0, 1.0, 4.0, 3.0]);
+}
+
+#[test]
+fn sort_cellstr_lexicographic() {
+    let mut i = interp();
+    i.run("[b,ix] = sort({'hello','abba','goodbye'});").unwrap();
+    let b = i.context.lookup("b").unwrap();
+    let cells = b.as_cell().unwrap();
+    let got: Vec<String> = cells.iter().filter_map(fm_core::Array::as_string).collect();
+    assert_eq!(got, vec!["abba", "goodbye", "hello"]);
+    assert_eq!(data_of(&i, "ix"), vec![2.0, 3.0, 1.0]);
+}
+
+#[test]
+fn sort_int_two_output_no_panic() {
+    let mut i = interp();
+    i.run("[b,ix] = sort(int32([3 1 2]));").unwrap();
+    assert_eq!(data_of(&i, "b"), vec![1.0, 2.0, 3.0]);
+    assert_eq!(data_of(&i, "ix"), vec![2.0, 3.0, 1.0]);
+}
+
+#[test]
+fn rand_state_no_arg_returns_state_not_giant_alloc() {
+    // Regression: rand('state') used to treat 'state' as a size and SIGABRT.
+    let mut i = interp();
+    i.run("rand('state',0); s = rand('state');").unwrap();
+    // Returns a small numeric state vector (here a scalar), never a huge array.
+    assert!(i.context.lookup("s").unwrap().numel() <= 4);
+}
+
+#[test]
+fn rand_state_seed_is_deterministic() {
+    let mut i = interp();
+    i.run("rand('state',7); a = rand(1,3); rand('state',7); b = rand(1,3);")
+        .unwrap();
+    assert_eq!(data_of(&i, "a"), data_of(&i, "b"));
+}
+
+#[test]
+fn randn_state_does_not_panic() {
+    let mut i = interp();
+    i.run("randn('state',0); x = randn(2,2); s = size(x);")
+        .unwrap();
+    assert_eq!(data_of(&i, "s"), vec![2.0, 2.0]);
+}
+
+#[test]
+fn rand_size_vector_still_works() {
+    let mut i = interp();
+    i.run("s = size(rand([2,2,2]));").unwrap();
+    assert_eq!(data_of(&i, "s"), vec![2.0, 2.0, 2.0]);
+}
+
+#[test]
+fn flipdim_and_transpose() {
+    let mut i = interp();
+    i.run("b = flipdim(int32(reshape(1:8,2,2,2)),3); p = b(:,:,1);")
+        .unwrap();
+    // flip along dim 3 -> page1 becomes original page2 = [5 7;6 8].
+    assert_eq!(data_of(&i, "p"), vec![5.0, 6.0, 7.0, 8.0]);
+    i.run("t = transpose([1 2 3; 4 5 6]);").unwrap();
+    assert_eq!(i.context.lookup("t").unwrap().dims(), vec![3, 2]);
+}
+
+#[test]
+fn cellstr_strstr_char_predicates() {
+    let mut i = interp();
+    i.run("c = cellstr(['quick';'brown';'fox  ']);").unwrap();
+    let got: Vec<String> = i
+        .context
+        .lookup("c")
+        .unwrap()
+        .as_cell()
+        .unwrap()
+        .iter()
+        .filter_map(fm_core::Array::as_string)
+        .collect();
+    assert_eq!(got, vec!["quick", "brown", "fox"]);
+    assert_eq!(eval_scalar("strstr('hello','lo')"), 4.0);
+    assert_eq!(eval_scalar("strstr('free','lunch')"), 0.0);
+    i.run("d = isdigit('a1b2');").unwrap();
+    assert_eq!(data_of(&i, "d"), vec![0.0, 1.0, 0.0, 1.0]);
+}
+
+#[test]
+fn idiv_erfinv_fullfile_norm_p() {
+    assert_eq!(eval_scalar("idiv(27,6)"), 4.0);
+    assert_eq!(eval_scalar("idiv(4,-2)"), -2.0);
+    assert!((eval_scalar("erfinv(0.5)") - 0.476_936_27).abs() < 1e-4);
+    let mut i = interp();
+    i.run("f = fullfile('a','b','c.m');").unwrap();
+    assert_eq!(
+        i.context.lookup("f").unwrap().as_string().unwrap(),
+        "a/b/c.m"
+    );
+    // p-norm of a vector.
+    assert!((eval_scalar("norm([3;4],2)") - 5.0).abs() < 1e-12);
+    assert!((eval_scalar("norm([1;2;3;4],-inf)") - 1.0).abs() < 1e-12);
+}
+
+#[test]
+fn char_multi_arg_pads_matrix() {
+    let mut i = interp();
+    i.run("m = char('hello','to','the','world');").unwrap();
+    assert_eq!(i.context.lookup("m").unwrap().dims(), vec![4, 5]);
+    i.run("c = cast(pi,'uint8');").unwrap();
+    assert_eq!(eval_scalar("cast(pi,'uint8')"), 3.0);
+}

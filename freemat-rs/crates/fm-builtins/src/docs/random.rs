@@ -58,19 +58,19 @@ or alternately, you can reset the random number generator with
 ## Example
 The following example demonstrates an example of using the first form of the `rand` function.
 
-```fm
+```fm-exec
 rand(2,2,2)
 ```
 
 The second example demonstrates the second form of the `rand` function.
 
-```fm
+```fm-exec
 rand([2,2,2])
 ```
 
 The third example computes the mean and variance of a large number of uniform random numbers.  Recall that the mean should be `1/2`, and the variance should be `1/12 ~ 0.083`.
 
-```fm
+```fm-exec
 x = rand(1,10000);
 mean(x)
 var(x)
@@ -80,7 +80,7 @@ Now, we use the state manipulation functions of `rand` to exactly reproduce
 a random sequence.  Note that unlike using `seed`, we can exactly control where
 the random number generator starts by saving the state.
 
-```fm
+```fm-exec
 rand('state',0)    % restores us to startup conditions
 a = rand(1,3)      % random sequence 1
 b = rand('state'); % capture the state vector
@@ -488,19 +488,19 @@ The Gaussian random numbers are generated from pairs of uniform random numbers u
 ## Example
 The following example demonstrates an example of using the first form of the `randn` function.
 
-```fm
+```fm-exec
 randn(2,2,2)
 ```
 
 The second example demonstrates the second form of the `randn` function.
 
-```fm
+```fm-exec
 randn([2,2,2])
 ```
 
 In the next example, we create a large array of 10000  normally distributed pseudo-random numbers.  We then shift the mean to 10, and the variance to 5.  We then numerically calculate the mean and variance using `mean` and `var`, respectively.
 
-```fm
+```fm-exec
 x = 10+sqrt(5)*randn(1,10000);
 mean(x)
 var(x)
@@ -510,7 +510,7 @@ Now, we use the state manipulation functions of `randn` to exactly reproduce
 a random sequence.  Note that unlike using `seed`, we can exactly control where
 the random number generator starts by saving the state.
 
-```fm
+```fm-exec
 randn('state',0)    % restores us to startup conditions
 a = randn(1,3)      % random sequence 1
 b = randn('state'); % capture the state vector
@@ -679,7 +679,7 @@ fm_doc::register_doc! {
 
 ## Example
 
-```fm
+```fm-exec
 y = randperm(10)
 ```
 "#,

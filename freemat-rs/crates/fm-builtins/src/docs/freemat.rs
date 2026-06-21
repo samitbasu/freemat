@@ -1145,7 +1145,7 @@ FreeMat (as a string).  The general syntax for its use is
 ## Example
 The current version of FreeMat is
 
-```fm
+```fm-exec
 version
 ```
 "#,
@@ -1168,7 +1168,7 @@ FreeMat.  The general syntax for its use is
 ## Example
 The current version of FreeMat is
 
-```fm
+```fm-exec
 verstring
 ```
 "#,

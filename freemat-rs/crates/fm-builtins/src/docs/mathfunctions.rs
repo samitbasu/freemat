@@ -1178,7 +1178,7 @@ vector `y` is the same size (and type) as `x`. For values outside the interval [
 ## Example
 Here is a plot of the erf function over the range `[-.9,.9]`.
 
-```fm
+```fm-exec:figure
 x = linspace(-.9,.9,100);
 y = erfinv(x);
 plot(x,y); xlabel('x'); ylabel('erfinv(x)');
@@ -1382,7 +1382,7 @@ is to compute the integer division of `b` into `a`.
 The following examples show some uses of `idiv`
 arrays.
 
-```fm
+```fm-exec
 idiv(27,6)
 idiv(4,-2)
 idiv(15,3)

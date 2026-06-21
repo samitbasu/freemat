@@ -12,6 +12,10 @@ use crate::util::need;
 
 pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("typeof", b_typeof);
+    table.add_builtin("version", |_i, _a, _n| Ok(vec![Array::char_string("4.2")]));
+    table.add_builtin("verstring", |_i, _a, _n| {
+        Ok(vec![Array::char_string("FreeMat v4.2")])
+    });
     table.add_builtin("float", |_i, a, _n| cast_single(a));
     table.add_builtin("complex", b_complex);
     table.add_builtin("dcomplex", b_dcomplex);

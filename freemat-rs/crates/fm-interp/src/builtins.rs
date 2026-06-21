@@ -45,7 +45,9 @@ pub fn register_defaults(table: &mut FunctionTable) {
     table.add_builtin("double", |_i, a, _n| cast(a, DataClass::Double, "double"));
     table.add_builtin("single", |_i, a, _n| cast(a, DataClass::Float, "single"));
     table.add_builtin("logical", |_i, a, _n| cast(a, DataClass::Bool, "logical"));
-    table.add_builtin("char", |_i, a, _n| cast(a, DataClass::Char, "char"));
+    table.add_builtin("char", |_i, a, _n| b_char(a));
+    table.add_builtin("string", |_i, a, _n| cast(a, DataClass::Char, "string"));
+    table.add_builtin("cast", b_cast);
     table.add_builtin("int8", |_i, a, _n| cast(a, DataClass::Int8, "int8"));
     table.add_builtin("uint8", |_i, a, _n| cast(a, DataClass::UInt8, "uint8"));
     table.add_builtin("int16", |_i, a, _n| cast(a, DataClass::Int16, "int16"));
@@ -54,6 +56,88 @@ pub fn register_defaults(table: &mut FunctionTable) {
     table.add_builtin("uint32", |_i, a, _n| cast(a, DataClass::UInt32, "uint32"));
     table.add_builtin("int64", |_i, a, _n| cast(a, DataClass::Int64, "int64"));
     table.add_builtin("uint64", |_i, a, _n| cast(a, DataClass::UInt64, "uint64"));
+}
+
+/// `char(...)` — convert to a char array. Three forms beyond a plain cast:
+///   `char(X)`                       — numeric/char cast (delegates to `cast`)
+///   `char({'a','bb',...})`          — cellstr → padded char matrix
+///   `char('a','bb', ...)`           — multiple strings → padded char matrix
+fn b_char(args: &[Array]) -> Flow<Vec<Array>> {
+    need(args, 1, "char")?;
+    // Collect the row strings if this is a cellstr or a multi-string call.
+    let rows: Option<Vec<String>> = if args.len() == 1 {
+        if let Some(cells) = args[0].as_cell() {
+            let strs: Vec<String> = cells.iter().filter_map(Array::as_string).collect();
+            if strs.len() == cells.len() {
+                Some(strs)
+            } else {
+                return Err(Signal::Error(InterpError::msg(
+                    "char: cell array must contain only strings",
+                )));
+            }
+        } else {
+            None
+        }
+    } else {
+        // Multiple arguments: each must be a string (row).
+        let strs: Vec<String> = args.iter().filter_map(Array::as_string).collect();
+        if strs.len() == args.len() {
+            Some(strs)
+        } else {
+            None
+        }
+    };
+
+    if let Some(strs) = rows {
+        if strs.is_empty() {
+            return Ok(vec![Array::char_string("")]);
+        }
+        let nrows = strs.len();
+        let chars: Vec<Vec<char>> = strs.iter().map(|s| s.chars().collect()).collect();
+        let ncols = chars.iter().map(Vec::len).max().unwrap_or(0);
+        // Column-major buffer: element (i,j) at index i + j*nrows. Pad with spaces.
+        let mut data = vec![' '; nrows * ncols];
+        for (i, row) in chars.iter().enumerate() {
+            for (j, &c) in row.iter().enumerate() {
+                data[i + j * nrows] = c;
+            }
+        }
+        return Ok(vec![crate::value::char_matrix(&[nrows, ncols], data)]);
+    }
+
+    cast(args, DataClass::Char, "char")
+}
+
+/// `cast(X, 'classname')` — convert `X` to the class named by the string arg.
+fn b_cast(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 2, "cast")?;
+    let name = args[1].as_string().ok_or_else(|| {
+        Signal::Error(InterpError::msg(
+            "cast: second argument must be a class name",
+        ))
+    })?;
+    let class = class_from_name(&name)
+        .ok_or_else(|| Signal::Error(InterpError::msg(format!("cast: unknown class '{name}'"))))?;
+    cast(&args[..1], class, "cast")
+}
+
+/// Map a FreeMat class name to its [`DataClass`].
+fn class_from_name(name: &str) -> Option<DataClass> {
+    Some(match name {
+        "double" => DataClass::Double,
+        "single" | "float" => DataClass::Float,
+        "logical" => DataClass::Bool,
+        "char" | "string" => DataClass::Char,
+        "int8" => DataClass::Int8,
+        "uint8" => DataClass::UInt8,
+        "int16" => DataClass::Int16,
+        "uint16" => DataClass::UInt16,
+        "int32" => DataClass::Int32,
+        "uint32" => DataClass::UInt32,
+        "int64" => DataClass::Int64,
+        "uint64" => DataClass::UInt64,
+        _ => return None,
+    })
 }
 
 /// Cast every element of `args[0]` to `class`.
