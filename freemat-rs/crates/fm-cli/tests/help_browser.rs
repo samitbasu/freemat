@@ -77,9 +77,15 @@ async fn help_routes_serve_index_topic_and_search() {
         body.contains("--&gt;"),
         "transcript input echo present: {body}"
     );
+    // Executed blocks render as the transcript only (no duplicated source
+    // fence); a "Copy" button carries the clean pasteable script.
     assert!(
-        body.contains("class=\"language-fm-exec\""),
-        "exec source highlighted: {body}"
+        !body.contains("class=\"language-fm-exec\""),
+        "exec source fence should be suppressed: {body}"
+    );
+    assert!(
+        body.contains("class=\"fm-copy\"") && body.contains("data-copy="),
+        "copy button present: {body}"
     );
 
     // /help/search?q=cos — JSON array including cos.

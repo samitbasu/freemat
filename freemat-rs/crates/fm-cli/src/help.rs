@@ -190,8 +190,15 @@ fn shell(title: &str, body: &str) -> String {
     .fm-summary {{ font-weight: 400; color: #555; }}
     pre {{ background: #f4f4f4; border: 1px solid #e2e2e2; border-radius: 4px;
           padding: 10px 12px; overflow-x: auto; }}
-    pre.fm-transcript {{ background: #1e1e1e; }}
+    pre.fm-transcript {{ background: #1e1e1e; margin: 0; }}
     pre.fm-transcript code {{ color: #e8e8e8; }}
+    .fm-example {{ position: relative; margin: 12px 0; }}
+    .fm-copy {{ position: absolute; top: 6px; right: 6px; z-index: 1;
+                font: 12px ui-monospace, monospace; color: #ddd;
+                background: #333; border: 1px solid #555; border-radius: 4px;
+                padding: 2px 8px; cursor: pointer; opacity: 0.85; }}
+    .fm-copy:hover {{ opacity: 1; background: #444; }}
+    .fm-copy.fm-copied {{ color: #9f9; border-color: #6a6; }}
     code {{ font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; }}
     p code, li code {{ background: #eee; padding: 0 3px; border-radius: 3px; }}
     table {{ border-collapse: collapse; }}
@@ -230,6 +237,32 @@ fn shell(title: &str, body: &str) -> String {
           if (!el.closest(".fm-transcript")) hljs.highlightElement(el);
         }});
       }}
+      // "Copy" buttons on examples: copy the clean script (input only) so the
+      // user can paste it straight into an `fm` session.
+      document.querySelectorAll(".fm-copy").forEach(function (btn) {{
+        btn.addEventListener("click", function () {{
+          var script = btn.getAttribute("data-copy") || "";
+          var done = function () {{
+            var old = btn.textContent;
+            btn.textContent = "Copied";
+            btn.classList.add("fm-copied");
+            setTimeout(function () {{
+              btn.textContent = old;
+              btn.classList.remove("fm-copied");
+            }}, 1200);
+          }};
+          if (navigator.clipboard && navigator.clipboard.writeText) {{
+            navigator.clipboard.writeText(script).then(done, function () {{ fallback(); }});
+          }} else {{ fallback(); }}
+          function fallback() {{
+            var ta = document.createElement("textarea");
+            ta.value = script; ta.style.position = "fixed"; ta.style.opacity = "0";
+            document.body.appendChild(ta); ta.focus(); ta.select();
+            try {{ document.execCommand("copy"); done(); }} catch (e) {{}}
+            document.body.removeChild(ta);
+          }}
+        }});
+      }});
       // Render captured figures with Plotly (mirrors web/index.html).
       document.querySelectorAll(".fm-figure").forEach(function (el) {{
         var raw = el.getAttribute("data-plotly");

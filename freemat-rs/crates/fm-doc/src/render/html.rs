@@ -57,10 +57,16 @@ pub fn render_page(entry: &DocEntry, registry: &Registry) -> String {
 /// Render the doc-body markdown to HTML, applying the dialect rules.
 fn render_body(body_md: &str, registry: &Registry) -> String {
     // Look up the captured fragment (transcript + figure) for this body, if any.
-    let fragment = fragment_script_from_body(body_md)
+    let script = fragment_script_from_body(body_md);
+    let fragment = script
         .as_ref()
         .map(crate::FragmentScript::content_hash)
         .and_then(|h| crate::fragment_by_hash(&h));
+    // The clean, pasteable example script (input lines only — no `--> ` prompts
+    // and no captured output) for the transcript's "Copy" button.
+    let copy_script: Option<String> = script
+        .as_ref()
+        .map(|s| s.inputs.join("\n").trim_end().to_string());
 
     // Count executable blocks so we can attach the (single, combined) transcript
     // after the *last* one (§6.5 v1 limitation).
@@ -75,6 +81,11 @@ fn render_body(body_md: &str, registry: &Registry) -> String {
     let mut events: Vec<Event<'_>> = Vec::new();
     let mut cur_info: Option<String> = None;
     let mut exec_seen = 0usize;
+    // While inside an executed (`fm-exec`/`:figure`) block, suppress the source
+    // fence and its text — the captured transcript (injected after the block)
+    // already echoes the input lines, so rendering the source too would show the
+    // example code twice.
+    let mut suppress_code = false;
 
     // Link rewriting needs to look ahead for the link text only to decide the
     // fallback; pulldown gives us Start(Link)/…text…/End(Link). We rewrite the
@@ -87,20 +98,40 @@ fn render_body(body_md: &str, registry: &Registry) -> String {
         match event {
             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(ref info))) => {
                 cur_info = Some(info.to_string());
-                // Re-emit a fenced code block whose info string is the dialect
-                // language so highlight.js can style it. `language-` prefix is
-                // added by pulldown's html serializer from the info string.
-                let lang = code_language(info);
-                events.push(Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(
-                    CowStr::from(lang),
-                ))));
+                if fragment.is_some()
+                    && matches!(
+                        classify_info(info),
+                        BlockKind::FmExec { .. } | BlockKind::FmExecFigure { .. }
+                    )
+                {
+                    // Executed block with a captured transcript: don't emit the
+                    // source fence — the transcript (injected after the block)
+                    // already echoes the input, and a "Copy" button on it provides
+                    // the script. (If there's no captured fragment, fall through
+                    // and keep the source so the example isn't blank.)
+                    suppress_code = true;
+                } else {
+                    // Re-emit a fenced code block whose info string is the dialect
+                    // language so highlight.js can style it. `language-` prefix is
+                    // added by pulldown's html serializer from the info string.
+                    let lang = code_language(info);
+                    events.push(Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(
+                        CowStr::from(lang),
+                    ))));
+                }
             }
             Event::Start(Tag::CodeBlock(CodeBlockKind::Indented)) => {
                 cur_info = Some(String::new());
                 events.push(Event::Start(Tag::CodeBlock(CodeBlockKind::Indented)));
             }
+            Event::Text(_) if suppress_code => {
+                // Drop the source text of an executed block (shown via transcript).
+            }
             Event::End(TagEnd::CodeBlock) => {
-                events.push(Event::End(TagEnd::CodeBlock));
+                if !suppress_code {
+                    events.push(Event::End(TagEnd::CodeBlock));
+                }
+                suppress_code = false;
                 if let Some(info) = cur_info.take() {
                     let kind = classify_info(&info);
                     if matches!(
@@ -116,6 +147,7 @@ fn render_body(body_md: &str, registry: &Registry) -> String {
                             if !frag.transcript.is_empty() {
                                 events.push(Event::Html(CowStr::from(render_transcript(
                                     frag.transcript,
+                                    copy_script.as_deref(),
                                 ))));
                             }
                             if let Some(fig) = frag.figure {
@@ -268,12 +300,29 @@ fn classify_info(info: &str) -> BlockKind {
     }
 }
 
-/// Render a captured transcript into a `<pre class="fm-transcript">` block. The
-/// transcript text is HTML-escaped (it is plain REPL output, not markup).
-fn render_transcript(transcript: &str) -> String {
-    let mut s = String::from("<pre class=\"fm-transcript\"><code>");
+/// Render a captured transcript into an `<pre class="fm-transcript">` block,
+/// wrapped in a `.fm-example` container with a "Copy" button. The transcript
+/// text is HTML-escaped (plain REPL output, not markup). `copy_script`, if
+/// present, is the clean pasteable script (input lines only) embedded in the
+/// button's `data-copy` attribute for the shell's clipboard handler.
+fn render_transcript(transcript: &str, copy_script: Option<&str>) -> String {
+    let mut s = String::from("<div class=\"fm-example\">");
+    if let Some(script) = copy_script.filter(|c| !c.is_empty()) {
+        // Single-quote-delimited attribute (FreeMat scripts use single quotes,
+        // which `push_attr_escaped` turns into `&#39;`); newlines are encoded as
+        // `&#10;` so the multi-line script survives as one attribute value.
+        s.push_str("<button class=\"fm-copy\" type=\"button\" data-copy='");
+        for (i, line) in script.split('\n').enumerate() {
+            if i > 0 {
+                s.push_str("&#10;");
+            }
+            push_attr_escaped(&mut s, line);
+        }
+        s.push_str("'>Copy</button>");
+    }
+    s.push_str("<pre class=\"fm-transcript\"><code>");
     push_escaped(&mut s, transcript);
-    s.push_str("</code></pre>\n");
+    s.push_str("</code></pre></div>\n");
     s
 }
 
@@ -393,9 +442,11 @@ mod tests {
         let e = entry("pi", body);
         let reg = registry_with(vec![e]);
         let html = render_page(&e, &reg);
+        // The source fence is suppressed for an executed block with a captured
+        // transcript (no duplicate code); the transcript stands in for it.
         assert!(
-            html.contains("class=\"language-fm-exec\""),
-            "exec source highlighted: {html}"
+            !html.contains("class=\"language-fm-exec\""),
+            "exec source fence should be suppressed: {html}"
         );
         assert!(
             html.contains("fm-transcript"),
@@ -404,6 +455,11 @@ mod tests {
         assert!(
             html.contains("--&gt; pi") && html.contains("ans ="),
             "captured transcript text present (escaped): {html}"
+        );
+        // A "Copy" button carries the clean script (input only, no `--> ` / output).
+        assert!(
+            html.contains("class=\"fm-copy\"") && html.contains("data-copy='pi&#10;cos(pi)'"),
+            "copy button with clean script present: {html}"
         );
     }
 
