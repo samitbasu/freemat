@@ -69,23 +69,34 @@ fn b_eval(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array
     let src = args[0]
         .as_string()
         .ok_or_else(|| Signal::Error(InterpError::msg("eval: argument must be a string")))?;
-    // Output-producing eval: parse the trimmed source as a bare expression.
-    if nargout >= 1
-        && let Ok(expr) = fm_parser::parse_expression(src.trim_end_matches([';', ' ', '\n']))
-    {
-        return i.eval_multi(&expr, nargout, &src);
-    }
-    match run_source(i, &src) {
-        Ok(()) => Ok(vec![]),
+    match eval_string(i, &src, nargout) {
+        Ok(v) => Ok(v),
         Err(e) => {
+            // Two-argument form `eval(try, catch)`: if the first string raises,
+            // run the catch string instead — and, like the try, produce the
+            // requested outputs (so `b = eval('z','a+1')` assigns the catch's
+            // value, not an error). The catch path applies to BOTH the
+            // statement form and the output-producing form.
             if let Some(catch) = args.get(1).and_then(Array::as_string) {
-                run_source(i, &catch)?;
-                Ok(vec![])
+                eval_string(i, &catch, nargout)
             } else {
                 Err(e)
             }
         }
     }
+}
+
+/// Evaluate one `eval` source string. When an output is requested (`nargout >=
+/// 1`) and the source parses as a bare expression, return its value(s);
+/// otherwise run it as statements (assignments/calls display in the current
+/// scope) and yield no outputs.
+fn eval_string(i: &mut Interpreter, src: &str, nargout: usize) -> Flow<Vec<Array>> {
+    if nargout >= 1
+        && let Ok(expr) = fm_parser::parse_expression(src.trim_end_matches([';', ' ', '\n']))
+    {
+        return i.eval_multi(&expr, nargout, src);
+    }
+    run_source(i, src).map(|()| vec![])
 }
 
 /// `source(filename)` — read a script file and execute its statements in the

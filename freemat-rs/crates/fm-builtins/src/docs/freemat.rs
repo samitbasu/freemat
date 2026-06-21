@@ -503,7 +503,7 @@ so that the assignment must make sense in both cases.
 ## Example
 Here are some examples of `eval` being used.
 
-```fm
+```fm-exec
 eval('a = 32')
 b = eval('a')
 ```
@@ -511,7 +511,7 @@ b = eval('a')
 The primary use of the `eval` statement is to enable construction
 of expressions at run time.
 
-```fm
+```fm-exec
 s = ['b = a' ' + 2']
 eval(s)
 ```
@@ -519,7 +519,7 @@ eval(s)
 Here we demonstrate the use of the catch-clause to provide a
 default value
 
-```fm
+```fm-exec
 a = 32
 b = eval('a','1')
 b = eval('z','a+1')
