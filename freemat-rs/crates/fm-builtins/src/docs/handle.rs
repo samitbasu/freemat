@@ -754,7 +754,6 @@ x = linspace(-1,1,512)'*ones(1,512);
 y = x';
 Z = exp(-(x.^2+y.^2)/0.3);
 image(Z);
-mprint('colormap1');
 ```
 
 which we display with the default (grayscale) colormap here.
@@ -764,7 +763,6 @@ Next we switch to the `copper` colormap, and redisplay the image.
 ```fm
 colormap(copper);
 image(Z);
-mprint('colormap2');
 ```
 
 which results in the following image.
@@ -775,7 +773,6 @@ the following result:
 ```fm
 a = copper;
 plot(a);
-mprint('colormap3');
 ```
 
 Note that in the output that each of the color components are linear functions
@@ -789,7 +786,6 @@ curves, one for each color, centered on different parts of the index space:
 t = linspace(0,1,256);
 A = [exp(-(t-1.0).^2/0.1);exp(-(t-0.5).^2/0.1);exp(-t.^2/0.1)]';
 plot(A);
-mprint('colormap4');
 ```
 
 The resulting image has dark bands in it near the color transitions.
@@ -797,7 +793,6 @@ The resulting image has dark bands in it near the color transitions.
 ```fm
 image(Z);
 colormap(A);
-mprint('colormap5');
 ```
 
 These dark bands are a result of the nonuniform color intensity, which
@@ -807,7 +802,6 @@ we can correct for by renormalizing each color to have the same norm.
 w = sqrt(sum(A'.^2));
 sA = diag(1./w)*A;
 plot(A);
-mprint('colormap6');
 ```
 
 The resulting image has no more dark bands.
@@ -815,7 +809,6 @@ The resulting image has no more dark bands.
 ```fm
 image(Z);
 colormap(A);
-mprint('colormap7');
 ```
 "#,
 }
@@ -2506,13 +2499,10 @@ capture ability.
 ## Example
 Here is a simple example of how the figures in this manual are generated.
 
-```fm
+```fm-exec:figure
 x = linspace(-1,1);
 y = cos(5*pi*x);
 plot(x,y,'r-');
-print('printfig1.eps')
-print('printfig1.jpg')
-print('printfig1.png')
 ```
 
 which creates three plots `printfig.eps`, which is an Encapsulated PostScript
@@ -3502,7 +3492,6 @@ t = linspace(-1,1,256);
 xmat = ones(256,1)*t; ymat = xmat';
 A = exp(-(xmat.^2 + ymat.^2)*100);
 image(A);
-mprint('winlev1');
 ```
 
 The data range of `A` is `[0,1]`, as we can verify numerically:
@@ -3518,7 +3507,6 @@ to map a smaller range of `A` to the colormap.
 ```fm
 image(A);
 winlev(1e-4,0.5e-4)
-mprint('winlev2');
 ```
 
 The result is a look at more of the tail behavior of `A`.

@@ -675,8 +675,13 @@ impl BodyConverter {
             errors = lines[i].trim().parse().unwrap_or(0);
             i += 1;
         }
-        // Remaining lines up to \endif: REPL input. Detect mprint/print for the
-        // figure hint.
+        // Remaining lines up to \endif: REPL input. A standalone `mprint(...)` /
+        // `print(...)` call marks the fragment as a figure AND is a legacy
+        // Doxygen-pipeline artifact (it only saved the plot to a PNG for
+        // `\image`). The new system captures the figure directly from the scene,
+        // and these builtins don't exist in the port (they'd error and force the
+        // fragment to be downgraded to display-only), so we DROP the line from
+        // the executed body while keeping the figure marking.
         let mut body: Vec<&str> = Vec::new();
         let mut figure = false;
         while i < lines.len() && lines[i].trim_start() != "\\endif" {
@@ -684,6 +689,8 @@ impl BodyConverter {
             let lt = l.trim_start();
             if lt.starts_with("mprint(") || lt.starts_with("print(") {
                 figure = true;
+                i += 1;
+                continue; // drop the figure-save line from the executed body
             }
             body.push(l);
             i += 1;
@@ -1536,6 +1543,9 @@ mprint('cosplot');
         assert!(!d.body.contains("frag_mathfunctions_cos_000"), "{}", d.body);
         assert!(!d.body.contains("# errors:"), "{}", d.body);
         assert!(d.body.contains("x = linspace(0,1);"));
+        // the legacy `mprint(...)` figure-save line is dropped from the body
+        // (figure is captured from the scene; mprint isn't a port builtin)
+        assert!(!d.body.contains("mprint"), "mprint not dropped: {}", d.body);
         // \verbinclude and \image dropped
         assert!(!d.body.contains("verbinclude"));
         assert!(!d.body.contains("\\image"));

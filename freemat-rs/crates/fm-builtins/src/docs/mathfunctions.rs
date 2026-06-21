@@ -46,10 +46,9 @@ $$
 The following code demonstates the `acos` function over the range
 `[-1,1]`.
 
-```fm
+```fm-exec:figure
 t = linspace(-1,1);
 plot(t,acos(t))
-mprint('acosplot');
 ```
 "#,
 }
@@ -110,10 +109,9 @@ where the `log` (and square root) is taken in its most general sense.
 ## Examples
 Here is a simple plot of the inverse hyperbolic cosine function
 
-```fm
+```fm-exec:figure
 x = linspace(1,pi);
 plot(x,acosh(x)); grid('on');
-mprint('acoshplot');
 ```
 "#,
 }
@@ -143,11 +141,10 @@ $$
 ## Examples
 Here is a simple plot of the inverse cotangent function
 
-```fm
+```fm-exec:figure
 x1 = -2*pi:pi/30:-0.1;
 x2 = 0.1:pi/30:2*pi;
 plot(x1,acot(x1),x2,acot(x2)); grid('on');
-mprint('acotplot');
 ```
 "#,
 }
@@ -194,10 +191,9 @@ $$
 ## Examples
 Here is a simple plot of the inverse hyperbolic cotangent function
 
-```fm
+```fm-exec:figure
 x = linspace(1,pi);
 plot(x,acoth(x)); grid('on');
-mprint('acothplot');
 ```
 "#,
 }
@@ -227,11 +223,10 @@ $$
 ## Examples
 Here is a simple plot of the inverse cosecant function
 
-```fm
+```fm-exec:figure
 x1 = -10:.01:-1.01;
 x2 = 1.01:.01:10;
 plot(x1,acsc(x1),x2,acsc(x2)); grid('on');
-mprint('acscplot');
 ```
 "#,
 }
@@ -291,11 +286,10 @@ $$
 ## Examples
 Here is a simple plot of the inverse hyperbolic cosecant function
 
-```fm
+```fm-exec:figure
 x1 = -20:.01:-1;
 x2 = 1:.01:20;
 plot(x1,acsch(x1),x2,acsch(x2)); grid('on');
-mprint('acschplot');
 ```
 "#,
 }
@@ -368,11 +362,10 @@ $$
 ## Examples
 Here is a simple plot of the inverse secant function
 
-```fm
+```fm-exec:figure
 x1 = -5:.01:-1;
 x2 = 1:.01:5;
 plot(x1,asec(x1),x2,asec(x2)); grid('on');
-mprint('asecplot');
 ```
 "#,
 }
@@ -432,11 +425,10 @@ $$
 ## Examples
 Here is a simple plot of the inverse hyperbolic secant function
 
-```fm
+```fm-exec:figure
 x1 = -20:.01:-1;
 x2 = 1:.01:20;
 plot(x1,imag(asech(x1)),x2,imag(asech(x2))); grid('on');
-mprint('asechplot');
 ```
 "#,
 }
@@ -481,10 +473,9 @@ due to the periodicity of `sin(x)`.
 The following code demonstates the `asin` function over the range
 `[-1,1]`.
 
-```fm
+```fm-exec:figure
 t = linspace(-1,1);
 plot(t,asin(t))
-mprint('asinplot');
 ```
 "#,
 }
@@ -545,10 +536,9 @@ where the `log` (and square root) is taken in its most general sense.
 ## Examples
 Here is a simple plot of the inverse hyperbolic sine function
 
-```fm
+```fm-exec:figure
 x = -5:.01:5;
 plot(x,asinh(x)); grid('on');
-mprint('asinhplot');
 ```
 "#,
 }
@@ -592,10 +582,9 @@ $$
 The following code demonstates the `atan` function over the range
 `[-1,1]`.
 
-```fm
+```fm-exec:figure
 t = linspace(-1,1);
 plot(t,atan(t))
-mprint('atanplot');
 ```
 "#,
 }
@@ -643,11 +632,10 @@ due to the periodicities of  `cos(x)` and `sin(x)`.
 The following code demonstates the difference between the `atan2`
 function and the `atan` function over the range `[-pi,pi]`.
 
-```fm
+```fm-exec:figure
 x = linspace(-pi,pi);
 sx = sin(x); cx = cos(x);
 plot(x,atan(sx./cx),x,atan2(sx,cx))
-mprint('atan2plot');
 ```
 
 Note how the two-argument `atan2` function (green line)
@@ -706,10 +694,9 @@ where the `log` (and square root) is taken in its most general sense.
 ## Examples
 Here is a simple plot of the inverse hyperbolic tangent function
 
-```fm
+```fm-exec:figure
 x = -0.99:.01:0.99;
 plot(x,atanh(x)); grid('on');
-mprint('atanhplot');
 ```
 "#,
 }
@@ -796,10 +783,9 @@ $$
 The following piece of code plots the real-valued `cos(2 pi x)`
 function over one period of `[0,1]`:
 
-```fm
+```fm-exec:figure
 x = linspace(0,1);
 plot(x,cos(2*pi*x))
-mprint('cosplot');
 ```
 "#,
 }
@@ -863,10 +849,9 @@ $$
 ## Examples
 Here is a simple plot of the hyperbolic cosine function
 
-```fm
+```fm-exec:figure
 x = linspace(-5,5);
 plot(x,cosh(x)); grid('on');
-mprint('coshplot');
 ```
 "#,
 }
@@ -908,10 +893,9 @@ $$
 The following piece of code plots the real-valued `cot(x)`
 function over the interval `[-1,1]`:
 
-```fm
+```fm-exec:figure
 t = linspace(-1,1);
 plot(t,cot(t))
-mprint('cotplot');
 ```
 "#,
 }
@@ -964,11 +948,10 @@ $$
 ## Examples
 Here is a simple plot of the hyperbolic cotangent function
 
-```fm
+```fm-exec:figure
 x1 = -pi+.01:.01:-.01;
 x2 = .01:.01:pi-.01;
 plot(x1,coth(x1),x2,coth(x2)); grid('on');
-mprint('cothplot');
 ```
 "#,
 }
@@ -1021,11 +1004,10 @@ $$
 The following piece of code plots the real-valued `csc(2 pi x)`
 function over the interval of `[-1,1]`:
 
-```fm
+```fm-exec:figure
 t = linspace(-1,1,1000);
 plot(t,csc(2*pi*t))
 axis([-1,1,-10,10]);
-mprint('cscplot');
 ```
 "#,
 }
@@ -1071,11 +1053,10 @@ $$
 ## Examples
 Here is a simple plot of the hyperbolic cosecant function
 
-```fm
+```fm-exec:figure
 x1 = -pi+.01:.01:-.01;
 x2 = .01:.01:pi-.01;
 plot(x1,csch(x1),x2,csch(x2)); grid('on');
-mprint('cschplot');
 ```
 "#,
 }
@@ -1255,19 +1236,17 @@ $$
 The following piece of code plots the real-valued `exp`
 function over the interval `[-1,1]`:
 
-```fm
+```fm-exec:figure
 x = linspace(-1,1);
 plot(x,exp(x))
-mprint('expplot1');
 ```
 
 In the second example, we plot the unit circle in the
 complex plane `e^{i 2 pi x}` for `x in [-1,1]`.
 
-```fm
+```fm-exec:figure
 x = linspace(-1,1);
 plot(exp(-i*x*2*pi))
-mprint('expplot2');
 ```
 "#,
 }
@@ -1485,12 +1464,11 @@ where `arg` is the complex argument of `z`.
 The following piece of code plots the real-valued `log`
 function over the interval `[1,100]`:
 
-```fm
+```fm-exec:figure
 x = linspace(1,100);
 plot(x,log(x))
 xlabel('x');
 ylabel('log(x)');
-mprint('logplot');
 ```
 "#,
 }
@@ -1519,12 +1497,11 @@ For negative and complex arguments, the output is complex.
 The following piece of code plots the real-valued `log10`
 function over the interval `[1,100]`:
 
-```fm
+```fm-exec:figure
 x = linspace(1,100);
 plot(x,log10(x))
 xlabel('x');
 ylabel('log10(x)');
-mprint('log10plot');
 ```
 "#,
 }
@@ -1570,12 +1547,11 @@ For negative and complex arguments, the output is complex.
 The following piece of code plots the real-valued `log2`
 function over the interval `[1,100]`:
 
-```fm
+```fm-exec:figure
 x = linspace(1,100);
 plot(x,log2(x))
 xlabel('x');
 ylabel('log2(x)');
-mprint('log2plot');
 ```
 "#,
 }
@@ -1746,11 +1722,10 @@ $$
 The following piece of code plots the real-valued `sec(2 pi x)`
 function over the interval of `[-1,1]`:
 
-```fm
+```fm-exec:figure
 t = linspace(-1,1,1000);
 plot(t,sec(2*pi*t))
 axis([-1,1,-10,10]);
-mprint('secplot');
 ```
 "#,
 }
@@ -1796,10 +1771,9 @@ $$
 ## Examples
 Here is a simple plot of the hyperbolic secant function
 
-```fm
+```fm-exec:figure
 x = -2*pi:.01:2*pi;
 plot(x,sech(x)); grid('on');
-mprint('sechplot');
 ```
 "#,
 }
@@ -1841,10 +1815,9 @@ $$
 The following piece of code plots the real-valued `sin(2 pi x)`
 function over one period of `[0,1]`:
 
-```fm
+```fm-exec:figure
 x = linspace(0,1);
 plot(x,sin(2*pi*x))
-mprint('sinplot')
 ```
 "#,
 }
@@ -1903,10 +1876,9 @@ $$
 ## Examples
 Here is a simple plot of the hyperbolic sine function
 
-```fm
+```fm-exec:figure
 x = linspace(-5,5);
 plot(x,sinh(x)); grid('on');
-mprint('sinhplot');
 ```
 "#,
 }
@@ -1981,10 +1953,9 @@ $$
 The following piece of code plots the real-valued `tan(x)`
 function over the interval `[-1,1]`:
 
-```fm
+```fm-exec:figure
 t = linspace(-1,1);
 plot(t,tan(t))
-mprint('tanplot');
 ```
 "#,
 }
@@ -2037,10 +2008,9 @@ $$
 ## Examples
 Here is a simple plot of the hyperbolic tangent function
 
-```fm
+```fm-exec:figure
 x = linspace(-5,5);
 plot(x,tanh(x)); grid('on');
-mprint('tanhplot');
 ```
 "#,
 }

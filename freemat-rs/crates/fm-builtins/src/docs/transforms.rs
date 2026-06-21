@@ -230,12 +230,11 @@ inverse FFT are identical.
 ## Example
 The following piece of code plots the FFT for a sinusoidal signal:
 
-```fm
+```fm-exec:figure
 t = linspace(0,2*pi,128);
 x = cos(15*t);
 y = fft(x);
 plot(t,abs(y));
-mprint('fft1');
 ```
 
 The resulting plot is:
@@ -244,7 +243,7 @@ The FFT can also be taken along different dimensions, and with padding
 and/or truncation.  The following example demonstrates the Fourier
 Transform being computed along each column, and then along each row.
 
-```fm
+```fm-exec
 A = [2,5;3,6]
 real(fft(A,[],1))
 real(fft(A,[],2))
@@ -256,12 +255,11 @@ padding in the time domain results in frequency interpolation.  The
 following example demonstrates the FFT of a pulse (consisting of 10 ones)
 with (red line) and without (green circles) padding.
 
-```fm
+```fm-exec:figure
 delta(1:10) = 1;
 plot((0:255)/256*pi*2,real(fft(delta,256)),'r-');
 hold on
 plot((0:9)/10*pi*2,real(fft(delta)),'go');
-mprint('fft2');
 ```
 
 The resulting plot is:
