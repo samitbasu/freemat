@@ -687,7 +687,7 @@ impl BodyConverter {
         while i < lines.len() && lines[i].trim_start() != "\\endif" {
             let l = lines[i];
             let lt = l.trim_start();
-            if lt.starts_with("mprint(") || lt.starts_with("print(") {
+            if is_figure_save_line(lt) {
                 figure = true;
                 i += 1;
                 continue; // drop the figure-save line from the executed body
@@ -793,6 +793,22 @@ impl BodyConverter {
         let trimmed = body.trim_matches('\n');
         format!("\n{trimmed}\n")
     }
+}
+
+/// Is `lt` (already left-trimmed) a legacy figure-save call we must drop from
+/// an executed fragment body? This matches both the function-call form
+/// (`mprint('foo')`, `print(...)`) and the **command syntax** form
+/// (`mprint surf1`, `print foo`, or a bare `mprint`/`print`). These builtins
+/// only existed to dump a PNG for the old Doxygen `\image` pipeline; the new
+/// system captures the figure from the scene, so they're stripped while the
+/// fragment is still marked as a figure.
+fn is_figure_save_line(lt: &str) -> bool {
+    if lt.starts_with("mprint(") || lt.starts_with("print(") {
+        return true;
+    }
+    // Command syntax: the first whitespace-delimited token is exactly `mprint`
+    // or `print` (bare, or followed by a space + args).
+    matches!(lt.split_whitespace().next(), Some("mprint") | Some("print"))
 }
 
 /// Title-case-ish normalization for a `\section` heading. Most are already
@@ -1563,6 +1579,45 @@ error('boom')
 \\endif";
         let d = convert_doc_page(page, "flow").unwrap();
         assert!(d.body.contains("```fm-exec\n# errors: 2\n"), "{}", d.body);
+    }
+
+    #[test]
+    fn is_figure_save_line_matches_call_and_command_syntax() {
+        // Function-call form.
+        assert!(is_figure_save_line("mprint('foo')"));
+        assert!(is_figure_save_line("print(1)"));
+        // Command syntax (no parens).
+        assert!(is_figure_save_line("mprint surf1"));
+        assert!(is_figure_save_line("print foo"));
+        assert!(is_figure_save_line("mprint"));
+        assert!(is_figure_save_line("print"));
+        // Not figure-save calls.
+        assert!(!is_figure_save_line("printf('x')"));
+        assert!(!is_figure_save_line("mprintf(1)"));
+        assert!(!is_figure_save_line("x = 1"));
+        assert!(!is_figure_save_line("plot(x)"));
+    }
+
+    #[test]
+    fn fragment_with_command_syntax_mprint_is_figure_and_dropped() {
+        let page = "\
+\\page graphics_surf SURF Surf.
+\\section Example
+\\if FRAGMENT
+frag_x_000.m
+0
+surf(x,y,z,c)
+view(3)
+mprint surf1
+\\endif";
+        let d = convert_doc_page(page, "graphics").unwrap();
+        // Promoted to a figure block even though `\image` is absent.
+        assert!(d.body.contains("```fm-exec:figure"), "{}", d.body);
+        // The command-syntax figure-save line is stripped from the body.
+        assert!(!d.body.contains("mprint"), "mprint not dropped: {}", d.body);
+        // The real example lines survive.
+        assert!(d.body.contains("surf(x,y,z,c)"), "{}", d.body);
+        assert!(d.body.contains("view(3)"), "{}", d.body);
     }
 
     #[test]

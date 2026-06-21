@@ -60,6 +60,7 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("errorbar", b_errorbar);
     table.add_builtin("plot3", b_plot3);
     table.add_builtin("peaks", b_peaks);
+    table.add_builtin("view", b_view);
 }
 
 /// Split args into `(x, y)`, supplying the implicit `x = 1:n` when only `y` is
@@ -703,6 +704,42 @@ fn b_contour(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>>
     let h = i.graphics.register_series(fig, axes_idx, ObjKind::Contour);
     i.graphics.dirty = true;
     Ok(vec![handle(h)])
+}
+
+// ---- view (3-D camera) ------------------------------------------------------
+
+/// `view(2)` / `view(3)` / `view(az, el)` — set the 3-D viewing angles.
+///
+/// FreeMat/MATLAB conventions:
+/// - `view(2)` → straight-down 2-D view (az=0, el=90),
+/// - `view(3)` → default 3-D view (az=-37.5, el=30),
+/// - `view(az, el)` → explicit azimuth/elevation in degrees.
+///
+/// We record the requested `[az, el]` on the current axes; the renderers map it
+/// to the Plotly `scene.camera.eye`. The call never errors (so doc examples run).
+fn b_view(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let view = match args {
+        [a, b] => Some([a.as_f64().unwrap_or(0.0), b.as_f64().unwrap_or(0.0)]),
+        [a] => {
+            // A single argument is a mode selector (2 or 3) — or a 1x2/2x1 vector.
+            let v = to_f64_vec(a);
+            if v.len() >= 2 {
+                Some([v[0], v[1]])
+            } else {
+                match a.as_f64().unwrap_or(3.0).round() as i64 {
+                    2 => Some([0.0, 90.0]),
+                    _ => Some([-37.5, 30.0]),
+                }
+            }
+        }
+        // `view()` with no args is a query in MATLAB; we just no-op.
+        _ => None,
+    };
+    if let Some(v) = view {
+        i.graphics.current_figure_mut().current_axes_mut().view = Some(v);
+        i.graphics.dirty = true;
+    }
+    Ok(vec![])
 }
 
 // ---- labels / title ---------------------------------------------------------

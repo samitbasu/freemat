@@ -336,10 +336,9 @@ where `colspec` is any valid color and symbol spec accepted by `plot`.
 ## Example
 First, an example of a random sparse matrix.
 
-```fm
+```fm-exec:figure
 y = sprand(1000,1000,.001);
 spy(y,'ro')
-mprint spy1
 ```
 
 which is shown here
@@ -347,11 +346,10 @@ Here is a sparse matrix with a little more structure.  First we build a
 sparse matrix with block diagonal structure, and then use `spy` to
 visualize the structure.
 
-```fm
+```fm-exec:figure
 A = sparse(1000,1000);
 for i=1:25; A((1:40) + 40*(i-1),(1:40) + 40*(i-1)) = 1; end;
 spy(A,'gx')
-mprint spy2
 ```
 
 with the result shown here

@@ -739,7 +739,6 @@ Here is a plot of the betainc function over the range `[.2,.8]`.
 x=.2:.01:.8;
 y = betainc(x,5,3);
 plot(x,y); xlabel('x'); ylabel('betainc(x,5,3)');
-mprint betainc1
 ```
 
 which results in the following plot.
@@ -1113,11 +1112,10 @@ and is the integral of the normal distribution.
 ## Example
 Here is a plot of the erf function over the range `[-5,5]`.
 
-```fm
+```fm-exec:figure
 x = linspace(-5,5);
 y = erf(x);
 plot(x,y); xlabel('x'); ylabel('erf(x)');
-mprint erf1
 ```
 
 which results in the following plot.
@@ -1151,11 +1149,10 @@ and is the integral of the normal distribution.
 ## Example
 Here is a plot of the `erfc` function over the range `[-5,5]`.
 
-```fm
+```fm-exec:figure
 x = linspace(-5,5);
 y = erfc(x);
 plot(x,y); xlabel('x'); ylabel('erfc(x)');
-mprint erfc1
 ```
 
 which results in the following plot.
@@ -1185,7 +1182,6 @@ Here is a plot of the erf function over the range `[-.9,.9]`.
 x = linspace(-.9,.9,100);
 y = erfinv(x);
 plot(x,y); xlabel('x'); ylabel('erfinv(x)');
-mprint erfinv1
 ```
 
 which results in the following plot.
@@ -1327,12 +1323,11 @@ and for integer arguments, is equivalent to the factorial function.
 ## Example
 Here is a plot of the gamma function over the range `[-5,5]`.
 
-```fm
+```fm-exec:figure
 x = linspace(-5,5);
 y = gamma(x);
 plot(x,y); xlabel('x'); ylabel('gamma(x)');
 axis([-5,5,-5,5]);
-mprint gamma1
 ```
 
 which results in the following plot.
@@ -1358,11 +1353,10 @@ vector `y` is the same size (and type) as `x`.
 ## Example
 Here is a plot of the `gammaln` function over the range `[-5,5]`.
 
-```fm
+```fm-exec:figure
 x = linspace(0,10);
 y = gammaln(x);
 plot(x,y); xlabel('x'); ylabel('gammaln(x)');
-mprint gammaln1
 ```
 
 which results in the following plot.
@@ -1418,7 +1412,6 @@ Here is a plot of the `legendre` function over the range `[-1,1]`.
 x = linspace(-1,1,30);
 y = legendre(4,x);
 plot(x,y); xlabel('x'); ylabel('legendre(4,x)');
-mprint legendre
 ```
 
 which results in the following plot.

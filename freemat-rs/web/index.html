@@ -173,6 +173,21 @@
         return null;
       }
 
+      // Map FreeMat/MATLAB `view([az, el])` (degrees) to a Plotly camera `eye`
+      // (a unit-ish offset of the camera from the scene center). Returns null
+      // when no view was requested (Plotly keeps its default camera).
+      function viewToEye(view) {
+        if (!view || view.length < 2) return null;
+        const az = view[0] * Math.PI / 180, el = view[1] * Math.PI / 180;
+        const r = 1.8;
+        // MATLAB azimuth is measured from the -y axis, rotating toward +x.
+        return {
+          x: r * Math.cos(el) * Math.sin(az),
+          y: -r * Math.cos(el) * Math.cos(az),
+          z: r * Math.sin(el),
+        };
+      }
+
       // Default full-frame axes position when none is supplied.
       function axPosition(ax) {
         const p = ax.position;
@@ -201,6 +216,25 @@
         if (ax.equal) yaxis.scaleanchor = xref;
         layout[xkey] = xaxis;
         layout[ykey] = yaxis;
+
+        // 3-D axes: any surface/line3d series binds to a Plotly `scene`. Without
+        // a `layout.scene*` object Plotly squashes the z-axis, so create one with
+        // a balanced "cube" aspect (or true "data" scaling under `axis equal`),
+        // a domain for subplots, the z-label, and the requested camera view.
+        const is3d = (ax.series || []).some((s) => s.kind === "surface" || s.kind === "line3d");
+        if (is3d) {
+          const skey = "scene" + suffix;
+          const scene = {
+            aspectmode: ax.equal ? "data" : "cube",
+            domain: { x: [left, left + w], y: [bottom, bottom + h] },
+          };
+          if ((ax.xlabel || "").length) scene.xaxis = { title: ax.xlabel };
+          if ((ax.ylabel || "").length) scene.yaxis = { title: ax.ylabel };
+          if ((ax.zlabel || "").length) scene.zaxis = { title: ax.zlabel };
+          const eye = viewToEye(ax.view);
+          if (eye) scene.camera = { eye };
+          layout[skey] = scene;
+        }
 
         const names = (ax.legend && ax.legend.names) || null;
         (ax.series || []).forEach((s, i) => {

@@ -149,6 +149,11 @@ pub struct Axes {
     /// `axis equal` — equal data-unit aspect ratio.
     #[serde(default, skip_serializing_if = "is_false")]
     pub equal: bool,
+    /// Requested 3-D viewing angles `[azimuth, elevation]` in degrees, as set by
+    /// `view(az, el)` / `view(3)` / `view(2)`. `None` = renderer default. The
+    /// renderers map this to the Plotly `scene.camera.eye`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<[f64; 2]>,
 }
 
 impl Default for Axes {
@@ -168,6 +173,7 @@ impl Default for Axes {
             legend: None,
             hold: false,
             equal: false,
+            view: None,
         }
     }
 }

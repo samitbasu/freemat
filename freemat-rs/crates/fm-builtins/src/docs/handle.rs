@@ -554,7 +554,6 @@ to control the parameters of the generated text labels.  See the
 z = x.*exp(-(x.^2+y.^2));
 h = contour(z);
 clabel(h,'backgroundcolor',[1,1,.6],'edgecolor',[.7,.7,.7]);
-mprint clabel1
 ```
 
 which results in
@@ -563,7 +562,6 @@ Alternately, we can just label a subset of the contours
 ```fm
 h = contour(z);
 clabel(h,[-.2,0,.3]);
-mprint clabel2
 ```
 
 which results in
@@ -630,7 +628,6 @@ z = exp(-x.^2-y.^2);
 image(z);
 min(z(:))
 max(z(:))
-mprint clim1
 ```
 
 which results in
@@ -640,7 +637,6 @@ Next, we change the colorscale of the image using the
 ```fm
 image(z);
 clim([0,0.2]);
-mprint clim2
 ```
 
 which results in
@@ -909,19 +905,17 @@ To place labels on the contour plot, use the `clabel` function.
 Here is a simple example of a contour plot with the default `x,y`
 coordinates:
 
-```fm
+```fm-exec:figure
 [x,y] = meshgrid(linspace(-1,1,25),linspace(-2,2,30));
 z = x.*exp(-x.^2-y.^2);
 contour(z)
-mprint contour1
 ```
 
 which results in the following plot
 Here, we specify the `x` and `y` coordinates explictly
 
-```fm
+```fm-exec:figure
 contour(x,y,z)
-mprint contour2
 ```
 
 note that the axis limits have changed appropriately
@@ -929,9 +923,8 @@ By default, contours are created at values selected by FreeMat.  To
 provide our own set of contour values (asymmetrically about zero in this
 case), we supply them as
 
-```fm
+```fm-exec:figure
 contour(x,y,z,[-.4,0.,3])
-mprint contour3
 ```
 
 which is here
@@ -939,9 +932,8 @@ Also be default, `contour` uses the current color map and `clim`
 limits to determine the coloring of the contours.  Here, we override the
 color spec so that we have all black contour
 
-```fm
+```fm-exec:figure
 contour(x,y,z,'b-')
-mprint contour4
 ```
 
 which is here
@@ -968,7 +960,6 @@ z=x.*exp(-x.^2-y.^2);
 contour3(x,y,z,30);
 axis square;
 view(-15,25)
-mprint contour3_1
 ```
 
 The resulting plot
@@ -998,7 +989,6 @@ y = x';
 Z = exp(-(x.^2+y.^2)/0.3);
 image(Z);
 colormap(copper);
-mprint copper1
 ```
 
 which results in the following image
@@ -1355,7 +1345,6 @@ y = x';
 Z = exp(-(x.^2+y.^2)/0.3);
 image(Z);
 colormap(gray);
-mprint gray1
 ```
 
 which results in the following image
@@ -1401,19 +1390,17 @@ where `handle` is the handle for a particular axis.
 ## Example
 Here is a simple plot without grid lines.
 
-```fm
+```fm-exec:figure
 x = linspace(-1,1);
 y = cos(3*pi*x);
 plot(x,y,'r-');
-mprint grid1
 ```
 
 Next, we activate the grid lines.
 
-```fm
+```fm-exec:figure
 plot(x,y,'r-');
 grid on
-mprint grid2
 ```
 "#,
 }
@@ -1553,12 +1540,11 @@ Here is an example of using both the `hold` command and the
 multiple-argument `plot` command to construct a plot composed
 of three sets of data.  The first is a plot of a modulated Gaussian.
 
-```fm
+```fm-exec:figure
 x = linspace(-5,5,500);
 t = exp(-x.^2);
 y = t.*cos(2*pi*x*3);
 plot(x,y);
-mprint hold1
 ```
 
 We now turn the hold state to `'on'`, and add another plot
@@ -1568,11 +1554,10 @@ using a single `plot` command.  The fact that `hold` is
 `'on'` means that these two envelopes are added to (instead of
 replace) the current contents of the plot.
 
-```fm
+```fm-exec:figure
 plot(x,y);
 hold on
 plot(x,t,'g-',x,-t,'b-')
-mprint hold2
 ```
 "#,
 }
@@ -1770,7 +1755,6 @@ x((-64:63)+256,(-128:127)+256) = 1.0;
 figure
 image(x)
 colormap(gray)
-mprint image1
 ```
 
 The resulting image looks like:
@@ -1785,7 +1769,6 @@ A(:,:,1) = red;
 A(:,:,2) = green; 
 A(:,:,3) = blue;
 image(A);
-mprint image2
 ```
 
 The resulting image looks like:
@@ -1899,7 +1882,6 @@ x((-64:63)+256,(-128:127)+256) = 1.0;
 figure
 imagesc(x,[0 .5])
 colormap(gray)
-mprint image1
 ```
 "#,
 }
@@ -2124,18 +2106,16 @@ x and y axis to have a logarithmic scale.
 Here is an example of a doubly exponential signal plotted first on a linear
 plot:
 
-```fm
+```fm-exec:figure
 x = linspace(1,100);
 y = x;
 plot(x,y,'r-');
-mprint loglog1
 ```
 
 and now on a log-log plot
 
-```fm
+```fm-exec:figure
 loglog(x,y,'r-');
-mprint loglog2
 ```
 "#,
 }
@@ -2193,7 +2173,6 @@ c = [ 1 1 1 ];
 patch(x,y,c)
 axis equal
 view(3)
-mprint patch1
 ```
 "#,
 }
@@ -2323,11 +2302,10 @@ The most common use of the `plot` command probably involves the vector-matrix
 paired case.  Here, we generate a simple cosine, and plot it using a red line, with
 no symbols (i.e., a `linespec` of `'r-'`).
 
-```fm
+```fm-exec:figure
 x = linspace(-pi,pi);
 y = cos(x);
 plot(x,y,'r-');
-mprint plot1
 ```
 
 which results in the following plot.
@@ -2336,11 +2314,10 @@ Next, we plot multiple sinusoids (at different frequencies).  First, we construc
 a matrix, in which each column corresponds to a different sinusoid, and then plot
 them all at once.
 
-```fm
+```fm-exec:figure
 x = linspace(-pi,pi);
 y = [cos(x(:)),cos(3*x(:)),cos(5*x(:))];
 plot(x,y);
-mprint plot2
 ```
 
 In this case, we do not specify a `linespec`, so that we cycle through the
@@ -2356,9 +2333,8 @@ marking the data points, the second line (third harmonic) has blue, solid lines
 with right-pointing triangle symbols, and the third line (fifth harmonic) has
 green, dotted lines with asterisk symbols.
 
-```fm
+```fm-exec:figure
 plot(x,y(:,1),'rx-',x,y(:,2),'b>-',x,y(:,3),'g*:');
-mprint plot3
 ```
 
 The second most frequently used case is the unpaired matrix case.  Here, we need
@@ -2366,9 +2342,8 @@ to provide only one data component, which will be automatically plotted against
 a vector of natural number of the appropriate length.  Here, we use a plot sequence
 to change the style of each line to be dotted, dot-dashed, and dashed.
 
-```fm
+```fm-exec:figure
 plot(y(:,1),'r:',y(:,2),'b;',y(:,3),'g|');
-mprint plot4
 ```
 
 Note in the resulting plot that the `x`-axis no longer runs from `[-pi,pi]`, but
@@ -2378,19 +2353,17 @@ The final case is for complex matrices.  For complex arguments, the real part is
 plotted against the imaginary part.  Hence, we can generate a 2-dimensional plot
 from a vector as follows.
 
-```fm
+```fm-exec:figure
 y = cos(2*x) + i * cos(3*x);
 plot(y);
-mprint plot5
 ```
 
 Here is an example of using the handle properties to influence the behavior
 of the generated lines.
 
-```fm
+```fm-exec:figure
 t = linspace(-3,3);
 plot(cos(5*t).*exp(-t),'r-','linewidth',3);
-mprint plot6
 ```
 "#,
 }
@@ -2423,12 +2396,11 @@ axes to target
 ## Example
 Here is a simple example of a 3D helix.
 
-```fm
+```fm-exec:figure
 t = linspace(0,5*pi,200);
 x = cos(t); y = sin(t); z = t;
 plot3(x,y,z);
 view(3);
-mprint plt3
 ```
 
 Shown here
@@ -2560,18 +2532,16 @@ x axis to have a logarithmic scale.
 Here is an example of an exponential signal plotted first on a linear
 plot:
 
-```fm
+```fm-exec:figure
 y = linspace(0,2);
 x = (10).^y;
 plot(x,y,'r-');
-mprint semilogx1
 ```
 
 and now with a logarithmic x axis
 
-```fm
+```fm-exec:figure
 semilogx(x,y,'r-');
-mprint semilogx2
 ```
 "#,
 }
@@ -2595,18 +2565,16 @@ y axis to have a logarithmic scale.
 Here is an example of an exponential signal plotted first on a linear
 plot:
 
-```fm
+```fm-exec:figure
 x = linspace(0,2);
 y = 10.0.^x;
 plot(x,y,'r-');
-mprint semilogy1
 ```
 
 and now with a logarithmic y axis
 
-```fm
+```fm-exec:figure
 semilogy(x,y,'r-');
-mprint semilogy2
 ```
 "#,
 }
@@ -2705,7 +2673,6 @@ subplot(2,2,3);
 plot(t,cos(t*3).*exp(-2*t));
 subplot(2,2,4);
 plot(t,cos(t*4).*exp(-2*t));
-mprint subplot1
 ```
 
 Here we use the second form of `subplot` to generate one subplot
@@ -2719,7 +2686,6 @@ subplot(2,2,3);
 plot(t,cos(t*3).*exp(-2*t));
 subplot(2,2,4);
 plot(t,cos(t*4).*exp(-2*t));
-mprint subplot2
 ```
 
 Note that the subplots can contain any handle graphics objects,
@@ -2740,7 +2706,6 @@ subplot(2,2,4);
 tubeplot(x,y,z,0.14*sin(t*5)+.29,t,10)
 axis equal
 view(3)
-mprint subplot3
 ```
 "#,
 }
@@ -2790,7 +2755,7 @@ via
 ## Example
 Here we generate a surface specifying all four components.
 
-```fm
+```fm-exec:figure
 x = repmat(linspace(-1,1),[100,1]);
 y = x';
 r = x.^2+y.^2;
@@ -2799,17 +2764,15 @@ c = r;
 surf(x,y,z,c)
 axis equal
 view(3)
-mprint surf1
 ```
 
 If we allow FreeMat to specify the color component, we see that
 the colorfield is the same as the height
 
-```fm
+```fm-exec:figure
 surf(x,y,z)
 axis equal
 view(3)
-mprint surf2
 ```
 "#,
 }
@@ -2988,7 +2951,6 @@ Here is an example of a few labels being added to a random plot:
 ```fm
 plot(rand(1,4))
 text([2,3],[0.5,0.5],{'hello','there'})
-mprint text1
 ```
 
 Here is the same example, but with larger labels:
@@ -2996,7 +2958,6 @@ Here is the same example, but with larger labels:
 ```fm
 plot(rand(1,4))
 text([2,3],[0.5,0.5],{'hello','there'},'fontsize',20)
-mprint text2
 ```
 "#,
 }
@@ -3108,21 +3069,19 @@ for the operation
 ## Example
 Here is an example of a simple plot with a title.
 
-```fm
+```fm-exec:figure
 x = linspace(-1,1);
 y = cos(2*pi*x);
 plot(x,y,'r-');
 title('cost over time');
-mprint title1
 ```
 
 which results in the following plot.
 We now increase the size of the font using the properties
 of the `label`
 
-```fm
+```fm-exec:figure
 title('cost over time','fontsize',20);
-mprint title2
 ```
 "#,
 }
@@ -3195,7 +3154,6 @@ x=cos(t*2).*(2+sin(t*3)*.3);
 y=sin(t*2).*(2+sin(t*3)*.3);
 z=cos(t*3)*.3;
 tubeplot(x,y,z,0.14*sin(t*5)+.29,t,10);
-mprint tubeplot1
 ```
 
  Written by Anders Sandberg, asa@nada.kth.se, 2005
@@ -3407,7 +3365,7 @@ you set the viewpoint to azimuth `az` and elevation `el`.
 Here is a 3D surface plot shown with a number of viewpoints.
 First, the default view for a 3D plot.
 
-```fm
+```fm-exec:figure
 x = repmat(linspace(-1,1),[100,1]);
 y = x';
 r = x.^2+y.^2;
@@ -3415,25 +3373,22 @@ z = exp(-r*3).*cos(5*pi*r);
 surf(x,y,z);
 axis equal
 view(3)
-mprint view1
 ```
 
 Next, we look at it as a 2D plot
 
-```fm
+```fm-exec:figure
 surf(x,y,z);
 axis equal
 view(2)
-mprint view2
 ```
 
 Finally, we generate a different view of the same surface.
 
-```fm
+```fm-exec:figure
 surf(x,y,z);
 axis equal
 view(25,50);
-mprint view3
 ```
 "#,
 }
@@ -3554,12 +3509,11 @@ for that label using the syntax
 ## Example
 Here is an example of a simple plot with a label on the `x`-axis.
 
-```fm
+```fm-exec:figure
 x = linspace(-1,1);
 y = cos(2*pi*x);
 plot(x,y,'r-');
 xlabel('time');
-mprint xlabel1
 ```
 
 which results in the following plot.
@@ -3604,7 +3558,6 @@ x = linspace(-1,1);
 y = sin(2*pi*x);
 plot(x,y,'r-');
 xlim  % what are the current limits?
-mprint xlim1
 ```
 
 which results in
@@ -3613,7 +3566,6 @@ Next, we zoom in on the plot using the `xlim` function
 ```fm
 plot(x,y,'r-')
 xlim([-0.2,0.2])
-mprint xlim2
 ```
 
 which results in
@@ -3622,7 +3574,6 @@ To demonstrate the infinite limits feature.  Consider the following
 ```fm
 plot(x,y,'r-');
 xlim([0,inf])
-mprint xlim3
 ```
 
 which results in
@@ -3661,12 +3612,11 @@ You can also specify properties for that label using the syntax
 ## Example
 Here is an example of a simple plot with a label on the `y`-axis.
 
-```fm
+```fm-exec:figure
 x = linspace(-1,1);
 y = cos(2*pi*x);
 plot(x,y,'r-');
 ylabel('cost');
-mprint ylabel1
 ```
 
 which results in the following plot.
@@ -3711,7 +3661,6 @@ x = linspace(-1,1);
 y = sin(2*pi*x);
 plot(x,y,'r-');
 ylim  % what are the current limits?
-mprint ylim1
 ```
 
 which results in
@@ -3720,7 +3669,6 @@ Next, we zoom in on the plot using the `ylim` function
 ```fm
 plot(x,y,'r-')
 ylim([-0.2,0.2])
-mprint ylim2
 ```
 
 which results in
@@ -3729,7 +3677,6 @@ To demonstrate the infinite limits feature.  Consider the following
 ```fm
 plot(x,y,'r-');
 ylim([0,inf])
-mprint ylim3
 ```
 
 which results in
@@ -3769,7 +3716,7 @@ for that label using the syntax
 ## Example
 Here is an example of a simple plot with a label on the `z`-axis.
 
-```fm
+```fm-exec:figure
 t = linspace(0,5*pi);
 x = cos(t);
 y = sin(t);
@@ -3777,7 +3724,6 @@ z = t;
 plot3(x,y,z,'r-');
 view(3);
 zlabel('time');
-mprint zlabel1
 ```
 
 which results in the following plot.
@@ -3852,7 +3798,6 @@ y = ones(300,1)*linspace(-1,1,600);
 Z = exp(-(x.^2+y.^2)/0.3);
 image(Z);
 zoom(1.0);
-mprint zoom1
 ```
 
 At this point, resizing the window accomplishes nothing, as with a zoom factor
@@ -3865,7 +3810,6 @@ same image zoomed out to 60%
 ```fm
 image(Z);
 zoom(0.6);
-mprint zoom3
 ```
 
 Similarly, we can enlarge it to 130%
@@ -3873,7 +3817,6 @@ Similarly, we can enlarge it to 130%
 ```fm
 image(Z)
 zoom(1.3);
-mprint zoom4
 ```
 
 The ``free'' zoom of `x = 0` results in the image being zoomed to fit the window
@@ -3884,7 +3827,6 @@ one direction.
 image(Z);
 zoom(0);
 sizefig(200,400);
-mprint zoom5
 ```
 
 The case of a negative zoom `x < 0` results in the image being scaled arbitrarily.
@@ -3894,7 +3836,6 @@ This allows the image aspect ratio to be changed, as in the following example.
 image(Z);
 zoom(-1);
 sizefig(200,400);
-mprint zoom6
 ```
 "#,
 }

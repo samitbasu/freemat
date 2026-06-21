@@ -278,6 +278,27 @@ fn shell(title: &str, body: &str) -> String {
           var layout = {{ margin: {{ l: 50, r: 20, t: 30, b: 40 }} }};
           var axes = (fig && fig.axes && fig.axes.length) ? fig.axes : [{{ series: [] }}];
           axes.forEach(function (ax) {{
+            // 3-D series (surface/line3d) bind to a Plotly `scene`; without a
+            // `layout.scene` object Plotly squashes the z-axis. Give it a "cube"
+            // aspect ("data" under `axis equal`) and the requested camera view.
+            var is3d = (ax.series || []).some(function (s) {{
+              return s.kind === "surface" || s.kind === "line3d";
+            }});
+            if (is3d) {{
+              var scene = {{ aspectmode: ax.equal ? "data" : "cube" }};
+              if ((ax.xlabel || "").length) scene.xaxis = {{ title: ax.xlabel }};
+              if ((ax.ylabel || "").length) scene.yaxis = {{ title: ax.ylabel }};
+              if ((ax.zlabel || "").length) scene.zaxis = {{ title: ax.zlabel }};
+              if (ax.view && ax.view.length >= 2) {{
+                var az = ax.view[0] * Math.PI / 180, el = ax.view[1] * Math.PI / 180, r = 1.8;
+                scene.camera = {{ eye: {{
+                  x: r * Math.cos(el) * Math.sin(az),
+                  y: -r * Math.cos(el) * Math.cos(az),
+                  z: r * Math.sin(el),
+                }} }};
+              }}
+              layout.scene = scene;
+            }}
             (ax.series || []).forEach(function (s) {{
               if (s.kind === "line") {{
                 data.push({{ type: "scatter", mode: "lines", x: s.x, y: s.y,

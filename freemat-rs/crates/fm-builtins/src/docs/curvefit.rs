@@ -98,12 +98,11 @@ This function uses `fitfun`.
 ## Example
 Suppose we want to fit a cycle of a cosine using a Gaussian shape.
 
-```fm
+```fm-exec:figure
 t = linspace(-pi,pi); 
 y = cos(t);
 [mu,sigma,dc,gain,yhat] = gausfit(t,y);
 plot(t,y,'rx',t,yhat,'g-');
-mprint gausfit1
 ```
 
 Which results in the following plot
@@ -194,7 +193,6 @@ cosine.
 x = linspace(-pi*7/8,pi*7/8,15);
 y = cos(x);
 plot(x,y,'ro');
-mprint interplin1_1
 ```
 
 which is shown here
@@ -209,7 +207,6 @@ yi_zero = interplin1(x,y,xi,'zero');
 yi_endpoint = interplin1(x,y,xi,'endpoint');
 yi_extrap = interplin1(x,y,xi,'extrap');
 plot(x,y,'ro',xi,yi_nan,'g-x',xi,yi_zero,'g-x',xi,yi_endpoint,'g-x',xi,yi_extrap,'g-x');
-mprint interplin1_2
 ```
 
 which is shown here
@@ -337,32 +334,29 @@ of approximating a sinusoid with a polynomial.  We start with
 a vector of points evenly spaced on the unit interval, along with
 a vector of the sine of these points.
 
-```fm
+```fm-exec:figure
 x = linspace(0,1,20);
 y = sin(2*pi*x);
 plot(x,y,'r-')
-mprint polyfit1
 ```
 
 The resulting plot is shown here
 Next, we fit a third degree polynomial to the sine, and use
 `polyval` to plot it
 
-```fm
+```fm-exec:figure
 p = polyfit(x,y,3)
 f = polyval(p,x);
 plot(x,y,'r-',x,f,'ko');
-mprint polyfit2
 ```
 
 The resulting plot is shown here
 Increasing the order improves the fit, as
 
-```fm
+```fm-exec:figure
 p = polyfit(x,y,11)
 f = polyval(p,x);
 plot(x,y,'r-',x,f,'ko');
-mprint polyfit3
 ```
 
 The resulting plot is shown here
@@ -439,12 +433,11 @@ $$
 ## Example
 Here is a plot of `x^3` generated using polyval
 
-```fm
+```fm-exec:figure
 p = [1 0 0 0]
 x = linspace(-1,1);
 y = polyval(p,x);
 plot(x,y,'r-')
-mprint polyval1
 ```
 
 Here is the resulting plot

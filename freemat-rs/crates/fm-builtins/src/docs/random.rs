@@ -131,7 +131,6 @@ a = 3; b = 7;
 x = (0:100)/100; t = x.^(a-1).*(1-x).^(b-1); 
 t = t/(sum(t)*.01);
 plot(x,t);
-mprint betapdf
 ```
 
 which is plotted as
@@ -220,7 +219,6 @@ f = zeros(7,100);
 x = (1:100)/10;
 for n=1:7;t=x.^(n/2-1).*exp(-x/2);f(n,:)=10*t/sum(t);end
 plot(x,f');
-mprint chipdf
 ```
 
 The PDF is below:
