@@ -5,6 +5,10 @@ effectively feature-complete for the corpus; the 5 still-red are all out-of-scop
 buggy corpus test, `ctype1` C-FFI, `parallel_fft1` ×2 threads). What remains is one last big
 *feature* (the debugger) plus optional polish.
 
+> **See also:** [`HELP_BACKLOG.md`](./HELP_BACKLOG.md) — the help-completeness backlog
+> (the ~69 help examples still shown without REPL output, categorized by the builtin/feature
+> they need) and the graphics-track status.
+
 How to use: pick an item, implement to the **Definition of Done** in `docs/PLAN.md` (build +
 `clippy -D warnings` + `fmt --check` + `test` all green, regression tests, no conformance
 regression, update `PROGRESS.md`, commit on `rust-port`). Reconfirm with
