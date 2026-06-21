@@ -76,9 +76,27 @@ fn b_typeof(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>>
     Ok(vec![Array::char_string(args[0].class_name())])
 }
 
+/// Reference types (cell / struct / function handle) have no numeric or char
+/// conversion — FreeMat raises here. Without this guard `to_f64_vec` returns an
+/// empty vec while `dims` stays non-empty, so the array builders panic on the
+/// shape mismatch (e.g. `single({4})` / `complex({4})` crashed the interpreter).
+fn reject_reference_cast(a: &Array, name: &str) -> Flow<()> {
+    if matches!(
+        a.class(),
+        DataClass::Cell | DataClass::Struct | DataClass::FunctionHandle
+    ) {
+        return crate::util::err(format!(
+            "{name}: cannot convert a {} array to {name}",
+            a.class_name()
+        ));
+    }
+    Ok(())
+}
+
 fn cast_single(args: &[Array]) -> Flow<Vec<Array>> {
     need(args, 1, "float")?;
     let a = &args[0];
+    reject_reference_cast(a, "single")?;
     let dims = a.dims();
     // `float`/`single` preserves complexity (yielding a complex single array).
     if a.is_complex() {
@@ -109,6 +127,9 @@ fn b_dcomplex(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array
 
 fn make_complex(args: &[Array], single: bool) -> Flow<Vec<Array>> {
     need(args, 1, "complex")?;
+    for a in args {
+        reject_reference_cast(a, if single { "complex" } else { "dcomplex" })?;
+    }
     let class = if single {
         DataClass::Float
     } else {

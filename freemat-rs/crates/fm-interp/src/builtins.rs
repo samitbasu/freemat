@@ -60,6 +60,19 @@ pub fn register_defaults(table: &mut FunctionTable) {
 fn cast(args: &[Array], class: DataClass, name: &str) -> Flow<Vec<Array>> {
     need(args, 1, name)?;
     let a = &args[0];
+    // Reference types (cell / struct / function handle) have no numeric or char
+    // conversion — FreeMat raises here. Without this guard `to_f64_vec` returns
+    // an empty vec while `dims` stays non-empty, so `build_real`/`build_integer`
+    // panic on the shape mismatch (e.g. `int8({4})` crashed the interpreter).
+    if matches!(
+        a.class(),
+        DataClass::Cell | DataClass::Struct | DataClass::FunctionHandle
+    ) {
+        return Err(Signal::Error(InterpError::msg(format!(
+            "{name}: cannot convert a {} array to {name}",
+            a.class_name()
+        ))));
+    }
     let dims = a.dims();
     // `double`/`single` of a complex array preserve complexity (FreeMat's
     // `toClass(Double/Float)` keeps the complex flag); integer/logical/char
