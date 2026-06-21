@@ -1,8 +1,9 @@
 //! Unit tests for scene construction, linespec parsing, and JSON serialization.
 
 use crate::{
-    Axes, BarSeries, ContourSeries, ErrorbarSeries, Figure, Line3dSeries, LineSeries, PcolorSeries,
-    Scale, Scene, Series, StairsSeries, StemSeries, default_color, parse_linespec,
+    AreaSeries, Axes, BarSeries, ContourSeries, ErrorbarSeries, Figure, FillSeries, Line3dSeries,
+    LineSeries, PcolorSeries, PieSeries, PolarSeries, QuiverSeries, Scale, Scene, Series,
+    StairsSeries, StemSeries, TextLabel, default_color, parse_linespec,
 };
 
 #[test]
@@ -369,4 +370,151 @@ fn rgb_matrix_colorscale_roundtrips() {
     let json = serde_json::to_string(&scene).unwrap();
     let back: Scene = serde_json::from_str(&json).unwrap();
     assert_eq!(back.figure(1).unwrap().colormap.as_deref(), Some(scale));
+}
+
+// ---- Batch 3: area / fill / pie / polar / quiver / text ---------------------
+
+#[test]
+fn area_series_serializes_with_kind_and_xy() {
+    let s = one_series_json(Series::Area(AreaSeries {
+        x: vec![1.0, 2.0, 3.0],
+        y: vec![1.0, 4.0, 9.0],
+        color: "rgb(0,0,255)".into(),
+        ..Default::default()
+    }));
+    assert_eq!(s["kind"], "area");
+    assert_eq!(s["x"], serde_json::json!([1.0, 2.0, 3.0]));
+    assert_eq!(s["y"], serde_json::json!([1.0, 4.0, 9.0]));
+    assert_eq!(s["color"], "rgb(0,0,255)");
+}
+
+#[test]
+fn fill_series_serializes_with_kind_and_color() {
+    let s = one_series_json(Series::Fill(FillSeries {
+        x: vec![0.0, 1.0, 1.0, 0.0],
+        y: vec![0.0, 0.0, 1.0, 1.0],
+        color: "rgb(255,0,0)".into(),
+        ..Default::default()
+    }));
+    assert_eq!(s["kind"], "fill");
+    assert_eq!(s["x"], serde_json::json!([0.0, 1.0, 1.0, 0.0]));
+    assert_eq!(s["color"], "rgb(255,0,0)");
+}
+
+#[test]
+fn pie_series_serializes_with_values_and_labels() {
+    let s = one_series_json(Series::Pie(PieSeries {
+        values: vec![1.0, 2.0, 3.0],
+        labels: vec!["a".into(), "b".into(), "c".into()],
+    }));
+    assert_eq!(s["kind"], "pie");
+    assert_eq!(s["values"], serde_json::json!([1.0, 2.0, 3.0]));
+    assert_eq!(s["labels"], serde_json::json!(["a", "b", "c"]));
+    // No labels → the field is omitted.
+    let plain = one_series_json(Series::Pie(PieSeries {
+        values: vec![1.0, 2.0],
+        labels: Vec::new(),
+    }));
+    assert!(plain.get("labels").is_none());
+}
+
+#[test]
+fn polar_series_serializes_with_theta_and_r() {
+    let s = one_series_json(Series::Polar(PolarSeries {
+        theta: vec![0.0, 1.5, 3.0],
+        r: vec![1.0, 2.0, 1.0],
+        color: "rgb(0,128,0)".into(),
+        ..Default::default()
+    }));
+    assert_eq!(s["kind"], "polar");
+    assert_eq!(s["theta"], serde_json::json!([0.0, 1.5, 3.0]));
+    assert_eq!(s["r"], serde_json::json!([1.0, 2.0, 1.0]));
+    assert_eq!(s["color"], "rgb(0,128,0)");
+}
+
+#[test]
+fn quiver_series_serializes_with_components() {
+    let s = one_series_json(Series::Quiver(QuiverSeries {
+        x: vec![0.0, 1.0],
+        y: vec![0.0, 1.0],
+        u: vec![1.0, 1.0],
+        v: vec![1.0, 0.0],
+        ..Default::default()
+    }));
+    assert_eq!(s["kind"], "quiver");
+    assert_eq!(s["x"], serde_json::json!([0.0, 1.0]));
+    assert_eq!(s["u"], serde_json::json!([1.0, 1.0]));
+    assert_eq!(s["v"], serde_json::json!([1.0, 0.0]));
+}
+
+#[test]
+fn text_labels_serialize_on_axes() {
+    let mut scene = Scene::new();
+    let ax = scene.figure_mut_or_insert(1).current_axes_mut();
+    ax.texts.push(TextLabel {
+        x: 3.0,
+        y: 3.0,
+        z: None,
+        str: "mid".into(),
+    });
+    ax.texts.push(TextLabel {
+        x: 1.0,
+        y: 2.0,
+        z: Some(4.0),
+        str: "p3".into(),
+    });
+    let msg = scene.to_message().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&msg).unwrap();
+    let texts = &v["scene"]["figures"][0]["axes"][0]["texts"];
+    assert_eq!(texts[0]["x"], 3.0);
+    assert_eq!(texts[0]["str"], "mid");
+    assert!(texts[0].get("z").is_none()); // 2-D text omits z
+    assert_eq!(texts[1]["z"], 4.0);
+    assert_eq!(texts[1]["str"], "p3");
+    // An axes with no texts omits the field entirely.
+    let plain = Axes::new();
+    let pj = serde_json::to_string(&plain).unwrap();
+    assert!(!pj.contains("texts"));
+}
+
+#[test]
+fn batch3_series_roundtrip_through_json() {
+    let mut scene = Scene::new();
+    let ax = scene.figure_mut_or_insert(1).current_axes_mut();
+    ax.series.push(Series::Area(AreaSeries {
+        x: vec![1.0],
+        y: vec![2.0],
+        ..Default::default()
+    }));
+    ax.series.push(Series::Fill(FillSeries {
+        x: vec![0.0, 1.0],
+        y: vec![0.0, 1.0],
+        color: "rgb(255,0,0)".into(),
+        ..Default::default()
+    }));
+    ax.series.push(Series::Pie(PieSeries {
+        values: vec![1.0, 2.0],
+        labels: vec!["a".into(), "b".into()],
+    }));
+    ax.series.push(Series::Polar(PolarSeries {
+        theta: vec![0.0, 1.0],
+        r: vec![1.0, 2.0],
+        ..Default::default()
+    }));
+    ax.series.push(Series::Quiver(QuiverSeries {
+        x: vec![0.0],
+        y: vec![0.0],
+        u: vec![1.0],
+        v: vec![1.0],
+        ..Default::default()
+    }));
+    ax.texts.push(TextLabel {
+        x: 1.0,
+        y: 1.0,
+        z: None,
+        str: "hi".into(),
+    });
+    let json = serde_json::to_string(&scene).unwrap();
+    let back: Scene = serde_json::from_str(&json).unwrap();
+    assert_eq!(scene, back);
 }

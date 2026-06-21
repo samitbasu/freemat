@@ -352,6 +352,46 @@ fn shell(title: &str, body: &str) -> String {
                 data.push({{ type: "scatter3d", mode: l3mode, x: s.x, y: s.y, z: s.z,
                              line: s.color ? {{ color: s.color }} : {{}},
                              marker: s.color ? {{ color: s.color }} : {{}}, name: s.name || "" }});
+              }} else if (s.kind === "area") {{
+                data.push({{ type: "scatter", mode: "lines", x: s.x, y: s.y, fill: "tozeroy",
+                             line: s.color ? {{ color: s.color }} : {{}},
+                             fillcolor: s.color || undefined, name: s.name || "" }});
+              }} else if (s.kind === "fill") {{
+                data.push({{ type: "scatter", mode: "lines", x: s.x, y: s.y, fill: "toself",
+                             line: s.color ? {{ color: s.color }} : {{}},
+                             fillcolor: s.color || undefined, name: s.name || "" }});
+              }} else if (s.kind === "pie") {{
+                var pt = {{ type: "pie", values: s.values }};
+                if (s.labels && s.labels.length) pt.labels = s.labels;
+                data.push(pt);
+              }} else if (s.kind === "polar") {{
+                var theta = (s.theta || []).map(function (a) {{ return a * 180 / Math.PI; }});
+                data.push({{ type: "scatterpolar", mode: "lines", theta: theta, r: s.r,
+                             line: s.color ? {{ color: s.color }} : {{}}, name: s.name || "" }});
+              }} else if (s.kind === "quiver") {{
+                var qx = [], qy = [], qtx = [], qty = [];
+                for (var qk = 0; qk < s.x.length; qk++) {{
+                  var x1 = s.x[qk] + (s.u[qk] || 0), y1 = s.y[qk] + (s.v[qk] || 0);
+                  qx.push(s.x[qk], x1, null); qy.push(s.y[qk], y1, null);
+                  qtx.push(x1); qty.push(y1);
+                }}
+                data.push({{ type: "scatter", mode: "lines", x: qx, y: qy, connectgaps: false,
+                             line: s.color ? {{ color: s.color }} : {{}}, name: s.name || "" }});
+                data.push({{ type: "scatter", mode: "markers", x: qtx, y: qty,
+                             marker: {{ symbol: "triangle-up", size: 6, color: s.color || undefined }},
+                             showlegend: false }});
+              }}
+            }});
+            // Free-floating text annotations at data coordinates.
+            (ax.texts || []).forEach(function (tl) {{
+              if (is3d && typeof tl.z === "number") {{
+                layout.scene = layout.scene || {{}};
+                layout.scene.annotations = layout.scene.annotations || [];
+                layout.scene.annotations.push({{ x: tl.x, y: tl.y, z: tl.z, text: tl.str, showarrow: false }});
+              }} else {{
+                layout.annotations = layout.annotations || [];
+                layout.annotations.push({{ x: tl.x, y: tl.y, text: tl.str, showarrow: false,
+                                           xref: "x", yref: "y" }});
               }}
             }});
           }});

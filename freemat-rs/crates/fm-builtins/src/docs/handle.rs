@@ -2948,14 +2948,14 @@ via
 ## Example
 Here is an example of a few labels being added to a random plot:
 
-```fm
+```fm-exec:figure
 plot(rand(1,4))
 text([2,3],[0.5,0.5],{'hello','there'})
 ```
 
 Here is the same example, but with larger labels:
 
-```fm
+```fm-exec:figure
 plot(rand(1,4))
 text([2,3],[0.5,0.5],{'hello','there'},'fontsize',20)
 ```

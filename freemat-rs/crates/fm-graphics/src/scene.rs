@@ -166,6 +166,11 @@ pub struct Axes {
     /// The renderers turn this into `showscale:true` on the color-mapped trace.
     #[serde(default, skip_serializing_if = "is_false")]
     pub colorbar: bool,
+    /// Free-floating text annotations placed at data coordinates (`text(x,y,str)`
+    /// / `text(x,y,z,str)`). Not a series — the renderers emit each as a Plotly
+    /// `layout.annotations` entry (`showarrow:false`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub texts: Vec<TextLabel>,
 }
 
 impl Default for Axes {
@@ -187,6 +192,7 @@ impl Default for Axes {
             equal: false,
             view: None,
             colorbar: false,
+            texts: Vec::new(),
         }
     }
 }
@@ -256,6 +262,22 @@ pub struct Legend {
     pub names: Vec<String>,
 }
 
+/// A free-floating text annotation at data coordinates (`text(x,y,str)` /
+/// `text(x,y,z,str)`). The renderers emit it as a Plotly `layout.annotations`
+/// entry with `showarrow:false`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TextLabel {
+    /// X data coordinate.
+    pub x: f64,
+    /// Y data coordinate.
+    pub y: f64,
+    /// Optional Z data coordinate (3-D `text`); `None` for a 2-D annotation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub z: Option<f64>,
+    /// The annotation string.
+    pub str: String,
+}
+
 /// A drawable data series. The variant maps onto a Plotly trace kind.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -281,6 +303,16 @@ pub enum Series {
     Errorbar(ErrorbarSeries),
     /// A 3-D line plot (`plot3`).
     Line3d(Line3dSeries),
+    /// A filled area under a line (`area`) → scatter with `fill:"tozeroy"`.
+    Area(AreaSeries),
+    /// A filled polygon (`fill`) → scatter with `fill:"toself"`.
+    Fill(FillSeries),
+    /// A pie chart (`pie`) → Plotly `pie` trace (a non-axes, full-cell trace).
+    Pie(PieSeries),
+    /// A polar line plot (`polar`) → Plotly `scatterpolar` on a polar subplot.
+    Polar(PolarSeries),
+    /// A 2-D vector field (`quiver`) → null-gapped scatter line segments.
+    Quiver(QuiverSeries),
 }
 
 /// A 2-D line series: x/y data plus style/color/marker/legend.
@@ -455,6 +487,88 @@ pub struct Line3dSeries {
     /// Marker symbol (or empty = none).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub marker: String,
+    /// CSS / `rgb(r,g,b)` color string; empty = let the frontend cycle.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub color: String,
+    /// Legend display name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+}
+
+/// A filled area under a line (`area`): x/y data, rendered as a scatter trace
+/// with `fill:"tozeroy"`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct AreaSeries {
+    /// X data.
+    pub x: Vec<f64>,
+    /// Y data.
+    pub y: Vec<f64>,
+    /// CSS / `rgb(r,g,b)` color string; empty = let the frontend cycle.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub color: String,
+    /// Legend display name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+}
+
+/// A filled polygon (`fill`): x/y vertices plus a fill color, rendered as a
+/// scatter trace with `fill:"toself"`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct FillSeries {
+    /// X vertices of the polygon.
+    pub x: Vec<f64>,
+    /// Y vertices of the polygon.
+    pub y: Vec<f64>,
+    /// Fill color as a CSS / `rgb(r,g,b)` string.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub color: String,
+    /// Legend display name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+}
+
+/// A pie chart (`pie`): values plus optional slice labels. Rendered as a Plotly
+/// `pie` trace that takes the whole figure cell (no xaxis/yaxis binding).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct PieSeries {
+    /// Slice values.
+    pub values: Vec<f64>,
+    /// Optional slice labels (length should match `values`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
+}
+
+/// A polar line plot (`polar`): angle (radians) + radius, rendered as a Plotly
+/// `scatterpolar` trace on a polar subplot. The renderers convert `theta` to
+/// degrees for Plotly.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct PolarSeries {
+    /// Angle data in radians.
+    pub theta: Vec<f64>,
+    /// Radius data.
+    pub r: Vec<f64>,
+    /// CSS / `rgb(r,g,b)` color string; empty = let the frontend cycle.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub color: String,
+    /// Legend display name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+}
+
+/// A 2-D vector field (`quiver`): each arrow has a base `(x,y)` and a component
+/// `(u,v)`. Plotly has no native quiver, so the renderers draw the shafts as a
+/// single null-gapped scatter line plus a small markers trace at the arrow tips
+/// (a simplified arrowhead).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct QuiverSeries {
+    /// Arrow base x-coordinates.
+    pub x: Vec<f64>,
+    /// Arrow base y-coordinates.
+    pub y: Vec<f64>,
+    /// Arrow x-components.
+    pub u: Vec<f64>,
+    /// Arrow y-components.
+    pub v: Vec<f64>,
     /// CSS / `rgb(r,g,b)` color string; empty = let the frontend cycle.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub color: String,

@@ -183,6 +183,70 @@
         return t;
       }
 
+      function areaToTrace(s, idx) {
+        const t = {
+          type: "scatter", mode: "lines", x: s.x, y: s.y, fill: "tozeroy",
+          name: s.name || ("series " + (idx + 1)),
+          line: {},
+        };
+        if (s.color) { t.line.color = s.color; t.fillcolor = s.color; }
+        return t;
+      }
+
+      function fillToTrace(s, idx) {
+        const t = {
+          type: "scatter", mode: "lines", x: s.x, y: s.y, fill: "toself",
+          name: s.name || ("series " + (idx + 1)),
+          line: {},
+        };
+        if (s.color) { t.fillcolor = s.color; t.line.color = s.color; }
+        return t;
+      }
+
+      function pieToTrace(s) {
+        const t = { type: "pie", values: s.values };
+        if (s.labels && s.labels.length) t.labels = s.labels;
+        return t;
+      }
+
+      // Build a polar line trace (theta arrives in radians → Plotly wants degrees).
+      function polarToTrace(s, idx) {
+        const theta = (s.theta || []).map((a) => a * 180 / Math.PI);
+        const t = {
+          type: "scatterpolar", mode: "lines", theta, r: s.r,
+          name: s.name || ("series " + (idx + 1)),
+          line: {},
+        };
+        if (s.color) t.line.color = s.color;
+        return t;
+      }
+
+      // Quiver: draw each arrow shaft as a null-gapped scatter line, plus a small
+      // markers trace at the arrow tips (a simplified arrowhead).
+      function quiverToTrace(s, idx) {
+        const xs = [], ys = [], tx = [], ty = [];
+        for (let k = 0; k < s.x.length; k++) {
+          const x0 = s.x[k], y0 = s.y[k];
+          const x1 = x0 + (s.u[k] || 0), y1 = y0 + (s.v[k] || 0);
+          xs.push(x0, x1, null);
+          ys.push(y0, y1, null);
+          tx.push(x1); ty.push(y1);
+        }
+        const color = s.color || undefined;
+        return {
+          shaft: {
+            type: "scatter", mode: "lines", x: xs, y: ys, connectgaps: false,
+            name: s.name || ("series " + (idx + 1)),
+            line: color ? { color } : {},
+          },
+          tips: {
+            type: "scatter", mode: "markers", x: tx, y: ty,
+            marker: { symbol: "triangle-up", size: 6, color },
+            showlegend: false,
+          },
+        };
+      }
+
       function seriesToTrace(s, i, showscale) {
         if (s.kind === "line") return lineToTrace(s, i);
         if (s.kind === "surface") return surfaceToTrace(s);
@@ -194,6 +258,11 @@
         if (s.kind === "stairs") return stairsToTrace(s, i);
         if (s.kind === "errorbar") return errorbarToTrace(s, i);
         if (s.kind === "line3d") return line3dToTrace(s, i);
+        if (s.kind === "area") return areaToTrace(s, i);
+        if (s.kind === "fill") return fillToTrace(s, i);
+        if (s.kind === "pie") return pieToTrace(s);
+        if (s.kind === "polar") return polarToTrace(s, i);
+        // quiver / others are handled inline in addAxesToFigure (multi-trace).
         return null;
       }
 
@@ -241,6 +310,17 @@
         layout[xkey] = xaxis;
         layout[ykey] = yaxis;
 
+        // Polar axes: any polar series binds to a Plotly `polar` subplot with its
+        // own domain (mirrors the 3-D scene path but for polar coordinates).
+        const hasPolar = (ax.series || []).some((s) => s.kind === "polar");
+        const pkey = "polar" + suffix;
+        if (hasPolar) {
+          layout[pkey] = { domain: { x: [left, left + w], y: [bottom, bottom + h] } };
+        }
+        // Pie traces take the whole figure cell (no xaxis/yaxis binding); give the
+        // pie its own domain so subplots still place it correctly.
+        const hasPie = (ax.series || []).some((s) => s.kind === "pie");
+
         // 3-D axes: any surface/line3d series binds to a Plotly `scene`. Without
         // a `layout.scene*` object Plotly squashes the z-axis, so create one with
         // a balanced "cube" aspect (or true "data" scaling under `axis equal`),
@@ -262,11 +342,25 @@
 
         const names = (ax.legend && ax.legend.names) || null;
         (ax.series || []).forEach((s, i) => {
+          // Quiver is a multi-trace series (shafts + arrowhead markers).
+          if (s.kind === "quiver") {
+            const q = quiverToTrace(s, i);
+            q.shaft.xaxis = xref; q.shaft.yaxis = yref;
+            q.tips.xaxis = xref; q.tips.yaxis = yref;
+            if (names && names[i]) q.shaft.name = names[i];
+            data.push(q.shaft); data.push(q.tips);
+            return;
+          }
           const t = seriesToTrace(s, i, !!ax.colorbar);
           if (!t) return;
-          // 2-D traces bind to this subplot's axes; 3-D surface/line use scene.
+          // Bind each trace to its coordinate system.
           if (s.kind === "surface" || s.kind === "line3d") {
             t.scene = "scene" + suffix;
+          } else if (s.kind === "polar") {
+            t.subplot = pkey;
+          } else if (s.kind === "pie") {
+            // Pie takes the whole cell — give it the axes domain, no axis binding.
+            t.domain = { x: [left, left + w], y: [bottom, bottom + h] };
           } else {
             t.xaxis = xref; t.yaxis = yref;
           }
@@ -277,6 +371,21 @@
             const m = stemMarkers(s, i);
             m.xaxis = xref; m.yaxis = yref;
             data.push(m);
+          }
+        });
+        // Free-floating text annotations at data coordinates. For a 3-D axes we
+        // place them in the scene's annotation list; otherwise on the 2-D axes.
+        (ax.texts || []).forEach((tl) => {
+          if (is3d && typeof tl.z === "number") {
+            const scene = layout["scene" + suffix];
+            scene.annotations = scene.annotations || [];
+            scene.annotations.push({ x: tl.x, y: tl.y, z: tl.z, text: tl.str, showarrow: false });
+          } else {
+            layout.annotations = layout.annotations || [];
+            layout.annotations.push({
+              x: tl.x, y: tl.y, text: tl.str, showarrow: false,
+              xref: xref, yref: yref,
+            });
           }
         });
         if ((ax.title || "").length) {

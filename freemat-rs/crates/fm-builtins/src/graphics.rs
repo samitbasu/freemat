@@ -11,9 +11,9 @@
 
 use fm_core::{Array, DataClass};
 use fm_graphics::{
-    AxisLimits, BarSeries, ContourSeries, ErrorbarSeries, ImageSeries, Legend, Line3dSeries,
-    LineSeries, PcolorSeries, Scale, Series, StairsSeries, StemSeries, SurfaceSeries,
-    default_color, parse_linespec,
+    AreaSeries, AxisLimits, BarSeries, ContourSeries, ErrorbarSeries, FillSeries, ImageSeries,
+    Legend, Line3dSeries, LineSeries, PcolorSeries, PieSeries, PolarSeries, QuiverSeries, Scale,
+    Series, StairsSeries, StemSeries, SurfaceSeries, TextLabel, default_color, parse_linespec,
 };
 use fm_interp::error::Flow;
 use fm_interp::value::{build_real, to_f64_vec};
@@ -67,6 +67,12 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("contourf", |i, a, _n| contour(i, a, true));
     table.add_builtin("scatter", b_scatter);
     table.add_builtin("scatter3", b_scatter3);
+    table.add_builtin("area", b_area);
+    table.add_builtin("fill", b_fill);
+    table.add_builtin("pie", b_pie);
+    table.add_builtin("polar", b_polar);
+    table.add_builtin("quiver", b_quiver);
+    table.add_builtin("text", b_text);
     // Named-colormap generator functions: `gray`, `copper`, `jet`, … each return
     // an `N×3` RGB matrix (default 64 rows) usable as `colormap(jet)` etc.
     table.add_builtin("gray", |_i, a, _n| colormap_fn("gray", a));
@@ -1640,6 +1646,231 @@ fn b_scatter3(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>
     let h = i.graphics.register_series(fig, axes_idx, ObjKind::Line);
     i.graphics.dirty = true;
     Ok(vec![handle(h)])
+}
+
+// ---- area / fill ------------------------------------------------------------
+
+/// `area(y)` / `area(x,y)` — a filled area under a line.
+fn b_area(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return err("area: not enough arguments");
+    }
+    let (x, y) = xy_args(args);
+    clear_current_series_unless_hold(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    let color = default_color(ax.series.len());
+    ax.series.push(Series::Area(AreaSeries {
+        x,
+        y,
+        color,
+        name: String::new(),
+    }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Line);
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+/// Resolve a `fill` color argument: a colorspec char (`'r'`, `'g'`, …) or an RGB
+/// triple (`[r g b]` in 0..1, or 0..255 if any entry exceeds 1). Falls back to
+/// the first axes color when unrecognized.
+fn fill_color(arg: Option<&Array>, fallback: String) -> String {
+    let Some(arg) = arg else { return fallback };
+    if let Some(s) = arg.as_string() {
+        let spec = parse_linespec(&s);
+        if !spec.color.is_empty() {
+            return spec.color;
+        }
+        return fallback;
+    }
+    let v = to_f64_vec(arg);
+    if v.len() >= 3 {
+        let scale = if v[..3].iter().any(|&c| c > 1.0 + 1e-9) {
+            1.0
+        } else {
+            255.0
+        };
+        let comp = |c: f64| (c * scale).round().clamp(0.0, 255.0) as u32;
+        return format!("rgb({},{},{})", comp(v[0]), comp(v[1]), comp(v[2]));
+    }
+    fallback
+}
+
+/// `fill(x, y, c)` — a filled polygon. `c` is a colorspec char or an RGB triple.
+fn b_fill(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.len() < 2 {
+        return err("fill: expected fill(x, y, c)");
+    }
+    let x = to_f64_vec(&args[0]);
+    let y = to_f64_vec(&args[1]);
+    clear_current_series_unless_hold(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    let color = fill_color(args.get(2), default_color(ax.series.len()));
+    ax.series.push(Series::Fill(FillSeries {
+        x,
+        y,
+        color,
+        name: String::new(),
+    }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Line);
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+// ---- pie --------------------------------------------------------------------
+
+/// `pie(x)` / `pie(x, labels)` — a pie chart. Labels may be a cell array of
+/// strings (one per slice).
+fn b_pie(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return err("pie: not enough arguments");
+    }
+    let values = to_f64_vec(&args[0]);
+    let labels = args
+        .get(1)
+        .map(cell_strings)
+        .filter(|l| !l.is_empty())
+        .unwrap_or_default();
+    clear_current_series_unless_hold(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    i.graphics
+        .current_figure_mut()
+        .current_axes_mut()
+        .series
+        .push(Series::Pie(PieSeries { values, labels }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Line);
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+/// Read a string list from a cell-array (or a single char string) argument.
+fn cell_strings(a: &Array) -> Vec<String> {
+    if let Some(c) = a.as_cell() {
+        return c.iter().filter_map(Array::as_string).collect();
+    }
+    a.as_string().map(|s| vec![s]).unwrap_or_default()
+}
+
+// ---- polar ------------------------------------------------------------------
+
+/// `polar(theta, rho)` — a polar line plot (theta in radians, rho the radius).
+fn b_polar(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.len() < 2 {
+        return err("polar: expected polar(theta, rho)");
+    }
+    let theta = to_f64_vec(&args[0]);
+    let r = to_f64_vec(&args[1]);
+    clear_current_series_unless_hold(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    let color = default_color(ax.series.len());
+    ax.series.push(Series::Polar(PolarSeries {
+        theta,
+        r,
+        color,
+        name: String::new(),
+    }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Line);
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+// ---- quiver -----------------------------------------------------------------
+
+/// `quiver(x, y, u, v)` / `quiver(u, v)` — a 2-D vector field. When only `u`/`v`
+/// are given, the base positions default to the grid `meshgrid(1:cols, 1:rows)`.
+fn b_quiver(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let (x, y, u, v) = match args.len() {
+        0 | 1 => return err("quiver: expected quiver(x,y,u,v) or quiver(u,v)"),
+        2 | 3 => {
+            // quiver(u, v): base positions on the matrix grid (1-based columns/rows).
+            let u_arg = &args[0];
+            let v_arg = &args[1];
+            let dims = u_arg.dims();
+            let rows = dims.first().copied().unwrap_or(0);
+            let cols = dims.get(1).copied().unwrap_or(1);
+            let u = to_f64_vec(u_arg);
+            let v = to_f64_vec(v_arg);
+            // Column-major base positions matching u/v layout.
+            let mut x = Vec::with_capacity(rows * cols);
+            let mut y = Vec::with_capacity(rows * cols);
+            for c in 0..cols {
+                for r in 0..rows {
+                    x.push((c + 1) as f64);
+                    y.push((r + 1) as f64);
+                }
+            }
+            (x, y, u, v)
+        }
+        _ => (
+            to_f64_vec(&args[0]),
+            to_f64_vec(&args[1]),
+            to_f64_vec(&args[2]),
+            to_f64_vec(&args[3]),
+        ),
+    };
+    clear_current_series_unless_hold(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    let color = default_color(ax.series.len());
+    ax.series.push(Series::Quiver(QuiverSeries {
+        x,
+        y,
+        u,
+        v,
+        color,
+        name: String::new(),
+    }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Line);
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+// ---- text -------------------------------------------------------------------
+
+/// `text(x, y, str)` / `text(x, y, z, str)` — a text annotation at data coords.
+///
+/// The label may be a single char string (placed at every position) or a cell
+/// array of strings (one per position). The position args (x, y, and optional z)
+/// are numeric; the label is the first char/cell argument. Trailing
+/// property/value pairs (e.g. `'fontsize', 20`) are accepted and ignored.
+fn b_text(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.len() < 3 {
+        return err("text: expected text(x, y, str) or text(x, y, z, str)");
+    }
+    // The label is the first char/cell argument; the leading args before it are
+    // the numeric positions (x, y[, z]).
+    let label_idx = (2..args.len())
+        .find(|&k| args[k].is_char() || args[k].as_cell().is_some())
+        .unwrap_or(2);
+    let labels = cell_strings(&args[label_idx]);
+    let has_z = label_idx >= 3;
+    let xs = to_f64_vec(&args[0]);
+    let ys = to_f64_vec(&args[1]);
+    let zs = if has_z {
+        Some(to_f64_vec(&args[2]))
+    } else {
+        None
+    };
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    let n = xs.len().min(ys.len()).max(1);
+    for k in 0..n {
+        // A single label applies to every point; a cell array gives one each.
+        let str = if labels.len() == 1 {
+            labels[0].clone()
+        } else {
+            labels.get(k).cloned().unwrap_or_default()
+        };
+        ax.texts.push(TextLabel {
+            x: xs.get(k).copied().unwrap_or(0.0),
+            y: ys.get(k).copied().unwrap_or(0.0),
+            z: zs.as_ref().and_then(|z| z.get(k).copied()),
+            str,
+        });
+    }
+    i.graphics.dirty = true;
+    Ok(vec![])
 }
 
 // `semilogx`/`semilogy`/`loglog` set the scale then delegate to plot.
