@@ -1001,7 +1001,7 @@ be in the range [0,1].  `map` contains the colormap information
 Here is a simple example of `imread`/`imwrite`.  First, we generate
 a grayscale image and save it to an image file.
 
-```fm
+```fm-exec
 a =  uint8(255*rand(64));
 figure(1), image(a), colormap(gray)
 title('image to save')
@@ -1010,7 +1010,7 @@ imwrite(a, 'test.bmp')
 
 Then, we read image file and show it:
 
-```fm
+```fm-exec
 b = imread('test.bmp');
 figure(2), image(b), colormap(gray)
 title('loaded image')

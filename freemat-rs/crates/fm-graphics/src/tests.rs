@@ -1,8 +1,8 @@
 //! Unit tests for scene construction, linespec parsing, and JSON serialization.
 
 use crate::{
-    Axes, BarSeries, ContourSeries, ErrorbarSeries, Figure, Line3dSeries, LineSeries, Scale, Scene,
-    Series, StairsSeries, StemSeries, default_color, parse_linespec,
+    Axes, BarSeries, ContourSeries, ErrorbarSeries, Figure, Line3dSeries, LineSeries, PcolorSeries,
+    Scale, Scene, Series, StairsSeries, StemSeries, default_color, parse_linespec,
 };
 
 #[test]
@@ -271,4 +271,102 @@ fn chart_series_roundtrip_through_json() {
     let json = serde_json::to_string(&scene).unwrap();
     let back: Scene = serde_json::from_str(&json).unwrap();
     assert_eq!(scene, back);
+}
+
+// ---- Batch 2: colormap / colorbar / pcolor / contourf / scatter -------------
+
+#[test]
+fn figure_colormap_serializes_as_named_colorscale() {
+    let mut scene = Scene::new();
+    let fig = scene.figure_mut_or_insert(1);
+    fig.colormap = Some("Hot".into());
+    let msg = scene.to_message().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&msg).unwrap();
+    assert_eq!(v["scene"]["figures"][0]["colormap"], "Hot");
+}
+
+#[test]
+fn figure_without_colormap_omits_the_field() {
+    let scene = Scene {
+        figures: vec![Figure::new(1)],
+    };
+    let json = serde_json::to_string(&scene).unwrap();
+    assert!(!json.contains("colormap"));
+}
+
+#[test]
+fn series_stamps_named_colormap() {
+    let s = one_series_json(Series::Image(crate::ImageSeries {
+        data: vec![vec![1.0, 2.0], vec![3.0, 4.0]],
+        colormap: "Hot".into(),
+    }));
+    assert_eq!(s["kind"], "image");
+    assert_eq!(s["colormap"], "Hot");
+}
+
+#[test]
+fn colorbar_flag_serializes_on_axes() {
+    let mut scene = Scene::new();
+    let ax = scene.figure_mut_or_insert(1).current_axes_mut();
+    ax.colorbar = true;
+    let msg = scene.to_message().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&msg).unwrap();
+    assert_eq!(v["scene"]["figures"][0]["axes"][0]["colorbar"], true);
+    let plain = Axes::new();
+    let pj = serde_json::to_string(&plain).unwrap();
+    assert!(!pj.contains("colorbar"));
+}
+
+#[test]
+fn pcolor_series_serializes_with_kind_and_grid() {
+    let s = one_series_json(Series::Pcolor(PcolorSeries {
+        data: vec![vec![1.0, 2.0], vec![3.0, 4.0]],
+        x: vec![0.0, 1.0],
+        y: vec![0.0, 1.0],
+        colormap: "Jet".into(),
+    }));
+    assert_eq!(s["kind"], "pcolor");
+    assert_eq!(s["data"], serde_json::json!([[1.0, 2.0], [3.0, 4.0]]));
+    assert_eq!(s["x"], serde_json::json!([0.0, 1.0]));
+    assert_eq!(s["colormap"], "Jet");
+}
+
+#[test]
+fn contourf_sets_filled_flag() {
+    let filled = one_series_json(Series::Contour(ContourSeries {
+        z: vec![vec![0.0, 1.0], vec![1.0, 2.0]],
+        filled: true,
+        ..Default::default()
+    }));
+    assert_eq!(filled["kind"], "contour");
+    assert_eq!(filled["filled"], true);
+    let plain = one_series_json(Series::Contour(ContourSeries {
+        z: vec![vec![0.0, 1.0], vec![1.0, 2.0]],
+        ..Default::default()
+    }));
+    assert!(plain.get("filled").is_none());
+}
+
+#[test]
+fn scatter_uses_markers_only_line_series() {
+    let s = one_series_json(Series::Line(LineSeries {
+        x: vec![1.0, 2.0],
+        y: vec![3.0, 4.0],
+        marker: "o".into(),
+        color: "rgb(0,0,255)".into(),
+        ..Default::default()
+    }));
+    assert_eq!(s["kind"], "line");
+    assert_eq!(s["marker"], "o");
+    assert!(s.get("line_style").is_none());
+}
+
+#[test]
+fn rgb_matrix_colorscale_roundtrips() {
+    let mut scene = Scene::new();
+    let scale = "[[0,\"rgb(255,0,0)\"],[1,\"rgb(0,0,255)\"]]";
+    scene.figure_mut_or_insert(1).colormap = Some(scale.into());
+    let json = serde_json::to_string(&scene).unwrap();
+    let back: Scene = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.figure(1).unwrap().colormap.as_deref(), Some(scale));
 }

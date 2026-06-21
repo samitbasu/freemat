@@ -12,8 +12,8 @@
 use fm_core::{Array, DataClass};
 use fm_graphics::{
     AxisLimits, BarSeries, ContourSeries, ErrorbarSeries, ImageSeries, Legend, Line3dSeries,
-    LineSeries, Scale, Series, StairsSeries, StemSeries, SurfaceSeries, default_color,
-    parse_linespec,
+    LineSeries, PcolorSeries, Scale, Series, StairsSeries, StemSeries, SurfaceSeries,
+    default_color, parse_linespec,
 };
 use fm_interp::error::Flow;
 use fm_interp::value::{build_real, to_f64_vec};
@@ -27,7 +27,7 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("subplot", b_subplot);
     table.add_builtin("plot", b_plot);
     table.add_builtin("line", b_line);
-    table.add_builtin("contour", b_contour);
+    table.add_builtin("contour", |i, a, _n| contour(i, a, false));
     table.add_builtin("title", b_title);
     table.add_builtin("xlabel", |i, a, _n| label(i, a, Axis::X));
     table.add_builtin("ylabel", |i, a, _n| label(i, a, Axis::Y));
@@ -61,6 +61,28 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("plot3", b_plot3);
     table.add_builtin("peaks", b_peaks);
     table.add_builtin("view", b_view);
+    table.add_builtin("colormap", b_colormap);
+    table.add_builtin("colorbar", b_colorbar);
+    table.add_builtin("pcolor", b_pcolor);
+    table.add_builtin("contourf", |i, a, _n| contour(i, a, true));
+    table.add_builtin("scatter", b_scatter);
+    table.add_builtin("scatter3", b_scatter3);
+    // Named-colormap generator functions: `gray`, `copper`, `jet`, … each return
+    // an `N×3` RGB matrix (default 64 rows) usable as `colormap(jet)` etc.
+    table.add_builtin("gray", |_i, a, _n| colormap_fn("gray", a));
+    table.add_builtin("grey", |_i, a, _n| colormap_fn("grey", a));
+    table.add_builtin("hot", |_i, a, _n| colormap_fn("hot", a));
+    table.add_builtin("cool", |_i, a, _n| colormap_fn("cool", a));
+    table.add_builtin("bone", |_i, a, _n| colormap_fn("bone", a));
+    table.add_builtin("copper", |_i, a, _n| colormap_fn("copper", a));
+    table.add_builtin("jet", |_i, a, _n| colormap_fn("jet", a));
+    table.add_builtin("hsv", |_i, a, _n| colormap_fn("hsv", a));
+    table.add_builtin("spring", |_i, a, _n| colormap_fn("spring", a));
+    table.add_builtin("summer", |_i, a, _n| colormap_fn("summer", a));
+    table.add_builtin("autumn", |_i, a, _n| colormap_fn("autumn", a));
+    table.add_builtin("winter", |_i, a, _n| colormap_fn("winter", a));
+    table.add_builtin("pink", |_i, a, _n| colormap_fn("pink", a));
+    table.add_builtin("parula", |_i, a, _n| colormap_fn("parula", a));
 }
 
 /// Split args into `(x, y)`, supplying the implicit `x = 1:n` when only `y` is
@@ -644,8 +666,8 @@ fn b_line(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
 // ---- contour ----------------------------------------------------------------
 
 /// `contour(Z)` / `contour(Z, n)` / `contour(Z, levels)` /
-/// `contour(X, Y, Z[, ...])`.
-fn b_contour(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+/// `contour(X, Y, Z[, ...])`. With `filled`, this is `contourf`.
+fn contour(i: &mut Interpreter, args: &[Array], filled: bool) -> Flow<Vec<Array>> {
     if args.is_empty() {
         return err("contour: expected a Z matrix");
     }
@@ -689,6 +711,7 @@ fn b_contour(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>>
         None => Vec::new(),
     };
     clear_current_series_unless_hold(i);
+    let cmap = current_colormap(i);
     let (fig, axes_idx) = current_axes_loc(i);
     i.graphics
         .current_figure_mut()
@@ -699,7 +722,8 @@ fn b_contour(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>>
             x,
             y,
             levels,
-            colormap: "Viridis".into(),
+            colormap: cmap,
+            filled,
         }));
     let h = i.graphics.register_series(fig, axes_idx, ObjKind::Contour);
     i.graphics.dirty = true;
@@ -866,6 +890,7 @@ fn surface(i: &mut Interpreter, args: &[Array], wireframe: bool) -> Flow<Vec<Arr
     };
     let (z, _r, _c) = grid_of(z_arg);
     clear_current_series_unless_hold(i);
+    let cmap = current_colormap(i);
     let (fig, axes_idx) = current_axes_loc(i);
     i.graphics
         .current_figure_mut()
@@ -875,7 +900,7 @@ fn surface(i: &mut Interpreter, args: &[Array], wireframe: bool) -> Flow<Vec<Arr
             z,
             x,
             y,
-            colormap: "Viridis".into(),
+            colormap: cmap,
             wireframe,
         }));
     let h = i.graphics.register_series(fig, axes_idx, ObjKind::Surface);
@@ -889,6 +914,7 @@ fn b_image(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     }
     let (data, _r, _c) = grid_of(&args[0]);
     clear_current_series_unless_hold(i);
+    let cmap = current_colormap(i);
     let (fig, axes_idx) = current_axes_loc(i);
     i.graphics
         .current_figure_mut()
@@ -896,7 +922,7 @@ fn b_image(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
         .series
         .push(Series::Image(ImageSeries {
             data,
-            colormap: "Viridis".into(),
+            colormap: cmap,
         }));
     let h = i.graphics.register_series(fig, axes_idx, ObjKind::Image);
     i.graphics.dirty = true;
@@ -1196,6 +1222,424 @@ fn peaks_matrix(n: usize) -> (Vec<Vec<f64>>, usize, usize) {
         }
     }
     (z, n, n)
+}
+
+// ---- colormap / colorbar ----------------------------------------------------
+
+/// The current figure's colormap resolved to a Plotly colorscale string, or the
+/// default `"Viridis"` when none has been set. Color-mapped series stamp this
+/// onto themselves at creation time.
+fn current_colormap(i: &mut Interpreter) -> String {
+    i.graphics
+        .current_figure_mut()
+        .colormap
+        .clone()
+        .unwrap_or_else(|| "Viridis".into())
+}
+
+/// Map a FreeMat/MATLAB colormap name to a Plotly colorscale name. Unknown names
+/// fall back to `Viridis`.
+fn named_colorscale(name: &str) -> &'static str {
+    match name.to_ascii_lowercase().as_str() {
+        "jet" => "Jet",
+        "hot" => "Hot",
+        "cool" => "Bluered",
+        "gray" | "grey" => "Greys",
+        "bone" => "Greys",
+        "copper" => "YlOrBr",
+        "hsv" => "HSV",
+        "spring" => "Rainbow",
+        "summer" => "YlGn",
+        "autumn" => "YlOrRd",
+        "winter" => "GnBu",
+        "parula" | "viridis" => "Viridis",
+        _ => "Viridis",
+    }
+}
+
+/// Build a Plotly colorscale string from an `N×3` RGB matrix (values in 0..1, or
+/// 0..255 if any entry exceeds 1). Returns a JSON array string
+/// `[[t,"rgb(r,g,b)"],…]` the renderers feed straight to Plotly's `colorscale`.
+fn rgb_matrix_to_colorscale(a: &Array) -> Option<String> {
+    let dims = a.dims();
+    let rows = dims.first().copied().unwrap_or(0);
+    let cols = dims.get(1).copied().unwrap_or(0);
+    if cols != 3 || rows < 1 {
+        return None;
+    }
+    let cm = to_f64_vec(a); // column-major: cm[c*rows + r]
+    let scale_255 = cm.iter().any(|&v| v > 1.0 + 1e-9);
+    let mut stops: Vec<String> = Vec::with_capacity(rows);
+    for r in 0..rows {
+        let comp = |c: usize| {
+            let v = cm[c * rows + r];
+            let v = if scale_255 { v } else { v * 255.0 };
+            v.round().clamp(0.0, 255.0) as u32
+        };
+        let t = if rows == 1 {
+            0.0
+        } else {
+            r as f64 / (rows as f64 - 1.0)
+        };
+        stops.push(format!(
+            "[{t},\"rgb({},{},{})\"]",
+            comp(0),
+            comp(1),
+            comp(2)
+        ));
+    }
+    // A single-row map needs both endpoints for a valid Plotly colorscale.
+    if rows == 1 {
+        let one = stops[0].replacen("[0,", "[1,", 1);
+        Some(format!("[{},{}]", stops[0], one))
+    } else {
+        Some(format!("[{}]", stops.join(",")))
+    }
+}
+
+/// Decode a Plotly colorscale string back to an `N×3` RGB matrix in 0..1 (used
+/// by the `m = colormap` query form). Handles both named scales (a small set of
+/// sampled control points) and explicit `[[t,"rgb(r,g,b)"],…]` strings.
+fn colorscale_to_matrix(scale: &str) -> Array {
+    // Parse explicit "rgb(r,g,b)" stops out of the string (the RGB-matrix form).
+    let mut rgb: Vec<(f64, f64, f64)> = Vec::new();
+    let mut idx = 0;
+    while let Some(pos) = scale[idx..].find("rgb(") {
+        let start = idx + pos + 4;
+        if let Some(end_rel) = scale[start..].find(')') {
+            let inner = &scale[start..start + end_rel];
+            let parts: Vec<f64> = inner
+                .split(',')
+                .filter_map(|s| s.trim().parse::<f64>().ok())
+                .collect();
+            if parts.len() == 3 {
+                rgb.push((parts[0] / 255.0, parts[1] / 255.0, parts[2] / 255.0));
+            }
+            idx = start + end_rel + 1;
+        } else {
+            break;
+        }
+    }
+    if rgb.is_empty() {
+        // A named Plotly scale ("Jet", "Hot", …) carries no embedded rgb(). Map
+        // it back to the nearest FreeMat colormap name and regenerate 64 rows so
+        // `m = colormap` returns the actual colors (not a flat gray ramp).
+        let fm_name = match scale {
+            "Jet" => "jet",
+            "Hot" => "hot",
+            "Bluered" => "cool",
+            "Greys" => "gray",
+            "YlOrBr" => "copper",
+            "HSV" => "hsv",
+            "Rainbow" => "spring",
+            "YlGn" => "summer",
+            "YlOrRd" => "autumn",
+            "GnBu" => "winter",
+            _ => "viridis",
+        };
+        if fm_name != "viridis" {
+            rgb = colormap_rgb(fm_name, 64);
+        }
+    }
+    if rgb.is_empty() {
+        // Viridis / unknown: a neutral grayscale ramp so `m = colormap` still
+        // returns a sensible Nx3 matrix.
+        let n = 64usize;
+        rgb = (0..n)
+            .map(|k| {
+                let t = k as f64 / (n as f64 - 1.0);
+                (t, t, t)
+            })
+            .collect();
+    }
+    let rows = rgb.len();
+    // Column-major: all R, then all G, then all B.
+    let mut col_major = Vec::with_capacity(rows * 3);
+    for &(r, _, _) in &rgb {
+        col_major.push(r);
+    }
+    for &(_, g, _) in &rgb {
+        col_major.push(g);
+    }
+    for &(_, _, b) in &rgb {
+        col_major.push(b);
+    }
+    build_real(DataClass::Double, &[rows, 3], col_major)
+}
+
+/// A named-colormap generator function (`gray`, `jet`, `copper`, …). Returns an
+/// `N×3` RGB matrix in `[0,1]` (default `N = 64`, or `name(n)`), matching the
+/// MATLAB/FreeMat colormap definitions closely enough for the doc examples.
+fn colormap_fn(name: &str, args: &[Array]) -> Flow<Vec<Array>> {
+    let n = args
+        .first()
+        .and_then(Array::as_f64)
+        .map(|v| v.round().max(1.0) as usize)
+        .unwrap_or(64);
+    let rows = colormap_rgb(name, n);
+    // Column-major: all R, then all G, then all B.
+    let mut col_major = Vec::with_capacity(n * 3);
+    for &(r, _, _) in &rows {
+        col_major.push(r);
+    }
+    for &(_, g, _) in &rows {
+        col_major.push(g);
+    }
+    for &(_, _, b) in &rows {
+        col_major.push(b);
+    }
+    Ok(vec![build_real(DataClass::Double, &[n, 3], col_major)])
+}
+
+/// The `N`-entry RGB rows of the named colormap, each component in `[0,1]`.
+fn colormap_rgb(name: &str, n: usize) -> Vec<(f64, f64, f64)> {
+    let n = n.max(1);
+    // Normalized index t in [0,1] for row k.
+    let tk = |k: usize| {
+        if n == 1 {
+            0.0
+        } else {
+            k as f64 / (n as f64 - 1.0)
+        }
+    };
+    let clamp = |v: f64| v.clamp(0.0, 1.0);
+    match name.to_ascii_lowercase().as_str() {
+        "gray" | "grey" => (0..n).map(|k| (tk(k), tk(k), tk(k))).collect(),
+        "bone" => (0..n)
+            .map(|k| {
+                let t = tk(k);
+                (clamp(0.875 * t), clamp(0.875 * t), clamp(t))
+            })
+            .collect(),
+        "hot" => (0..n)
+            .map(|k| {
+                let t = tk(k);
+                let r = clamp(t / 0.375);
+                let g = clamp((t - 0.375) / 0.375);
+                let b = clamp((t - 0.75) / 0.25);
+                (r, g, b)
+            })
+            .collect(),
+        "cool" => (0..n)
+            .map(|k| {
+                let t = tk(k);
+                (clamp(t), clamp(1.0 - t), 1.0)
+            })
+            .collect(),
+        "copper" => (0..n)
+            .map(|k| {
+                let t = tk(k);
+                (clamp(1.25 * t), clamp(0.7812 * t), clamp(0.4975 * t))
+            })
+            .collect(),
+        "spring" => (0..n)
+            .map(|k| (1.0, clamp(tk(k)), clamp(1.0 - tk(k))))
+            .collect(),
+        "summer" => (0..n)
+            .map(|k| (clamp(tk(k)), clamp(0.5 + 0.5 * tk(k)), 0.4))
+            .collect(),
+        "autumn" => (0..n).map(|k| (1.0, clamp(tk(k)), 0.0)).collect(),
+        "winter" => (0..n)
+            .map(|k| (0.0, clamp(tk(k)), clamp(1.0 - 0.5 * tk(k))))
+            .collect(),
+        "pink" => (0..n)
+            .map(|k| {
+                let t = tk(k);
+                let v = clamp((2.0 * t / 3.0 + t * t / 3.0).sqrt());
+                (clamp((t).sqrt()), v, clamp((t * t).sqrt().max(t * 0.5)))
+            })
+            .collect(),
+        "hsv" => (0..n)
+            .map(|k| {
+                let h = tk(k) * 6.0;
+                let i = h.floor() as i64 % 6;
+                let f = h - h.floor();
+                let (r, g, b) = match i {
+                    0 => (1.0, f, 0.0),
+                    1 => (1.0 - f, 1.0, 0.0),
+                    2 => (0.0, 1.0, f),
+                    3 => (0.0, 1.0 - f, 1.0),
+                    4 => (f, 0.0, 1.0),
+                    _ => (1.0, 0.0, 1.0 - f),
+                };
+                (r, g, b)
+            })
+            .collect(),
+        // `jet` and `parula` (default): a blue→cyan→yellow→red ramp via a small
+        // set of control colors interpolated to N rows.
+        "parula" => interp_control(
+            &[
+                (0.2422, 0.1504, 0.6603),
+                (0.2810, 0.3228, 0.9579),
+                (0.1786, 0.5289, 0.9682),
+                (0.0689, 0.6948, 0.8394),
+                (0.2161, 0.7843, 0.5923),
+                (0.7332, 0.7411, 0.2440),
+                (0.9970, 0.7659, 0.2199),
+                (0.9769, 0.9839, 0.0805),
+            ],
+            n,
+        ),
+        _ => interp_control(
+            // jet control colors.
+            &[
+                (0.0, 0.0, 0.5),
+                (0.0, 0.0, 1.0),
+                (0.0, 1.0, 1.0),
+                (0.5, 1.0, 0.5),
+                (1.0, 1.0, 0.0),
+                (1.0, 0.0, 0.0),
+                (0.5, 0.0, 0.0),
+            ],
+            n,
+        ),
+    }
+}
+
+/// Linearly interpolate a small list of control colors to `n` evenly-spaced rows.
+fn interp_control(ctrl: &[(f64, f64, f64)], n: usize) -> Vec<(f64, f64, f64)> {
+    if ctrl.is_empty() {
+        return vec![(0.0, 0.0, 0.0); n];
+    }
+    if ctrl.len() == 1 || n == 1 {
+        return vec![ctrl[0]; n];
+    }
+    (0..n)
+        .map(|k| {
+            let pos = k as f64 / (n as f64 - 1.0) * (ctrl.len() as f64 - 1.0);
+            let lo = pos.floor() as usize;
+            let hi = (lo + 1).min(ctrl.len() - 1);
+            let f = pos - lo as f64;
+            let a = ctrl[lo];
+            let b = ctrl[hi];
+            (
+                a.0 + (b.0 - a.0) * f,
+                a.1 + (b.1 - a.1) * f,
+                a.2 + (b.2 - a.2) * f,
+            )
+        })
+        .collect()
+}
+
+/// `colormap('name')` / `colormap(map)` / `m = colormap` — set or query the
+/// current figure's colormap. Named maps and explicit `N×3` RGB matrices are
+/// both accepted; the value is stored as a Plotly colorscale so color-mapped
+/// series pick it up. Always returns the current colormap as an `N×3` matrix.
+fn b_colormap(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if let Some(arg) = args.first() {
+        let scale = if let Some(name) = arg.as_string() {
+            // `colormap('default')` clears back to the renderer default.
+            if name.eq_ignore_ascii_case("default") {
+                "Viridis".to_string()
+            } else {
+                named_colorscale(&name).to_string()
+            }
+        } else if let Some(s) = rgb_matrix_to_colorscale(arg) {
+            s
+        } else {
+            return err("colormap: expected a name or an Nx3 RGB matrix");
+        };
+        i.graphics.current_figure_mut().colormap = Some(scale);
+        i.graphics.dirty = true;
+    }
+    // Return the current colormap as an Nx3 matrix (the query form).
+    let scale = current_colormap(i);
+    Ok(vec![colorscale_to_matrix(&scale)])
+}
+
+/// `colorbar` / `colorbar('off')` — show (or hide) the colorscale for the
+/// current axes' color-mapped series.
+fn b_colorbar(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let on = !matches!(str_arg(args, 0).as_deref(), Some("off") | Some("hide"));
+    i.graphics.current_figure_mut().current_axes_mut().colorbar = on;
+    i.graphics.dirty = true;
+    Ok(vec![])
+}
+
+// ---- pcolor -----------------------------------------------------------------
+
+/// `pcolor(C)` / `pcolor(X, Y, C)` — pseudocolor (flat-shaded) plot, rendered as
+/// a heatmap honoring the current colormap.
+fn b_pcolor(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return err("pcolor: expected a C matrix");
+    }
+    let (c_arg, x, y) = if args.len() >= 3 {
+        (&args[2], to_f64_vec(&args[0]), to_f64_vec(&args[1]))
+    } else {
+        (&args[0], Vec::new(), Vec::new())
+    };
+    let (data, _r, _c) = grid_of(c_arg);
+    clear_current_series_unless_hold(i);
+    let cmap = current_colormap(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    i.graphics
+        .current_figure_mut()
+        .current_axes_mut()
+        .series
+        .push(Series::Pcolor(PcolorSeries {
+            data,
+            x,
+            y,
+            colormap: cmap,
+        }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Image);
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+// ---- scatter / scatter3 -----------------------------------------------------
+
+/// `scatter(x, y[, sz, c])` — a marker scatter (no connecting line). Reuses the
+/// `Line` series in markers-only mode. The optional size/color args are accepted
+/// and ignored (a constant marker color is taken from the axes color order).
+fn b_scatter(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return err("scatter: not enough arguments");
+    }
+    let (x, y) = xy_args(args);
+    clear_current_series_unless_hold(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    let color = default_color(ax.series.len());
+    ax.series.push(Series::Line(LineSeries {
+        x,
+        y,
+        line_style: String::new(), // no line → markers-only in the renderers
+        marker: "o".into(),
+        color,
+        name: String::new(),
+    }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Line);
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+/// `scatter3(x, y, z[, sz, c])` — a 3-D marker scatter (no line). Reuses the
+/// `Line3d` series in markers-only mode (binds to the 3-D scene like `plot3`).
+fn b_scatter3(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.len() < 3 {
+        return err("scatter3: expected scatter3(x,y,z)");
+    }
+    let x = to_f64_vec(&args[0]);
+    let y = to_f64_vec(&args[1]);
+    let z = to_f64_vec(&args[2]);
+    clear_current_series_unless_hold(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    let color = default_color(ax.series.len());
+    ax.series.push(Series::Line3d(Line3dSeries {
+        x,
+        y,
+        z,
+        line_style: String::new(), // markers-only
+        marker: "o".into(),
+        color,
+        name: String::new(),
+    }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Line);
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
 }
 
 // `semilogx`/`semilogy`/`loglog` set the scale then delegate to plot.

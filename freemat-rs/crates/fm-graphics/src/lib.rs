@@ -17,8 +17,8 @@ mod scene;
 pub use linespec::{LineSpec, parse as parse_linespec};
 pub use scene::{
     Axes, AxisLimits, BarSeries, ContourSeries, ErrorbarSeries, Figure, ImageSeries, Legend,
-    Line3dSeries, LineSeries, Scale, Scene, Series, StairsSeries, StemSeries, SurfaceSeries,
-    WireMessage, default_color,
+    Line3dSeries, LineSeries, PcolorSeries, Scale, Scene, Series, StairsSeries, StemSeries,
+    SurfaceSeries, WireMessage, default_color,
 };
 
 /// A consumer the interpreter pushes scene snapshots to (e.g. the webserver,

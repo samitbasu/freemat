@@ -745,7 +745,7 @@ visibility of features, etc.
 ## Examples
 We start by creating a smoothly varying image of a 2D Gaussian pulse.
 
-```fm
+```fm-exec:figure
 x = linspace(-1,1,512)'*ones(1,512);
 y = x';
 Z = exp(-(x.^2+y.^2)/0.3);
@@ -756,7 +756,7 @@ which we display with the default (grayscale) colormap here.
 
 Next we switch to the `copper` colormap, and redisplay the image.
 
-```fm
+```fm-exec:figure
 colormap(copper);
 image(Z);
 ```
@@ -766,7 +766,7 @@ which results in the following image.
 If we capture the output of the `copper` command and plot it, we obtain
 the following result:
 
-```fm
+```fm-exec:figure
 a = copper;
 plot(a);
 ```
@@ -778,7 +778,7 @@ tint.  We can similarly construct a colormap of our own by defining the
 three components seperately.  For example, suppose we take three gaussian
 curves, one for each color, centered on different parts of the index space:
 
-```fm
+```fm-exec:figure
 t = linspace(0,1,256);
 A = [exp(-(t-1.0).^2/0.1);exp(-(t-0.5).^2/0.1);exp(-t.^2/0.1)]';
 plot(A);
@@ -786,7 +786,7 @@ plot(A);
 
 The resulting image has dark bands in it near the color transitions.
 
-```fm
+```fm-exec:figure
 image(Z);
 colormap(A);
 ```
@@ -794,7 +794,7 @@ colormap(A);
 These dark bands are a result of the nonuniform color intensity, which
 we can correct for by renormalizing each color to have the same norm.
 
-```fm
+```fm-exec:figure
 w = sqrt(sum(A'.^2));
 sA = diag(1./w)*A;
 plot(A);
@@ -802,7 +802,7 @@ plot(A);
 
 The resulting image has no more dark bands.
 
-```fm
+```fm-exec:figure
 image(Z);
 colormap(A);
 ```
@@ -983,7 +983,7 @@ Returns a copper colormap.  The syntax for its use is
 Here is an example of an image displayed with the `copper`
 colormap
 
-```fm
+```fm-exec:figure
 x = linspace(-1,1,512)'*ones(1,512);
 y = x';
 Z = exp(-(x.^2+y.^2)/0.3);
@@ -1339,7 +1339,7 @@ Returns a gray colormap.  The syntax for its use is
 Here is an example of an image displayed with the `gray`
 colormap
 
-```fm
+```fm-exec:figure
 x = linspace(-1,1,512)'*ones(1,512);
 y = x';
 Z = exp(-(x.^2+y.^2)/0.3);
@@ -1749,7 +1749,7 @@ In this example, we create an image that is `512 x 512` pixels
 square, and set the background to a noise pattern.  We set the central
 `128 x 256` pixels to be white.
 
-```fm
+```fm-exec:figure
 x = rand(512);
 x((-64:63)+256,(-128:127)+256) = 1.0;
 figure
@@ -1760,7 +1760,7 @@ colormap(gray)
 The resulting image looks like:
 Here is an example of an RGB image
 
-```fm
+```fm-exec:figure
 t = linspace(0,1);
 red = t'*t;
 green = t'*(t.^2);
@@ -1876,7 +1876,7 @@ In this example, we create an image that is `512 x 512` pixels
 square, and set the background to a noise pattern.  We set the central
 `128 x 256` pixels to be white.
 
-```fm
+```fm-exec:figure
 x = rand(512);
 x((-64:63)+256,(-128:127)+256) = 1.0;
 figure

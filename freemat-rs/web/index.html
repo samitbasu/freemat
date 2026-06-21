@@ -58,30 +58,53 @@
         return trace;
       }
 
+      // Resolve a series colormap to a Plotly `colorscale`. A name (e.g. "Hot")
+      // passes through; an explicit RGB scale arrives as a JSON-array string
+      // `[[t,"rgb(r,g,b)"],…]` (from colormap(<Nx3 matrix>)) which we parse.
+      function colorScale(cm) {
+        if (!cm) return "Viridis";
+        if (typeof cm === "string" && cm.charAt(0) === "[") {
+          try { return JSON.parse(cm); } catch (e) { return "Viridis"; }
+        }
+        return cm;
+      }
+
       function surfaceToTrace(s) {
         return {
           type: "surface", z: s.z,
           x: s.x && s.x.length ? s.x : undefined,
           y: s.y && s.y.length ? s.y : undefined,
-          colorscale: s.colormap || "Viridis",
+          colorscale: colorScale(s.colormap),
         };
       }
 
-      function imageToTrace(s) {
-        return { type: "heatmap", z: s.data, colorscale: s.colormap || "Viridis" };
+      function imageToTrace(s, showscale) {
+        return { type: "heatmap", z: s.data, colorscale: colorScale(s.colormap), showscale: !!showscale };
       }
 
-      function contourToTrace(s) {
-        const t = {
-          type: "contour", z: s.z, colorscale: s.colormap || "Viridis",
+      function pcolorToTrace(s, showscale) {
+        return {
+          type: "heatmap", z: s.data, colorscale: colorScale(s.colormap),
           x: s.x && s.x.length ? s.x : undefined,
           y: s.y && s.y.length ? s.y : undefined,
+          showscale: !!showscale,
         };
+      }
+
+      function contourToTrace(s, showscale) {
+        const t = {
+          type: "contour", z: s.z, colorscale: colorScale(s.colormap),
+          x: s.x && s.x.length ? s.x : undefined,
+          y: s.y && s.y.length ? s.y : undefined,
+          showscale: !!showscale,
+        };
+        if (s.filled) t.contours = Object.assign(t.contours || {}, { coloring: "fill" });
+        else t.contours = Object.assign(t.contours || {}, { coloring: "lines" });
         if (s.levels && s.levels.length) {
           const lo = Math.min.apply(null, s.levels);
           const hi = Math.max.apply(null, s.levels);
           const step = s.levels.length > 1 ? (hi - lo) / (s.levels.length - 1) : (hi - lo) || 1;
-          t.contours = { start: lo, end: hi, size: step || 1 };
+          t.contours.start = lo; t.contours.end = hi; t.contours.size = step || 1;
         }
         return t;
       }
@@ -160,11 +183,12 @@
         return t;
       }
 
-      function seriesToTrace(s, i) {
+      function seriesToTrace(s, i, showscale) {
         if (s.kind === "line") return lineToTrace(s, i);
         if (s.kind === "surface") return surfaceToTrace(s);
-        if (s.kind === "image") return imageToTrace(s);
-        if (s.kind === "contour") return contourToTrace(s);
+        if (s.kind === "image") return imageToTrace(s, showscale);
+        if (s.kind === "pcolor") return pcolorToTrace(s, showscale);
+        if (s.kind === "contour") return contourToTrace(s, showscale);
         if (s.kind === "bar") return barToTrace(s, i);
         if (s.kind === "stem") return stemToTrace(s, i);
         if (s.kind === "stairs") return stairsToTrace(s, i);
@@ -238,7 +262,7 @@
 
         const names = (ax.legend && ax.legend.names) || null;
         (ax.series || []).forEach((s, i) => {
-          const t = seriesToTrace(s, i);
+          const t = seriesToTrace(s, i, !!ax.colorbar);
           if (!t) return;
           // 2-D traces bind to this subplot's axes; 3-D surface/line use scene.
           if (s.kind === "surface" || s.kind === "line3d") {

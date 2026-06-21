@@ -75,6 +75,13 @@ pub struct Figure {
     /// last axes; `subplot`/`axes` switch it.
     #[serde(default)]
     pub current_axes: usize,
+    /// The figure's current colormap, already resolved to a Plotly colorscale
+    /// (a named scale like `"Hot"` / `"Jet"`, or an explicit RGB scale
+    /// serialized as a JSON array string `[[t,"rgb(r,g,b)"],…]`). Set by
+    /// `colormap(...)`; color-mapped series (`image`/`surf`/`pcolor`/…) stamp it
+    /// onto themselves so the renderer uses it. `None` = renderer default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colormap: Option<String>,
 }
 
 impl Figure {
@@ -85,6 +92,7 @@ impl Figure {
             id,
             axes: vec![Axes::new()],
             current_axes: 0,
+            colormap: None,
         }
     }
 
@@ -154,6 +162,10 @@ pub struct Axes {
     /// renderers map this to the Plotly `scene.camera.eye`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view: Option<[f64; 2]>,
+    /// `colorbar` — show the colorscale for the color-mapped series in this axes.
+    /// The renderers turn this into `showscale:true` on the color-mapped trace.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub colorbar: bool,
 }
 
 impl Default for Axes {
@@ -174,6 +186,7 @@ impl Default for Axes {
             hold: false,
             equal: false,
             view: None,
+            colorbar: false,
         }
     }
 }
@@ -253,7 +266,10 @@ pub enum Series {
     Surface(SurfaceSeries),
     /// A 2-D image / heatmap (`image`, `imagesc`).
     Image(ImageSeries),
-    /// A 2-D contour plot (`contour`).
+    /// A 2-D pseudocolor plot (`pcolor`): flat-shaded cells over an x/y grid,
+    /// rendered as a heatmap honoring the current colormap.
+    Pcolor(PcolorSeries),
+    /// A 2-D contour plot (`contour`, `contourf`).
     Contour(ContourSeries),
     /// A bar chart (`bar`, `barh`).
     Bar(BarSeries),
@@ -321,6 +337,26 @@ pub struct ContourSeries {
     /// Explicit contour levels (empty = let the frontend auto-pick).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub levels: Vec<f64>,
+    /// Colormap name (Plotly colorscale).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub colormap: String,
+    /// `true` = filled contour (`contourf`) → Plotly `contours.coloring:"fill"`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub filled: bool,
+}
+
+/// A 2-D pseudocolor plot (`pcolor`): a value grid plus optional x/y vectors,
+/// rendered as a flat-shaded heatmap honoring the current colormap.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct PcolorSeries {
+    /// Cell values as rows (`data[row][col]`).
+    pub data: Vec<Vec<f64>>,
+    /// Optional x coordinates (length = number of columns).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub x: Vec<f64>,
+    /// Optional y coordinates (length = number of rows).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub y: Vec<f64>,
     /// Colormap name (Plotly colorscale).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub colormap: String,

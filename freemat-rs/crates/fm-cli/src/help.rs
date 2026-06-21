@@ -299,18 +299,34 @@ fn shell(title: &str, body: &str) -> String {
               }}
               layout.scene = scene;
             }}
+            var showscale = !!ax.colorbar;
+            var cscale = function (cm) {{
+              if (!cm) return "Viridis";
+              if (typeof cm === "string" && cm.charAt(0) === "[") {{
+                try {{ return JSON.parse(cm); }} catch (e) {{ return "Viridis"; }}
+              }}
+              return cm;
+            }};
             (ax.series || []).forEach(function (s) {{
               if (s.kind === "line") {{
-                data.push({{ type: "scatter", mode: "lines", x: s.x, y: s.y,
-                             name: s.name || "", line: s.color ? {{ color: s.color }} : {{}} }});
+                var lmode = (s.line_style && s.line_style.length) ? "lines" : "markers";
+                if (s.marker && s.marker.length && s.line_style && s.line_style.length) lmode = "lines+markers";
+                data.push({{ type: "scatter", mode: lmode, x: s.x, y: s.y,
+                             name: s.name || "", line: s.color ? {{ color: s.color }} : {{}},
+                             marker: s.color ? {{ color: s.color }} : {{}} }});
               }} else if (s.kind === "surface") {{
                 data.push({{ type: "surface", z: s.z, x: s.x, y: s.y,
-                             colorscale: s.colormap || "Viridis" }});
+                             colorscale: cscale(s.colormap) }});
               }} else if (s.kind === "image") {{
-                data.push({{ type: "heatmap", z: s.data, colorscale: s.colormap || "Viridis" }});
+                data.push({{ type: "heatmap", z: s.data, colorscale: cscale(s.colormap), showscale: showscale }});
+              }} else if (s.kind === "pcolor") {{
+                data.push({{ type: "heatmap", z: s.data, x: s.x, y: s.y,
+                             colorscale: cscale(s.colormap), showscale: showscale }});
               }} else if (s.kind === "contour") {{
-                data.push({{ type: "contour", z: s.z, x: s.x, y: s.y,
-                             colorscale: s.colormap || "Viridis" }});
+                var ct = {{ type: "contour", z: s.z, x: s.x, y: s.y,
+                            colorscale: cscale(s.colormap), showscale: showscale,
+                            contours: {{ coloring: s.filled ? "fill" : "lines" }} }};
+                data.push(ct);
               }} else if (s.kind === "bar") {{
                 var b = {{ type: "bar", name: s.name || "" }};
                 if (s.horizontal) {{ b.orientation = "h"; b.y = s.x; b.x = s.y; }}
@@ -332,8 +348,10 @@ fn shell(title: &str, body: &str) -> String {
                              error_y: {{ type: "data", array: s.e, visible: true }},
                              line: s.color ? {{ color: s.color }} : {{}}, name: s.name || "" }});
               }} else if (s.kind === "line3d") {{
-                data.push({{ type: "scatter3d", mode: "lines", x: s.x, y: s.y, z: s.z,
-                             line: s.color ? {{ color: s.color }} : {{}}, name: s.name || "" }});
+                var l3mode = (s.line_style && s.line_style.length) ? "lines" : "markers";
+                data.push({{ type: "scatter3d", mode: l3mode, x: s.x, y: s.y, z: s.z,
+                             line: s.color ? {{ color: s.color }} : {{}},
+                             marker: s.color ? {{ color: s.color }} : {{}}, name: s.name || "" }});
               }}
             }});
           }});
