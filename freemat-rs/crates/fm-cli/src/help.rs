@@ -235,7 +235,11 @@ fn shell(title: &str, body: &str) -> String {
         var raw = el.getAttribute("data-plotly");
         if (!raw) return;
         try {{
-          var scene = JSON.parse(raw);
+          var msg = JSON.parse(raw);
+          // The captured payload is the scene *envelope* {{type:"scene",scene:{{…}}}}
+          // (Scene::to_message), exactly like the websocket sends; unwrap it the
+          // same way web/index.html does (renderScene(msg.scene)).
+          var scene = msg.scene || msg;
           var fig = (scene.figures && scene.figures[0]) || null;
           var data = [];
           var layout = {{ margin: {{ l: 50, r: 20, t: 30, b: 40 }} }};
