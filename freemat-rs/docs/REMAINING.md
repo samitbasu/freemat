@@ -49,10 +49,19 @@ See `PROGRESS.md` → "Sparse de-densification". No regressions; cleared `test_s
   `fm-interp` from Stage 3 (statement chokepoint, per-scope source span, switchable active scope).
 - *Effort:* Large. *Value:* High if interactive debugging matters; otherwise optional.
 
-**Graphics handle-system polish** (deferred in Stage 7.5)
-- Full MATLAB property catalogue (ticks/dir/aspect/`nextplot`/`children`/`clim`), text-object
-  handles, `linkaxes`, `colorbar`, `copyobj`, `print`, and wiring the deeper `toolbox/graph/*.m`
-  files. *Effort:* Medium, incremental. *Value:* Moderate for serious plotting.
+**Graphics handle-system** — ✅ DONE (Stage 7.5 core, 2026-06-22)
+- Implemented: the root object (handle 0), full parent/children/type navigation, a defaults-aware
+  property get/set catalogue for figure/axes/line/surface/image/contour/patch/text (incl.
+  ticks/dir/aspect/`nextplot`/`children`/`clim` modes), text annotations as real handle objects,
+  the low-level handle constructors `hline`/`hpatch`/`himage`/`hcontour`/`surface`/`htext`, and
+  `copyobj`/`newplot`/`figraise`/`figlower`/`findobj`(arbitrary filters + scoping)/`get(h)`/
+  `set(h)` listing, plus registry cleanup on `cla`/replot. All additive — no captured figure JSON
+  changed. See COVERAGE.md (name coverage 83.9% → 86.1%).
+- **Still deferred** (not the handle-system itself): GUI widgets (`uicontrol`), interactive
+  cursors (`datacursormode`/`datacursormanager`), mouse picking (`point`/`hpoint`), figure-image
+  export (`print`/`copy` — needs a headless renderer; the frontend is Plotly), the UDD class
+  machinery (`makehandleclass`/`subsref`), `zplane`, `linkaxes`, and not-yet-started 3-D plot
+  types (`surfl`/`surfc`/`meshc`/`waterfall`/`sphere`/`cylinder`/`ellipsoid`). *Value:* moderate.
 
 **Remaining sparse-numerics polish** (post de-densification):
 - **Factor-returning `lu(sparse)` / `det(sparse)`** still densify — faer's sparse `Lu` is

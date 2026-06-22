@@ -1,6 +1,6 @@
 # FreeMat-rs builtin coverage
 
-> **Generated snapshot (2026-06-22, post coverage-fill pass)** — a point-in-time
+> **Generated snapshot (2026-06-22, post handle-system pass)** — a point-in-time
 > diff of the **real freemat-rs registration table** against the FreeMat 4.2 name
 > universe (C++ builtins + toolbox `.m`), *not* a grep of the source tree.
 >
@@ -29,19 +29,22 @@
 
 | metric | count |
 |---|---:|
-| freemat-rs registered builtins (`--list-builtins`) | **500** |
+| freemat-rs registered builtins (`--list-builtins`) | **512** |
 | freemat-rs evaluator constants | 13 |
-| **freemat-rs total implemented (names)** | **513** |
+| **freemat-rs total implemented (names)** | **525** |
 | FreeMat name universe scored (C++ core + toolbox, ITK/VTK/GL & help/test stubs excluded) | **503** |
-| **FreeMat names covered by freemat-rs** | **422** |
-| **headline name coverage** | **83.9%** |
-| missing names | 81 |
+| **FreeMat names covered by freemat-rs** | **433** |
+| **headline name coverage** | **86.1%** |
+| missing names | 70 |
 | **— of which small / actionable** | **0** |
 
 > Progression: 348 registered / ~52% (initial) → 452 / 74.4% (after the
-> help-completeness backlog) → **500 / 83.9%** (after the coverage-fill pass that
-> implemented the alias/predicate, path, filesystem, integration/interp, FFT,
-> ODE-options, low-level-file-I/O, and WAV/zlim/system groups).
+> help-completeness backlog) → 500 / 83.9% (after the coverage-fill pass) →
+> **512 / 86.1%** (after the graphics handle-system pass that added the root
+> object, full parent/children/type navigation, a defaults-aware property
+> catalogue for figure/axes/line/surface/image/contour/patch/text, the handle
+> constructors `hline`/`hpatch`/`himage`/`hcontour`/`surface`/`htext`, and
+> `copyobj`/`newplot`/`figraise`/`figlower`/`findobj`-filters/`get(h)`/`set(h)`).
 
 ## Runnability is the stronger signal
 
@@ -53,11 +56,16 @@ A name absent below may still run via an equivalent (`mpower`↔`^`,
 
 ---
 
-## The 81 missing names — all out-of-scope or gated on a deferred feature
+## The 70 missing names — all out-of-scope or gated on a deferred feature
 
 There are **no remaining small/actionable builtins**: every missing name needs a
-large deferred feature (the debugger, or the graphics handle-system), device /
-network access, a heavy dependency, or is FreeMat-internal / out-of-scope.
+large deferred feature (the debugger), device / network access, a heavy
+dependency, GUI/mouse/renderer support, or is FreeMat-internal / out-of-scope.
+The graphics **handle-system core is now implemented** (root, parent/children,
+property catalogue with defaults, handle constructors, `copyobj`/`newplot`/
+`findobj`/`figraise`/`figlower`/`get(h)`/`set(h)`); what remains under graphics
+is GUI widgets, interactive cursors, mouse picking, figure-image export, the UDD
+class machinery, and toolbox-internal construction helpers.
 
 - **Native C-FFI (13)** — `import`, `loadlib`, `bind`, `cenum`, `ctypecast`,
   `ctypedefine`, `ctypefreeze`, `ctypenew`, `ctypeprint`, `ctyperead`,
@@ -70,22 +78,26 @@ network access, a heavy dependency, or is FreeMat-internal / out-of-scope.
   `testtube`, `wb_test`, `wbgentests`, `wbtestcompare`, `wbtest_exact`,
   `wbtestinputs`, `wbtest_near`, `wbtest_near_permute`, `wrap_test`, `simkeys`,
   `docli`, `quiet`, `qtnew`, `install`.
-- **Graphics handle-system / 3-D / toolbox-internal helpers — Stage 7.5 (34)** —
-  `copy`, `print`, `surface`, `uicontrol`, `zplane`, `point`, `hpoint`,
-  `figlower`, `figraise`, `hcontour`, `himage`, `hline`, `hpatch`, `htext`,
-  `hrawplot`, `htextbitmap`, `subsref`, `datacursormanager`, `datacursormode`,
-  `colorset`, `completeprops`, `is2dview`, `islinespec`, `makehandleclass`,
-  `markerset`, `matchit`, `newplot`, `parseit`, `p_end`, `stcmp`, `styleset`,
-  `inline_evaluate`, `mkdir_core`, `regexprepdriver`.
-  > Need the full `set`/`get` handle-property catalogue, text/line/image object
-  > handles, figure-export (`print`/`copy`), `subsref` class dispatch, and — for
-  > `point`/`hpoint` — frontend mouse-event plumbing. The not-yet-started 3-D
-  > plot types (`surfl`/`surfc`/`meshc`/`waterfall`/`sphere`/`cylinder`/
-  > `ellipsoid`) have no FreeMat directive name and aren't scored here.
+- **Graphics — beyond the handle-system core (19)** — GUI/interactive/export and
+  toolbox-internal construction helpers:
+  - GUI / interactive / mouse: `uicontrol`, `datacursormanager`,
+    `datacursormode`, `point`, `hpoint`.
+  - Figure-image export (needs a headless renderer; the frontend is Plotly):
+    `print`, `copy`.
+  - UDD class machinery: `makehandleclass`, `subsref`.
+  - Signal pole-zero plot: `zplane`.
+  - Toolbox-internal construction helpers (not needed now that plotting +
+    property model are native): `colorset`, `completeprops`, `hrawplot`,
+    `htextbitmap`, `markerset`, `matchit`, `parseit`, `stcmp`, `styleset`.
+  > The not-yet-started 3-D plot types (`surfl`/`surfc`/`meshc`/`waterfall`/
+  > `sphere`/`cylinder`/`ellipsoid`) have no FreeMat directive name and aren't
+  > scored here.
 - **Interactive / audio device (3)** — `input` (interactive stdin), `wavplay`,
   `wavrecord` (need an audio device). `wavread`/`wavwrite` ARE implemented.
 - **Heavy dependency — network / XML / HTML (3)** — `urlwrite`, `xmlread`,
   `htmlread`.
+- **Other internal helpers (4)** — `inline_evaluate`, `mkdir_core`, `p_end`,
+  `regexprepdriver`.
 
 ---
 
