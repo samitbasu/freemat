@@ -160,6 +160,59 @@ fn fft_constant_is_dc() {
     }
 }
 
+#[test]
+fn fftshift_even_vector() {
+    // fftshift([1 2 3 4]) == [3 4 1 2].
+    let x = Array::double_matrix(&[1, 4], vec![1.0, 2.0, 3.0, 4.0]);
+    let out = crate::fft::fftshift(&[x], true).unwrap();
+    let data = fm_interp::value::to_f64_vec(&out[0]);
+    assert_eq!(data, vec![3.0, 4.0, 1.0, 2.0]);
+}
+
+#[test]
+fn ifftshift_roundtrip_odd() {
+    // ifftshift(fftshift([1 2 3 4 5])) == [1 2 3 4 5] (odd length).
+    let x = Array::double_matrix(&[1, 5], vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+    let shifted = crate::fft::fftshift(&[x], true).unwrap();
+    let back = crate::fft::fftshift(&[shifted[0].clone()], false).unwrap();
+    let data = fm_interp::value::to_f64_vec(&back[0]);
+    assert_eq!(data, vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+}
+
+#[test]
+fn fftn_matches_fft2() {
+    // fftn of a 2-D matrix equals fft2 of it.
+    let m = Array::double_matrix(&[3, 4], (0..12).map(|i| (i as f64) * 1.5 + 1.0).collect());
+    let a = crate::fft::fftn(&[m.clone()], false).unwrap();
+    let b = crate::fft::fft2(&[m], false).unwrap();
+    let da = fm_interp::value::to_c64_vec(&a[0]);
+    let db = fm_interp::value::to_c64_vec(&b[0]);
+    assert_eq!(a[0].dims(), b[0].dims());
+    assert_eq!(da.len(), db.len());
+    for (x, y) in da.iter().zip(db.iter()) {
+        assert!((x - y).norm() < 1e-9, "{x:?} vs {y:?}");
+    }
+}
+
+#[test]
+fn hilbert_analytic_signal() {
+    // real(hilbert(x)) == x; result is complex with the known MATLAB value.
+    let x = Array::double_matrix(&[1, 4], vec![1.0, 2.0, 3.0, 4.0]);
+    let out = crate::fft::hilbert(&[x], 1).unwrap();
+    let data = fm_interp::value::to_c64_vec(&out[0]);
+    let re: Vec<f64> = data.iter().map(|c| c.re).collect();
+    for (a, b) in re.iter().zip([1.0, 2.0, 3.0, 4.0].iter()) {
+        assert!((a - b).abs() < 1e-10, "{a} vs {b}");
+    }
+    // MATLAB: hilbert([1 2 3 4]) imag parts == [1 -1 -1 1].
+    let expect_im = [1.0, -1.0, -1.0, 1.0];
+    for (c, e) in data.iter().zip(expect_im.iter()) {
+        assert!((c.im - e).abs() < 1e-10, "im {} vs {e}", c.im);
+    }
+    // Must actually be complex (nonzero imaginary part).
+    assert!(data.iter().any(|c| c.im.abs() > 1e-9));
+}
+
 // ---- regex --------------------------------------------------------------
 
 #[test]

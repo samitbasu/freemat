@@ -66,6 +66,11 @@ pub fn register(table: &mut FunctionTable) {
     table.add_builtin("ifft", |_i, a, _n| fft::fft1(a, true));
     table.add_builtin("fft2", |_i, a, _n| fft::fft2(a, false));
     table.add_builtin("ifft2", |_i, a, _n| fft::fft2(a, true));
+    table.add_builtin("fftn", |_i, a, _n| fft::fftn(a, false));
+    table.add_builtin("ifftn", |_i, a, _n| fft::fftn(a, true));
+    table.add_builtin("fftshift", |_i, a, _n| fft::fftshift(a, true));
+    table.add_builtin("ifftshift", |_i, a, _n| fft::fftshift(a, false));
+    table.add_builtin("hilbert", |_i, a, n| fft::hilbert(a, n));
     // Regex.
     table.add_builtin("imwrite", |_i, a, _n| crate::image_io::imwrite(a));
     table.add_builtin("imread", |_i, a, _n| crate::image_io::imread(a));
