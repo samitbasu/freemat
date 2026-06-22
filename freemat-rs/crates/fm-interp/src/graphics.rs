@@ -38,6 +38,8 @@ pub enum ObjKind {
     Image,
     /// A contour child of an axes.
     Contour,
+    /// A patch / filled-polygon child of an axes (`patch`).
+    Patch,
     /// A text object (title / label) — minimal support.
     Text,
 }
@@ -54,6 +56,7 @@ impl ObjKind {
             ObjKind::Surface => "surface",
             ObjKind::Image => "image",
             ObjKind::Contour => "contour",
+            ObjKind::Patch => "patch",
             ObjKind::Text => "text",
         }
     }
@@ -74,6 +77,16 @@ pub enum ObjLocation {
         axes: usize,
         /// Index within the axes' series vector.
         series: usize,
+    },
+    /// A text annotation child (figure id + axes index + index within the
+    /// axes' `texts` vector).
+    Text {
+        /// Owning figure id.
+        fig: u64,
+        /// Index within the figure's axes vector.
+        axes: usize,
+        /// Index within the axes' `texts` vector.
+        idx: usize,
     },
 }
 
@@ -245,7 +258,7 @@ impl GraphicsState {
         match self.resolve(handle)? {
             ObjLocation::Figure { .. } => Some(0),
             ObjLocation::Axes { fig, .. } => Some(fig),
-            ObjLocation::Series { fig, axes, .. } => self
+            ObjLocation::Series { fig, axes, .. } | ObjLocation::Text { fig, axes, .. } => self
                 .scene
                 .figure(fig)
                 .and_then(|f| f.axes.get(axes))
@@ -278,6 +291,7 @@ impl GraphicsState {
                     .iter()
                     .filter(|(_, r)| {
                         matches!(r.location, ObjLocation::Series { fig: f, axes: a, .. } if f == fig && a == axes)
+                            || matches!(r.location, ObjLocation::Text { fig: f, axes: a, .. } if f == fig && a == axes)
                     })
                     .map(|(&h, _)| h)
                     .collect(),
@@ -356,6 +370,29 @@ impl GraphicsState {
         h
     }
 
+    /// Register a newly appended text annotation in `(fig, axes)` (the last entry
+    /// of the axes' `texts` vector) as a [`ObjKind::Text`] child handle, and
+    /// return its handle.
+    pub fn register_text(&mut self, fig: u64, axes: usize) -> u64 {
+        let idx = self
+            .scene
+            .figure(fig)
+            .and_then(|f| f.axes.get(axes))
+            .map(|a| a.texts.len().saturating_sub(1))
+            .unwrap_or(0);
+        let h = self.alloc_handle();
+        self.objects.insert(
+            h,
+            ObjectRecord {
+                kind: ObjKind::Text,
+                location: ObjLocation::Text { fig, axes, idx },
+                extra: BTreeMap::new(),
+            },
+        );
+        self.current_object = h;
+        h
+    }
+
     /// Delete an object by handle: a figure removes the whole figure window; an
     /// axes removes the axes; a series removes the series. Child handles are
     /// dropped from the registry. Returns `true` if anything was deleted.
@@ -400,6 +437,20 @@ impl GraphicsState {
                 self.objects.remove(&handle);
                 self.reindex_after_series_removal(fig, axes, series);
             }
+            ObjLocation::Text { fig, axes, idx } => {
+                if let Some(a) = self
+                    .scene
+                    .figures
+                    .iter_mut()
+                    .find(|f| f.id == fig)
+                    .and_then(|f| f.axes.get_mut(axes))
+                    && idx < a.texts.len()
+                {
+                    a.texts.remove(idx);
+                }
+                self.objects.remove(&handle);
+                self.reindex_after_text_removal(fig, axes, idx);
+            }
         }
         self.dirty = true;
         true
@@ -411,7 +462,10 @@ impl GraphicsState {
         for rec in self.objects.values_mut() {
             match &mut rec.location {
                 ObjLocation::Axes { fig: f, axes } if *f == fig && *axes > removed => *axes -= 1,
-                ObjLocation::Series { fig: f, axes, .. } if *f == fig && *axes > removed => {
+                ObjLocation::Series { fig: f, axes, .. }
+                | ObjLocation::Text { fig: f, axes, .. }
+                    if *f == fig && *axes > removed =>
+                {
                     *axes -= 1;
                 }
                 _ => {}
@@ -437,11 +491,29 @@ impl GraphicsState {
         }
     }
 
+    /// After removing text `removed` from `(fig, axes)`, shift later text
+    /// indices down by one.
+    fn reindex_after_text_removal(&mut self, fig: u64, axes: usize, removed: usize) {
+        for rec in self.objects.values_mut() {
+            if let ObjLocation::Text {
+                fig: f,
+                axes: a,
+                idx,
+            } = &mut rec.location
+                && *f == fig
+                && *a == axes
+                && *idx > removed
+            {
+                *idx -= 1;
+            }
+        }
+    }
+
     /// Reset a figure to a single fresh default axes (`clf`), dropping all of
     /// its axes/series children from the registry.
     pub fn delete_children_of_figure(&mut self, fig: u64) {
         self.objects
-            .retain(|_, r| !matches!(r.location, ObjLocation::Axes { fig: f, .. } | ObjLocation::Series { fig: f, .. } if f == fig));
+            .retain(|_, r| !matches!(r.location, ObjLocation::Axes { fig: f, .. } | ObjLocation::Series { fig: f, .. } | ObjLocation::Text { fig: f, .. } if f == fig));
         if let Some(figure) = self.scene.figures.iter_mut().find(|f| f.id == fig) {
             figure.axes = vec![Axes::new()];
             figure.current_axes = 0;
@@ -478,7 +550,9 @@ impl GraphicsState {
     /// Mutable access to an axes by location, if it still exists.
     pub fn axes_at_mut(&mut self, loc: ObjLocation) -> Option<&mut Axes> {
         match loc {
-            ObjLocation::Axes { fig, axes } | ObjLocation::Series { fig, axes, .. } => self
+            ObjLocation::Axes { fig, axes }
+            | ObjLocation::Series { fig, axes, .. }
+            | ObjLocation::Text { fig, axes, .. } => self
                 .scene
                 .figures
                 .iter_mut()
@@ -486,6 +560,22 @@ impl GraphicsState {
                 .axes
                 .get_mut(axes),
             ObjLocation::Figure { .. } => None,
+        }
+    }
+
+    /// Mutable access to a text annotation by location, if it still exists.
+    pub fn text_at_mut(&mut self, loc: ObjLocation) -> Option<&mut fm_graphics::TextLabel> {
+        if let ObjLocation::Text { fig, axes, idx } = loc {
+            self.scene
+                .figures
+                .iter_mut()
+                .find(|f| f.id == fig)?
+                .axes
+                .get_mut(axes)?
+                .texts
+                .get_mut(idx)
+        } else {
+            None
         }
     }
 
@@ -528,7 +618,8 @@ fn location_in_figure(loc: ObjLocation, fig: u64) -> bool {
     match loc {
         ObjLocation::Figure { fig: f }
         | ObjLocation::Axes { fig: f, .. }
-        | ObjLocation::Series { fig: f, .. } => f == fig,
+        | ObjLocation::Series { fig: f, .. }
+        | ObjLocation::Text { fig: f, .. } => f == fig,
     }
 }
 
@@ -537,6 +628,9 @@ fn location_is_axes_or_child(loc: ObjLocation, fig: u64, axes: usize) -> bool {
     match loc {
         ObjLocation::Axes { fig: f, axes: a } => f == fig && a == axes,
         ObjLocation::Series {
+            fig: f, axes: a, ..
+        }
+        | ObjLocation::Text {
             fig: f, axes: a, ..
         } => f == fig && a == axes,
         ObjLocation::Figure { .. } => false,

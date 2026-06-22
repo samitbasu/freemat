@@ -503,19 +503,69 @@ fn apply_property(i: &mut Interpreter, h: u64, prop: &str, value: &Array) -> Flo
         }
         return Ok(());
     }
-    // Series-level properties.
+    // Series-level properties: write modeled scene fields where they exist,
+    // else stash on the per-handle bag so `get` round-trips them.
     if let Some(loc) = loc
         && matches!(loc, ObjLocation::Series { .. })
-        && let Some(Series::Line(line)) = i.graphics.series_at_mut(loc)
     {
-        match prop.as_str() {
-            "color" | "linecolor" => line.color = value.as_string().unwrap_or_default(),
-            "linestyle" => line.line_style = value.as_string().unwrap_or_default(),
-            "marker" => line.marker = value.as_string().unwrap_or_default(),
-            "displayname" => line.name = value.as_string().unwrap_or_default(),
-            "xdata" => line.x = to_f64_vec(value),
-            "ydata" => line.y = to_f64_vec(value),
+        match i.graphics.series_at_mut(loc) {
+            Some(Series::Line(line)) => match prop.as_str() {
+                "color" | "linecolor" => line.color = value.as_string().unwrap_or_default(),
+                "linestyle" => line.line_style = value.as_string().unwrap_or_default(),
+                "marker" => line.marker = value.as_string().unwrap_or_default(),
+                "displayname" => line.name = value.as_string().unwrap_or_default(),
+                "xdata" => line.x = to_f64_vec(value),
+                "ydata" => line.y = to_f64_vec(value),
+                _ => i.graphics.set_extra(h, &prop, value.clone()),
+            },
+            Some(Series::Contour(c)) => match prop.as_str() {
+                "levellist" => c.levels = to_f64_vec(value),
+                "fill" => c.filled = on_off(&value.as_string().unwrap_or_default()),
+                "showtext" => c.labels = on_off(&value.as_string().unwrap_or_default()),
+                _ => i.graphics.set_extra(h, &prop, value.clone()),
+            },
+            Some(Series::Surface(s)) => match prop.as_str() {
+                "xdata" => s.x = to_f64_vec(value),
+                "ydata" => s.y = to_f64_vec(value),
+                "zdata" | "cdata" => s.z = array_to_grid(value),
+                _ => i.graphics.set_extra(h, &prop, value.clone()),
+            },
+            Some(Series::Image(im)) => match prop.as_str() {
+                "cdata" => im.data = array_to_grid(value),
+                _ => i.graphics.set_extra(h, &prop, value.clone()),
+            },
+            Some(Series::Fill(f)) => match prop.as_str() {
+                "facecolor" | "edgecolor" | "color" => {
+                    f.color = value.as_string().unwrap_or_default();
+                }
+                "displayname" => f.name = value.as_string().unwrap_or_default(),
+                "xdata" => f.x = to_f64_vec(value),
+                "ydata" => f.y = to_f64_vec(value),
+                _ => i.graphics.set_extra(h, &prop, value.clone()),
+            },
             _ => i.graphics.set_extra(h, &prop, value.clone()),
+        }
+        return Ok(());
+    }
+    // Text-annotation properties.
+    if let Some(loc) = loc
+        && matches!(loc, ObjLocation::Text { .. })
+    {
+        if let Some(t) = i.graphics.text_at_mut(loc) {
+            match prop.as_str() {
+                "string" => t.str = value.as_string().unwrap_or_default(),
+                "position" => {
+                    let v = to_f64_vec(value);
+                    if !v.is_empty() {
+                        t.x = v[0];
+                        t.y = v.get(1).copied().unwrap_or(0.0);
+                        t.z = v.get(2).copied();
+                    }
+                }
+                _ => i.graphics.set_extra(h, &prop, value.clone()),
+            }
+        } else {
+            i.graphics.set_extra(h, &prop, value.clone());
         }
         return Ok(());
     }
@@ -721,54 +771,136 @@ fn read_property(i: &Interpreter, h: u64, prop: &str) -> Array {
                 }
             }
             ObjLocation::Series { fig, axes, series } => {
+                let kind = i.graphics.kind_of(h);
                 let ser = i
                     .graphics
                     .scene
                     .figure(fig)
                     .and_then(|f| f.axes.get(axes))
                     .and_then(|a| a.series.get(series));
+                // `type` reflects the registered kind (so a patch reports
+                // "patch" even though it is stored as a Fill series).
+                if prop_l == "type"
+                    && let Some(k) = kind
+                {
+                    return Array::char_string(k.type_name());
+                }
                 if let Some(Series::Contour(c)) = ser {
                     match prop_l.as_str() {
-                        "type" => return Array::char_string("contour"),
-                        "levellist" => {
-                            return build_real(
-                                DataClass::Double,
-                                &[1, c.levels.len()],
-                                c.levels.clone(),
-                            );
-                        }
+                        "levellist" => return row(c.levels.clone()),
+                        "fill" => return on_off_str(c.filled),
+                        "showtext" => return on_off_str(c.labels),
                         _ => {}
+                    }
+                    if let Some(v) = i.graphics.get_extra(h, prop) {
+                        return v;
+                    }
+                    if let Some(d) = contour_default(&prop_l) {
+                        return d;
+                    }
+                }
+                if let Some(Series::Surface(s)) = ser {
+                    match prop_l.as_str() {
+                        "xdata" => return row(s.x.clone()),
+                        "ydata" => return row(s.y.clone()),
+                        "zdata" | "cdata" => return grid_to_array(&s.z),
+                        _ => {}
+                    }
+                    if let Some(v) = i.graphics.get_extra(h, prop) {
+                        return v;
+                    }
+                    if let Some(d) = surface_default(&prop_l) {
+                        return d;
+                    }
+                }
+                if let Some(Series::Image(im)) = ser {
+                    if prop_l == "cdata" {
+                        return grid_to_array(&im.data);
+                    }
+                    if let Some(v) = i.graphics.get_extra(h, prop) {
+                        return v;
+                    }
+                    if let Some(d) = image_default(&prop_l) {
+                        return d;
+                    }
+                }
+                if let Some(Series::Fill(f)) = ser {
+                    // A patch / fill polygon.
+                    match prop_l.as_str() {
+                        "xdata" => return row(f.x.clone()),
+                        "ydata" => return row(f.y.clone()),
+                        "facecolor" | "edgecolor" | "color" => {
+                            return Array::char_string(&f.color);
+                        }
+                        "displayname" => return Array::char_string(&f.name),
+                        _ => {}
+                    }
+                    if let Some(v) = i.graphics.get_extra(h, prop) {
+                        return v;
+                    }
+                    if let Some(d) = patch_default(&prop_l) {
+                        return d;
                     }
                 }
                 if let Some(Series::Line(line)) = ser {
                     match prop_l.as_str() {
-                        "type" => return Array::char_string("line"),
                         "color" | "linecolor" => return Array::char_string(&line.color),
                         "linestyle" => return Array::char_string(&line.line_style),
                         "marker" => return Array::char_string(&line.marker),
                         "displayname" => return Array::char_string(&line.name),
-                        "xdata" => {
-                            return build_real(
-                                DataClass::Double,
-                                &[1, line.x.len()],
-                                line.x.clone(),
-                            );
-                        }
-                        "ydata" => {
-                            return build_real(
-                                DataClass::Double,
-                                &[1, line.y.len()],
-                                line.y.clone(),
-                            );
+                        "xdata" => return row(line.x.clone()),
+                        "ydata" => return row(line.y.clone()),
+                        _ => {}
+                    }
+                    if let Some(v) = i.graphics.get_extra(h, prop) {
+                        return v;
+                    }
+                    if let Some(d) = line_default(&prop_l) {
+                        return d;
+                    }
+                }
+            }
+            ObjLocation::Text { fig, axes, idx } => {
+                let t = i
+                    .graphics
+                    .scene
+                    .figure(fig)
+                    .and_then(|f| f.axes.get(axes))
+                    .and_then(|a| a.texts.get(idx));
+                if let Some(t) = t {
+                    match prop_l.as_str() {
+                        "type" => return Array::char_string("text"),
+                        "string" => return Array::char_string(&t.str),
+                        "position" => {
+                            return row(vec![t.x, t.y, t.z.unwrap_or(0.0)]);
                         }
                         _ => {}
                     }
+                }
+                if let Some(v) = i.graphics.get_extra(h, prop) {
+                    return v;
+                }
+                if let Some(d) = text_default(&prop_l) {
+                    return d;
                 }
             }
         }
     }
     // Unknown / free-form: echo from the bag, or empty.
     i.graphics.get_extra(h, prop).unwrap_or_else(empty)
+}
+
+/// Flatten a row-major `grid[row][col]` to a column-major MATLAB matrix Array.
+fn grid_to_array(grid: &[Vec<f64>]) -> Array {
+    let rows = grid.len();
+    let cols = grid.first().map_or(0, Vec::len);
+    let mut col_major = Vec::with_capacity(rows * cols);
+    for c in 0..cols {
+        for r in grid {
+            col_major.push(r.get(c).copied().unwrap_or(0.0));
+        }
+    }
+    build_real(DataClass::Double, &[rows, cols], col_major)
 }
 
 /// The `'manual'`/`'auto'` string for a limit-mode property: `'manual'` when the
@@ -877,6 +1009,105 @@ fn axes_default(prop: &str) -> Option<Array> {
         // The default MATLAB axes ColorOrder (the 7-color plot palette), as an
         // n×3 RGB matrix (column-major for `build_real`).
         "colororder" => default_color_order(),
+        _ => return None,
+    })
+}
+
+/// The documented default value of LINE property `prop` (already lowercased),
+/// returned by `get` when neither a modeled scene field nor the per-handle bag
+/// holds a value. Mirrors FreeMat `HandleLineSeries::SetupDefaults`.
+fn line_default(prop: &str) -> Option<Array> {
+    Some(match prop {
+        "linewidth" => scalar(0.5),
+        "markersize" => scalar(6.0),
+        "markeredgecolor" => Array::char_string("auto"),
+        "markerfacecolor" => Array::char_string("none"),
+        "visible" => Array::char_string("on"),
+        "zdata" => empty(),
+        "tag" => Array::char_string(""),
+        _ => return None,
+    })
+}
+
+/// The documented default value of SURFACE property `prop` (already lowercased).
+/// Mirrors FreeMat `HandleSurface::SetupDefaults`.
+fn surface_default(prop: &str) -> Option<Array> {
+    Some(match prop {
+        "facecolor" => Array::char_string("flat"),
+        "edgecolor" => row(vec![0.0, 0.0, 0.0]),
+        "facealpha" => scalar(1.0),
+        "edgealpha" => scalar(1.0),
+        "linestyle" => Array::char_string("-"),
+        "linewidth" => scalar(0.5),
+        "meshstyle" => Array::char_string("both"),
+        "markersize" => scalar(6.0),
+        "cdatamapping" => Array::char_string("scaled"),
+        "visible" => Array::char_string("on"),
+        "tag" => Array::char_string(""),
+        _ => return None,
+    })
+}
+
+/// The documented default value of IMAGE property `prop` (already lowercased).
+/// Mirrors FreeMat `HandleImage::SetupDefaults`.
+fn image_default(prop: &str) -> Option<Array> {
+    Some(match prop {
+        "cdatamapping" => Array::char_string("scaled"),
+        "visible" => Array::char_string("on"),
+        "tag" => Array::char_string(""),
+        _ => return None,
+    })
+}
+
+/// The documented default value of CONTOUR property `prop` (already lowercased).
+/// Mirrors FreeMat `HandleContour::SetupDefaults`.
+fn contour_default(prop: &str) -> Option<Array> {
+    Some(match prop {
+        "linewidth" => scalar(1.0),
+        "linecolor" => Array::char_string("flat"),
+        "fill" => Array::char_string("off"),
+        "showtext" => Array::char_string("off"),
+        "visible" => Array::char_string("on"),
+        "tag" => Array::char_string(""),
+        _ => return None,
+    })
+}
+
+/// The documented default value of PATCH property `prop` (already lowercased).
+/// Mirrors FreeMat patch defaults (a filled polygon).
+fn patch_default(prop: &str) -> Option<Array> {
+    Some(match prop {
+        "facecolor" => Array::char_string("flat"),
+        "edgecolor" => row(vec![0.0, 0.0, 0.0]),
+        "facealpha" => scalar(1.0),
+        "linewidth" => scalar(0.5),
+        "linestyle" => Array::char_string("-"),
+        "vertices" => empty(),
+        "faces" => empty(),
+        "facevertexcdata" => empty(),
+        "visible" => Array::char_string("on"),
+        "tag" => Array::char_string(""),
+        "zdata" => empty(),
+        _ => return None,
+    })
+}
+
+/// The documented default value of TEXT property `prop` (already lowercased).
+/// Mirrors FreeMat `HandleText::SetupDefaults`.
+fn text_default(prop: &str) -> Option<Array> {
+    Some(match prop {
+        "color" => row(vec![0.0, 0.0, 0.0]),
+        "fontsize" => scalar(10.0),
+        "fontname" => Array::char_string("helvetica"),
+        "fontweight" => Array::char_string("normal"),
+        "fontangle" => Array::char_string("normal"),
+        "fontunits" => Array::char_string("points"),
+        "horizontalalignment" => Array::char_string("left"),
+        "verticalalignment" => Array::char_string("middle"),
+        "rotation" => scalar(0.0),
+        "units" => Array::char_string("data"),
+        "visible" => Array::char_string("on"),
+        "tag" => Array::char_string(""),
         _ => return None,
     })
 }
@@ -1451,7 +1682,7 @@ fn b_patch(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
         color,
         name: String::new(),
     }));
-    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Line);
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Patch);
     i.graphics.dirty = true;
     Ok(vec![handle(h)])
 }
@@ -1533,6 +1764,12 @@ fn grid_of(a: &Array) -> (Vec<Vec<f64>>, usize, usize) {
         }
     }
     (grid, rows, cols)
+}
+
+/// Convert a MATLAB matrix Array (column-major) to a row-major `grid[row][col]`.
+fn array_to_grid(a: &Array) -> Vec<Vec<f64>> {
+    let (grid, _r, _c) = grid_of(a);
+    grid
 }
 
 fn surface(i: &mut Interpreter, args: &[Array], wireframe: bool) -> Flow<Vec<Array>> {
@@ -2487,7 +2724,7 @@ fn b_quiver(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> 
 /// array of strings (one per position). The position args (x, y, and optional z)
 /// are numeric; the label is the first char/cell argument. Trailing
 /// property/value pairs (e.g. `'fontsize', 20`) are accepted and ignored.
-fn b_text(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+fn b_text(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
     if args.len() < 3 {
         return err("text: expected text(x, y, str) or text(x, y, z, str)");
     }
@@ -2505,8 +2742,9 @@ fn b_text(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     } else {
         None
     };
-    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    let (fig, axes_idx) = current_axes_loc(i);
     let n = xs.len().min(ys.len()).max(1);
+    let mut handles: Vec<f64> = Vec::with_capacity(n);
     for k in 0..n {
         // A single label applies to every point; a cell array gives one each.
         let str = if labels.len() == 1 {
@@ -2514,15 +2752,27 @@ fn b_text(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
         } else {
             labels.get(k).cloned().unwrap_or_default()
         };
-        ax.texts.push(TextLabel {
-            x: xs.get(k).copied().unwrap_or(0.0),
-            y: ys.get(k).copied().unwrap_or(0.0),
-            z: zs.as_ref().and_then(|z| z.get(k).copied()),
-            str,
-        });
+        i.graphics
+            .current_figure_mut()
+            .current_axes_mut()
+            .texts
+            .push(TextLabel {
+                x: xs.get(k).copied().unwrap_or(0.0),
+                y: ys.get(k).copied().unwrap_or(0.0),
+                z: zs.as_ref().and_then(|z| z.get(k).copied()),
+                str,
+            });
+        handles.push(i.graphics.register_text(fig, axes_idx) as f64);
     }
     i.graphics.dirty = true;
-    Ok(vec![])
+    // `text(...)` as a bare command produces no `ans` (matching the historical
+    // command behavior and keeping the captured doc transcripts byte-stable);
+    // an explicit `h = text(...)` (nargout >= 1) gets the handle column.
+    if nargout == 0 {
+        return Ok(vec![]);
+    }
+    let m = handles.len();
+    Ok(vec![build_real(DataClass::Double, &[m, 1], handles)])
 }
 
 // `semilogx`/`semilogy`/`loglog` set the scale then delegate to plot.

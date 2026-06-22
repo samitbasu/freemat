@@ -2135,3 +2135,198 @@ fn ode45_accepts_odeset_options() {
     let last = *data.last().unwrap();
     assert!((last - 1.0_f64.exp()).abs() < 1e-6, "y(end)={last}");
 }
+
+// ---- child-object (series/text) property catalogue (Stage 7.5, Task 3) -------
+
+#[test]
+fn line_child_property_defaults_and_roundtrip() {
+    let mut i = interp();
+    i.run("h = plot(1:3);").unwrap();
+    let s = |i: &mut Interpreter, src: &str| {
+        i.run(src).unwrap();
+        i.context
+            .lookup("v")
+            .and_then(fm_core::Array::as_string)
+            .unwrap()
+    };
+    let f = |i: &mut Interpreter, src: &str| {
+        i.run(src).unwrap();
+        fm_interp::value::to_f64_vec(i.context.lookup("v").unwrap())
+    };
+    assert_eq!(s(&mut i, "v = get(h,'type');"), "line");
+    assert_eq!(f(&mut i, "v = get(h,'linewidth');"), vec![0.5]);
+    assert_eq!(f(&mut i, "v = get(h,'markersize');"), vec![6.0]);
+    assert_eq!(s(&mut i, "v = get(h,'markeredgecolor');"), "auto");
+    assert_eq!(s(&mut i, "v = get(h,'markerfacecolor');"), "none");
+    assert_eq!(s(&mut i, "v = get(h,'visible');"), "on");
+    // Round-trip linewidth via the bag.
+    assert_eq!(
+        f(&mut i, "set(h,'linewidth',2); v = get(h,'linewidth');"),
+        vec![2.0]
+    );
+}
+
+#[test]
+fn surface_child_property_defaults_and_roundtrip() {
+    let mut i = interp();
+    i.run("h = surf(peaks(8));").unwrap();
+    let s = |i: &mut Interpreter, src: &str| {
+        i.run(src).unwrap();
+        i.context
+            .lookup("v")
+            .and_then(fm_core::Array::as_string)
+            .unwrap()
+    };
+    assert_eq!(s(&mut i, "v = get(h,'type');"), "surface");
+    assert_eq!(s(&mut i, "v = get(h,'facecolor');"), "flat");
+    assert_eq!(s(&mut i, "v = get(h,'meshstyle');"), "both");
+    // cdatamapping default + round-trip.
+    assert_eq!(s(&mut i, "v = get(h,'cdatamapping');"), "scaled");
+    assert_eq!(
+        s(
+            &mut i,
+            "set(h,'cdatamapping','direct'); v = get(h,'cdatamapping');"
+        ),
+        "direct"
+    );
+}
+
+#[test]
+fn image_child_property_defaults() {
+    let mut i = interp();
+    i.run("h = image([1 2 3 4; 5 6 7 8; 9 10 11 12; 13 14 15 16]);")
+        .unwrap();
+    let s = |i: &mut Interpreter, src: &str| {
+        i.run(src).unwrap();
+        i.context
+            .lookup("v")
+            .and_then(fm_core::Array::as_string)
+            .unwrap()
+    };
+    assert_eq!(s(&mut i, "v = get(h,'type');"), "image");
+    assert_eq!(s(&mut i, "v = get(h,'cdatamapping');"), "scaled");
+    // cdata reads back the data matrix.
+    i.run("c = get(h,'cdata');").unwrap();
+    assert_eq!(i.context.lookup("c").unwrap().dims(), vec![4, 4]);
+}
+
+#[test]
+fn contour_child_property_defaults() {
+    let mut i = interp();
+    i.run("h = contour(peaks(10));").unwrap();
+    let s = |i: &mut Interpreter, src: &str| {
+        i.run(src).unwrap();
+        i.context
+            .lookup("v")
+            .and_then(fm_core::Array::as_string)
+            .unwrap()
+    };
+    assert_eq!(s(&mut i, "v = get(h,'type');"), "contour");
+    assert_eq!(s(&mut i, "v = get(h,'fill');"), "off");
+    assert_eq!(s(&mut i, "v = get(h,'showtext');"), "off");
+}
+
+#[test]
+fn patch_child_reports_patch_type() {
+    let mut i = interp();
+    i.run("h = patch([0 1 1 0],[0 0 1 1],'r');").unwrap();
+    let s = |i: &mut Interpreter, src: &str| {
+        i.run(src).unwrap();
+        i.context
+            .lookup("v")
+            .and_then(fm_core::Array::as_string)
+            .unwrap()
+    };
+    assert_eq!(s(&mut i, "v = get(h,'type');"), "patch");
+    // facealpha is numeric default 1.
+    i.run("fa = get(h,'facealpha');").unwrap();
+    assert_eq!(
+        i.context.lookup("fa").and_then(fm_core::Array::as_f64),
+        Some(1.0)
+    );
+}
+
+#[test]
+fn text_is_a_handle_object() {
+    let mut i = interp();
+    i.run("plot(1:3); h = text(1,1,'hi');").unwrap();
+    // ishandle.
+    i.run("ih = ishandle(h);").unwrap();
+    assert_eq!(
+        i.context.lookup("ih").and_then(fm_core::Array::as_f64),
+        Some(1.0)
+    );
+    // type / string.
+    i.run("ty = get(h,'type'); st = get(h,'string');").unwrap();
+    assert_eq!(
+        i.context.lookup("ty").and_then(fm_core::Array::as_string),
+        Some("text".into())
+    );
+    assert_eq!(
+        i.context.lookup("st").and_then(fm_core::Array::as_string),
+        Some("hi".into())
+    );
+    // parent == gca.
+    i.run("p = get(h,'parent'); g = gca;").unwrap();
+    assert_eq!(
+        i.context.lookup("p").and_then(fm_core::Array::as_f64),
+        i.context.lookup("g").and_then(fm_core::Array::as_f64),
+    );
+    // gca children contains h.
+    i.run("ch = get(gca,'children');").unwrap();
+    let children = fm_interp::value::to_f64_vec(i.context.lookup("ch").unwrap());
+    let hh = i
+        .context
+        .lookup("h")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+    assert!(
+        children.contains(&hh),
+        "children {children:?} should contain {hh}"
+    );
+    // set/get string round-trips.
+    i.run("set(h,'string','bye'); st2 = get(h,'string');")
+        .unwrap();
+    assert_eq!(
+        i.context.lookup("st2").and_then(fm_core::Array::as_string),
+        Some("bye".into())
+    );
+}
+
+#[test]
+fn text_property_defaults_and_position() {
+    let mut i = interp();
+    i.run("h = text(2,3,'x');").unwrap();
+    let s = |i: &mut Interpreter, src: &str| {
+        i.run(src).unwrap();
+        i.context
+            .lookup("v")
+            .and_then(fm_core::Array::as_string)
+            .unwrap()
+    };
+    let f = |i: &mut Interpreter, src: &str| {
+        i.run(src).unwrap();
+        fm_interp::value::to_f64_vec(i.context.lookup("v").unwrap())
+    };
+    assert_eq!(f(&mut i, "v = get(h,'fontsize');"), vec![10.0]);
+    assert_eq!(s(&mut i, "v = get(h,'fontname');"), "helvetica");
+    assert_eq!(s(&mut i, "v = get(h,'horizontalalignment');"), "left");
+    assert_eq!(f(&mut i, "v = get(h,'position');"), vec![2.0, 3.0, 0.0]);
+    // position round-trips.
+    assert_eq!(
+        f(&mut i, "set(h,'position',[5 6 0]); v = get(h,'position');"),
+        vec![5.0, 6.0, 0.0]
+    );
+}
+
+#[test]
+fn text_handle_delete_reindexes() {
+    let mut i = interp();
+    i.run("h1 = text(1,1,'a'); h2 = text(2,2,'b');").unwrap();
+    // Delete the first; the second must still resolve to "b".
+    i.run("delete(h1); s = get(h2,'string');").unwrap();
+    assert_eq!(
+        i.context.lookup("s").and_then(fm_core::Array::as_string),
+        Some("b".into())
+    );
+}
