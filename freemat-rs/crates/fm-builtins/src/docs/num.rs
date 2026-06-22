@@ -61,14 +61,14 @@ fm_doc::register_doc! {
 
  whose exact solution is y(t)=exp(t), over the interval t0=0, t1=3, do
 
-```fm
+```fm-exec
       [t,y]=ode45(@(t,y) y,[0 3],1)
 ```
 
  If you want a dense output (i.e., an output that also contains an interpolating
  spline), use instead
 
-```fm
+```fm-exec
       SOL=ode45(@(t,y) y,[0 3],1)
 ```
 

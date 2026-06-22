@@ -4,8 +4,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use fm_core::{Array, FunctionHandle};
+use fm_core::{Array, DataClass, FunctionHandle};
 use fm_interp::error::{Flow, InterpError, Signal};
+use fm_interp::value::{build_real, to_f64_vec};
 use fm_interp::{FunctionTable, Interpreter, collect_free_vars};
 use fm_parser::{Span, parse_expression, parse_statements};
 
@@ -31,6 +32,319 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("str2func", b_str2func);
     table.add_builtin("is_function_handle", b_is_function_handle);
     table.add_builtin("isfunctionhandle", b_is_function_handle);
+    table.add_builtin("ode45", b_ode45);
+}
+
+/// `ode45(f, tspan, y0[, options])` — solve the IVP `y' = f(t,y)`, `y(t0)=y0`
+/// using the Dormand–Prince embedded RK45 method with adaptive step control.
+///
+/// Return conventions match FreeMat / MATLAB:
+///   * `[t,y] = ode45(...)` → `t` is a column vector of time points, `y` is a
+///     matrix with one row per time point and one column per state component.
+///   * `SOL = ode45(...)` → a struct with fields `x` (row vector of times) and
+///     `y` (state matrix, states × times).
+///
+/// When `tspan` is `[t0 tf]` the solver returns its natural adaptive steps;
+/// when it is a longer vector the solution is reported at those exact times.
+fn b_ode45(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
+    need(args, 3, "ode45")?;
+    if !args[0].is_function_handle() && args[0].as_string().is_none() {
+        return Err(Signal::Error(InterpError::msg(
+            "ode45: first argument must be a function handle or function name",
+        )));
+    }
+
+    let tspan = to_f64_vec(&args[1]);
+    if tspan.len() < 2 {
+        return Err(Signal::Error(InterpError::msg(
+            "ode45: tspan must have at least two elements",
+        )));
+    }
+    let t0 = tspan[0];
+    let tf = *tspan.last().unwrap();
+    let y0 = to_f64_vec(&args[2]);
+    let n = y0.len();
+    if n == 0 {
+        return Err(Signal::Error(InterpError::msg(
+            "ode45: initial condition y0 must be non-empty",
+        )));
+    }
+
+    // Tolerances (MATLAB defaults).
+    let reltol = 1e-3_f64;
+    let abstol = 1e-6_f64;
+    let direction = if tf >= t0 { 1.0 } else { -1.0 };
+
+    // Output mode: 2-element span → natural steps; longer vector → requested times.
+    let requested: Option<Vec<f64>> = if tspan.len() > 2 {
+        Some(tspan.clone())
+    } else {
+        None
+    };
+
+    // Helper to evaluate the derivative f(t, y) -> Vec<f64> of length n.
+    let eval_f = |i: &mut Interpreter, t: f64, y: &[f64]| -> Flow<Vec<f64>> {
+        let ta = Array::Scalar(fm_core::ScalarValue::Double(t));
+        let ya = build_real(DataClass::Double, &[y.len(), 1], y.to_vec());
+        let out = i.invoke_handle(&args[0], &[ta, ya], 1, "", Span::empty(0))?;
+        let dv = out
+            .first()
+            .map(to_f64_vec)
+            .ok_or_else(|| Signal::Error(InterpError::msg("ode45: f returned no output")))?;
+        if dv.len() != y.len() {
+            return Err(Signal::Error(InterpError::msg(format!(
+                "ode45: f returned a vector of length {} but expected {}",
+                dv.len(),
+                y.len()
+            ))));
+        }
+        Ok(dv)
+    };
+
+    // Dormand–Prince (DOPRI5) Butcher tableau.
+    // c nodes
+    const C2: f64 = 1.0 / 5.0;
+    const C3: f64 = 3.0 / 10.0;
+    const C4: f64 = 4.0 / 5.0;
+    const C5: f64 = 8.0 / 9.0;
+    // a coefficients
+    const A21: f64 = 1.0 / 5.0;
+    const A31: f64 = 3.0 / 40.0;
+    const A32: f64 = 9.0 / 40.0;
+    const A41: f64 = 44.0 / 45.0;
+    const A42: f64 = -56.0 / 15.0;
+    const A43: f64 = 32.0 / 9.0;
+    const A51: f64 = 19372.0 / 6561.0;
+    const A52: f64 = -25360.0 / 2187.0;
+    const A53: f64 = 64448.0 / 6561.0;
+    const A54: f64 = -212.0 / 729.0;
+    const A61: f64 = 9017.0 / 3168.0;
+    const A62: f64 = -355.0 / 33.0;
+    const A63: f64 = 46732.0 / 5247.0;
+    const A64: f64 = 49.0 / 176.0;
+    const A65: f64 = -5103.0 / 18656.0;
+    // 5th-order solution weights == row-7 a-coefficients (FSAL).
+    const B1: f64 = 35.0 / 384.0;
+    const B3: f64 = 500.0 / 1113.0;
+    const B4: f64 = 125.0 / 192.0;
+    const B5: f64 = -2187.0 / 6784.0;
+    const B6: f64 = 11.0 / 84.0;
+    // 4th-order embedded weights.
+    const E1: f64 = 5179.0 / 57600.0;
+    const E3: f64 = 7571.0 / 16695.0;
+    const E4: f64 = 393.0 / 640.0;
+    const E5: f64 = -92097.0 / 339200.0;
+    const E6: f64 = 187.0 / 2100.0;
+    const E7: f64 = 1.0 / 40.0;
+
+    let span = (tf - t0).abs();
+    // Initial step heuristic; deterministic for fixed inputs.
+    let mut h = direction * (span / 100.0).max(span * 1e-6).max(1e-12);
+    let hmax = span / 10.0;
+
+    // Accumulated accepted points (natural-step mode) and FSAL stage.
+    let mut t = t0;
+    let mut y = y0.clone();
+    let mut f0 = eval_f(i, t, &y)?;
+
+    // Storage for output.
+    let mut t_out: Vec<f64> = Vec::new();
+    let mut y_out: Vec<f64> = Vec::new(); // row-major rows = time points
+    let mut req_idx = 0usize; // next requested-time index to emit (skip t0 handled below)
+
+    // Always record the initial point.
+    match &requested {
+        Some(rt) => {
+            // Emit requested times that coincide with t0 (typically the first).
+            while req_idx < rt.len() && (rt[req_idx] - t0).abs() <= 1e-12 * (1.0 + t0.abs()) {
+                t_out.push(rt[req_idx]);
+                y_out.extend_from_slice(&y);
+                req_idx += 1;
+            }
+            if t_out.is_empty() {
+                t_out.push(t0);
+                y_out.extend_from_slice(&y);
+            }
+        }
+        None => {
+            t_out.push(t0);
+            y_out.extend_from_slice(&y);
+        }
+    }
+
+    let still_going = |t: f64| direction * (tf - t) > 0.0;
+    let mut iter_guard = 0u64;
+    let max_iters = 2_000_000u64;
+
+    while still_going(t) {
+        iter_guard += 1;
+        if iter_guard > max_iters {
+            return Err(Signal::Error(InterpError::msg(
+                "ode45: too many steps (is the problem singular?)",
+            )));
+        }
+        // Clamp step magnitude.
+        if h.abs() > hmax {
+            h = direction * hmax;
+        }
+        // Don't step past tf.
+        if direction * (t + h - tf) > 0.0 {
+            h = tf - t;
+        }
+        if h == 0.0 {
+            break;
+        }
+
+        // Stages.
+        let k1 = f0.clone();
+        let k1 = &k1;
+        let mut ys = vec![0.0; n];
+        for j in 0..n {
+            ys[j] = y[j] + h * A21 * k1[j];
+        }
+        let k2 = eval_f(i, t + C2 * h, &ys)?;
+        for j in 0..n {
+            ys[j] = y[j] + h * (A31 * k1[j] + A32 * k2[j]);
+        }
+        let k3 = eval_f(i, t + C3 * h, &ys)?;
+        for j in 0..n {
+            ys[j] = y[j] + h * (A41 * k1[j] + A42 * k2[j] + A43 * k3[j]);
+        }
+        let k4 = eval_f(i, t + C4 * h, &ys)?;
+        for j in 0..n {
+            ys[j] = y[j] + h * (A51 * k1[j] + A52 * k2[j] + A53 * k3[j] + A54 * k4[j]);
+        }
+        let k5 = eval_f(i, t + C5 * h, &ys)?;
+        for j in 0..n {
+            ys[j] =
+                y[j] + h * (A61 * k1[j] + A62 * k2[j] + A63 * k3[j] + A64 * k4[j] + A65 * k5[j]);
+        }
+        let k6 = eval_f(i, t + h, &ys)?;
+        // 5th-order solution.
+        let mut ynew = vec![0.0; n];
+        for j in 0..n {
+            ynew[j] = y[j] + h * (B1 * k1[j] + B3 * k3[j] + B4 * k4[j] + B5 * k5[j] + B6 * k6[j]);
+        }
+        let k7 = eval_f(i, t + h, &ynew)?;
+
+        // Error estimate (difference of 5th- and 4th-order solutions).
+        let mut err_norm = 0.0_f64;
+        for j in 0..n {
+            let yerr = h
+                * ((B1 - E1) * k1[j]
+                    + (B3 - E3) * k3[j]
+                    + (B4 - E4) * k4[j]
+                    + (B5 - E5) * k5[j]
+                    + (B6 - E6) * k6[j]
+                    - E7 * k7[j]);
+            let sc = abstol + reltol * y[j].abs().max(ynew[j].abs());
+            let ratio = yerr / sc;
+            err_norm += ratio * ratio;
+        }
+        err_norm = (err_norm / n as f64).sqrt();
+
+        if err_norm <= 1.0 || h.abs() <= span * 1e-12 {
+            // Accept the step.
+            let t_prev = t;
+            let y_prev = y.clone();
+            t += h;
+            y = ynew.clone();
+            f0 = k7; // FSAL: last stage is f(t+h, ynew).
+
+            match &requested {
+                Some(rt) => {
+                    // Emit any requested times within (t_prev, t] via 4th-order
+                    // Hermite interpolation using the endpoint derivatives.
+                    while req_idx < rt.len()
+                        && direction * (t - rt[req_idx]) >= -1e-12 * (1.0 + t.abs())
+                        && direction * (rt[req_idx] - t_prev) > 0.0
+                    {
+                        let tr = rt[req_idx];
+                        let s = (tr - t_prev) / (t - t_prev);
+                        let yi = hermite(&y_prev, &y, k1, &f0, t - t_prev, s, n);
+                        t_out.push(tr);
+                        y_out.extend_from_slice(&yi);
+                        req_idx += 1;
+                    }
+                }
+                None => {
+                    t_out.push(t);
+                    y_out.extend_from_slice(&y);
+                }
+            }
+
+            // Step-size growth.
+            let factor = if err_norm == 0.0 {
+                5.0
+            } else {
+                (0.8 * err_norm.powf(-0.2)).clamp(0.2, 5.0)
+            };
+            h *= factor;
+        } else {
+            // Reject and shrink.
+            let factor = (0.8 * err_norm.powf(-0.2)).clamp(0.1, 1.0);
+            h *= factor;
+        }
+    }
+
+    let npts = t_out.len();
+    if nargout >= 2 {
+        // t as column vector, y as (npts × n) matrix.
+        let t_arr = build_real(DataClass::Double, &[npts, 1], t_out);
+        // y_out is row-major (npts rows, n cols); convert to column-major.
+        let mut col_major = vec![0.0; npts * n];
+        for r in 0..npts {
+            for c in 0..n {
+                col_major[c * npts + r] = y_out[r * n + c];
+            }
+        }
+        let y_arr = build_real(DataClass::Double, &[npts, n], col_major);
+        Ok(vec![t_arr, y_arr])
+    } else {
+        // SOL struct: x = row vector of times, y = states × times matrix.
+        let x_arr = build_real(DataClass::Double, &[1, npts], t_out);
+        // y field: (n states × npts times) matrix, column-major. Element
+        // (state c, time r) lives at index c + r*n; y_out is row-major
+        // (time r, state c) at r*n + c — the same layout here.
+        let mut col_major = vec![0.0; npts * n];
+        for r in 0..npts {
+            for c in 0..n {
+                col_major[r * n + c] = y_out[r * n + c];
+            }
+        }
+        let y_arr = build_real(DataClass::Double, &[n, npts], col_major);
+        let sol = fm_core::StructArray::scalar([
+            ("x".to_string(), x_arr),
+            ("y".to_string(), y_arr),
+            ("solver".to_string(), Array::char_string("ode45")),
+        ]);
+        Ok(vec![Array::struct_array(sol)])
+    }
+}
+
+/// Cubic Hermite interpolation between two solver points using the endpoint
+/// derivatives (`f_a`, `f_b`) over step `dt`, at normalized position `s` in
+/// `[0,1]`. Returns the interpolated state vector of length `n`.
+fn hermite(
+    ya: &[f64],
+    yb: &[f64],
+    f_a: &[f64],
+    f_b: &[f64],
+    dt: f64,
+    s: f64,
+    n: usize,
+) -> Vec<f64> {
+    let s2 = s * s;
+    let s3 = s2 * s;
+    let h00 = 2.0 * s3 - 3.0 * s2 + 1.0;
+    let h10 = s3 - 2.0 * s2 + s;
+    let h01 = -2.0 * s3 + 3.0 * s2;
+    let h11 = s3 - s2;
+    let mut out = vec![0.0; n];
+    for j in 0..n {
+        out[j] = h00 * ya[j] + h10 * dt * f_a[j] + h01 * yb[j] + h11 * dt * f_b[j];
+    }
+    out
 }
 
 /// `func2str(h)` — the source text of a handle: `name` for `@name`, `@(x) expr`
