@@ -291,3 +291,128 @@ fn imwrite_imread_grayscale_bmp_roundtrip() {
     assert_eq!(b.dims(), vec![rows, cols]);
     assert_eq!(to_f64_vec(b), vals);
 }
+
+// ---- path / separator builtins ------------------------------------------
+
+mod path_builtins {
+    use fm_core::Array;
+    use fm_interp::Interpreter;
+    use fm_parser::Span;
+
+    /// A fresh interpreter with the `fm-io` builtins registered.
+    fn interp() -> Interpreter {
+        let mut i = Interpreter::new();
+        crate::register_io(&mut i);
+        i
+    }
+
+    /// Call a builtin by name and return its first output as a string.
+    fn call_str(i: &mut Interpreter, name: &str, args: &[Array]) -> String {
+        let out = i
+            .call_function(name, args, 1, "", Span::empty(0))
+            .expect("call ok");
+        out.first().and_then(Array::as_string).unwrap_or_default()
+    }
+
+    #[test]
+    fn separators_are_single_chars() {
+        let mut i = interp();
+        let fs = call_str(&mut i, "filesep", &[]);
+        assert_eq!(fs, std::path::MAIN_SEPARATOR.to_string());
+        // dirsep is the directory-separator alias of filesep.
+        assert_eq!(call_str(&mut i, "dirsep", &[]), fs);
+        let ps = call_str(&mut i, "pathsep", &[]);
+        assert_eq!(ps, if cfg!(windows) { ";" } else { ":" });
+    }
+
+    #[test]
+    fn addpath_then_getpath_reflects_dir() {
+        let mut i = interp();
+        assert_eq!(call_str(&mut i, "getpath", &[]), "");
+        i.call_function(
+            "addpath",
+            &[Array::char_string("/tmp/foo")],
+            0,
+            "",
+            Span::empty(0),
+        )
+        .expect("addpath ok");
+        let p = call_str(&mut i, "getpath", &[]);
+        assert_eq!(p, "/tmp/foo");
+        assert_eq!(call_str(&mut i, "path", &[]), "/tmp/foo");
+
+        // Prepend keeps the new dir first; append (-end) puts it last.
+        i.call_function(
+            "addpath",
+            &[Array::char_string("/tmp/bar")],
+            0,
+            "",
+            Span::empty(0),
+        )
+        .expect("addpath ok");
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        assert_eq!(
+            call_str(&mut i, "getpath", &[]),
+            format!("/tmp/bar{sep}/tmp/foo")
+        );
+
+        i.call_function(
+            "addpath",
+            &[Array::char_string("/tmp/baz"), Array::char_string("-end")],
+            0,
+            "",
+            Span::empty(0),
+        )
+        .expect("addpath ok");
+        assert_eq!(
+            call_str(&mut i, "getpath", &[]),
+            format!("/tmp/bar{sep}/tmp/foo{sep}/tmp/baz")
+        );
+    }
+
+    #[test]
+    fn setpath_replaces_and_path_with_two_args_concats() {
+        let mut i = interp();
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        i.call_function(
+            "setpath",
+            &[Array::char_string(&format!("/a{sep}/b"))],
+            0,
+            "",
+            Span::empty(0),
+        )
+        .expect("setpath ok");
+        assert_eq!(call_str(&mut i, "getpath", &[]), format!("/a{sep}/b"));
+
+        // path(p1, p2) concatenates the two.
+        i.call_function(
+            "path",
+            &[Array::char_string("/x"), Array::char_string("/y")],
+            0,
+            "",
+            Span::empty(0),
+        )
+        .expect("path ok");
+        assert_eq!(call_str(&mut i, "getpath", &[]), format!("/x{sep}/y"));
+    }
+
+    #[test]
+    fn rehash_rescan_pathtool_run_clean() {
+        let mut i = interp();
+        for name in ["rehash", "rescan", "pathtool"] {
+            i.call_function(name, &[], 0, "", Span::empty(0))
+                .unwrap_or_else(|_| panic!("{name} ok"));
+        }
+    }
+
+    #[test]
+    fn what_returns_struct_without_error() {
+        let mut i = interp();
+        let out = i
+            .call_function("what", &[], 1, "", Span::empty(0))
+            .expect("what ok");
+        let s = &out[0];
+        assert_eq!(s.class_name(), "struct");
+        assert_eq!(s.dims(), vec![1, 1]);
+    }
+}

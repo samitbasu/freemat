@@ -61,6 +61,9 @@ pub struct Interpreter {
     /// scripts have no own scope: invoking a script's name runs its statements in
     /// the *caller's* workspace (assignments land in the current scope).
     scripts: std::collections::HashMap<String, Arc<Script>>,
+    /// The FreeMat search path: an ordered list of directories searched for
+    /// `.m` files. Manipulated by `path`/`addpath`/`getpath`/`setpath`.
+    pub search_path: Vec<String>,
 }
 
 /// A `.m` script file: its parsed statements plus the source they were parsed
@@ -95,6 +98,7 @@ impl Interpreter {
             graphics: GraphicsState::default(),
             local_funcs_stack: Vec::new(),
             scripts: std::collections::HashMap::new(),
+            search_path: Vec::new(),
         };
         crate::builtins::register_defaults(&mut interp.functions);
         interp

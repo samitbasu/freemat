@@ -44,6 +44,18 @@ pub fn register(table: &mut FunctionTable) {
     table.add_builtin("ls", b_ls);
     table.add_builtin("which", b_which);
     table.add_builtin("type", b_type);
+    // Path / separator builtins.
+    table.add_builtin("filesep", b_filesep);
+    table.add_builtin("dirsep", b_filesep);
+    table.add_builtin("pathsep", b_pathsep);
+    table.add_builtin("path", b_path);
+    table.add_builtin("addpath", b_addpath);
+    table.add_builtin("getpath", b_getpath);
+    table.add_builtin("setpath", b_setpath);
+    table.add_builtin("rehash", b_rehash);
+    table.add_builtin("rescan", b_rehash);
+    table.add_builtin("pathtool", b_pathtool);
+    table.add_builtin("what", b_what);
     // FFT.
     table.add_builtin("fft", |_i, a, _n| fft::fft1(a, false));
     table.add_builtin("ifft", |_i, a, _n| fft::fft1(a, true));
@@ -686,4 +698,176 @@ fn b_exist(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
         0.0
     };
     Ok(vec![Array::double(code)])
+}
+
+// ---- path / separators ---------------------------------------------------
+
+/// The OS path-list separator (`;` on Windows, `:` elsewhere).
+fn path_list_sep() -> char {
+    if cfg!(windows) { ';' } else { ':' }
+}
+
+/// `filesep` / `dirsep` — the directory separator character for this platform
+/// (`/` on unix, `\` on Windows).
+fn b_filesep(_i: &mut Interpreter, _args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    Ok(vec![Array::char_string(std::path::MAIN_SEPARATOR_STR)])
+}
+
+/// `pathsep` — the search-path list separator (`;` on Windows, `:` elsewhere).
+fn b_pathsep(_i: &mut Interpreter, _args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    Ok(vec![Array::char_string(&path_list_sep().to_string())])
+}
+
+/// Join the interpreter's search path into a single `pathsep`-delimited string.
+fn path_string(i: &Interpreter) -> String {
+    let sep = path_list_sep().to_string();
+    i.search_path.join(&sep)
+}
+
+/// Replace the interpreter's search path from a `pathsep`-delimited string.
+fn set_path_string(i: &mut Interpreter, s: &str) {
+    let sep = path_list_sep();
+    i.search_path = s
+        .split(sep)
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+        .collect();
+}
+
+/// `getpath` — the current FreeMat search path as a `pathsep`-delimited string.
+fn b_getpath(i: &mut Interpreter, _args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    Ok(vec![Array::char_string(&path_string(i))])
+}
+
+/// `setpath(y)` — set the search path from a `pathsep`-delimited string.
+fn b_setpath(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let s = args.first().and_then(Array::as_string).unwrap_or_default();
+    set_path_string(i, &s);
+    Ok(vec![])
+}
+
+/// `path` — with no args (and no output) prints the search path one entry per
+/// line; with an output returns it as a string; `path(p)` sets it; `path(p1,p2)`
+/// concatenates `p1` and `p2` (FreeMat's `path.m`).
+fn b_path(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() && nargout == 0 {
+        let p = path_string(i);
+        if p.is_empty() {
+            i.emit("\n");
+        } else {
+            for entry in p.split(path_list_sep()) {
+                i.emit(entry);
+                i.emit("\n");
+            }
+        }
+        return Ok(vec![]);
+    }
+    let out = if nargout >= 1 {
+        vec![Array::char_string(&path_string(i))]
+    } else {
+        vec![]
+    };
+    match args.len() {
+        1 => {
+            let s = args[0].as_string().unwrap_or_default();
+            set_path_string(i, &s);
+        }
+        n if n >= 2 => {
+            let a = args[0].as_string().unwrap_or_default();
+            let b = args[1].as_string().unwrap_or_default();
+            set_path_string(i, &format!("{a}{}{b}", path_list_sep()));
+        }
+        _ => {}
+    }
+    Ok(out)
+}
+
+/// `addpath(d1, d2, ..., [-begin|-end|-0|-1])` — add directories to the search
+/// path, prepending by default or appending with `-end`/`-1` (FreeMat's
+/// `addpath.m`).
+fn b_addpath(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut dirs: Vec<String> = args.iter().filter_map(Array::as_string).collect();
+    let mut at_begin = true;
+    if let Some(last) = dirs.last() {
+        match last.as_str() {
+            "-0" | "-begin" => {
+                dirs.pop();
+            }
+            "-1" | "-end" => {
+                at_begin = false;
+                dirs.pop();
+            }
+            _ => {}
+        }
+    }
+    if at_begin {
+        // Prepend, preserving the given order ahead of the existing path.
+        for d in dirs.into_iter().rev() {
+            i.search_path.insert(0, d);
+        }
+    } else {
+        i.search_path.extend(dirs);
+    }
+    Ok(vec![])
+}
+
+/// `rehash` / `rescan` — refresh the function cache. FreeMat re-`cd`s to the
+/// current directory; here the interpreter loads `.m` files on demand, so this
+/// is a clean no-op that returns successfully.
+fn b_rehash(_i: &mut Interpreter, _args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    Ok(vec![])
+}
+
+/// `pathtool` — opens a GUI path editor in FreeMat; in this port there is no
+/// GUI, so it is a clean no-op.
+fn b_pathtool(_i: &mut Interpreter, _args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    Ok(vec![])
+}
+
+/// `what [path]` — list the FreeMat-relevant files (`.m` and `.mat`) in a
+/// directory (the current directory if none given). Returns a 1x1 struct with
+/// `path`, `m`, and `mat` fields (a useful subset of MATLAB's `what`).
+fn b_what(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let dir = args
+        .first()
+        .and_then(Array::as_string)
+        .unwrap_or_else(|| ".".to_string());
+    let abs = std::fs::canonicalize(&dir)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| dir.clone());
+    let mut m_files: Vec<String> = Vec::new();
+    let mut mat_files: Vec<String> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let lower = name.to_lowercase();
+            if lower.ends_with(".m") {
+                m_files.push(name);
+            } else if lower.ends_with(".mat") {
+                mat_files.push(name);
+            }
+        }
+    }
+    m_files.sort();
+    mat_files.sort();
+    let m_cell = Array::cell(
+        &[m_files.len(), 1],
+        m_files.iter().map(|s| Array::char_string(s)).collect(),
+    );
+    let mat_cell = Array::cell(
+        &[mat_files.len(), 1],
+        mat_files.iter().map(|s| Array::char_string(s)).collect(),
+    );
+    let fields = vec![
+        ("path".to_string(), vec![Array::char_string(&abs)]),
+        ("m".to_string(), vec![m_cell]),
+        ("mat".to_string(), vec![mat_cell]),
+    ];
+    Ok(vec![Array::struct_array(StructArray::from_fields(
+        vec![1, 1],
+        fields,
+    ))])
 }
