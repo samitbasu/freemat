@@ -549,7 +549,7 @@ to control the parameters of the generated text labels.  See the
 
 ## Example
 
-```fm
+```fm-exec:figure
 [x,y] = meshgrid(linspace(-1,1,50));
 z = x.*exp(-(x.^2+y.^2));
 h = contour(z);
@@ -559,7 +559,7 @@ clabel(h,'backgroundcolor',[1,1,.6],'edgecolor',[.7,.7,.7]);
 which results in
 Alternately, we can just label a subset of the contours
 
-```fm
+```fm-exec:figure
 h = contour(z);
 clabel(h,[-.2,0,.3]);
 ```
@@ -2505,7 +2505,7 @@ property to test for.
 ## Example
 Here we test for some properties on an `axes` object.
 
-```fm
+```fm-exec
 pvalid('axes','type')
 pvalid('axes','children')
 pvalid('axes','foobar')
@@ -2663,7 +2663,7 @@ subplot explicitly using the syntax
 ## Example
 Here is the use of `subplot` to set up a `2 x 2` grid of plots
 
-```fm
+```fm-exec:figure
 t = linspace(-pi,pi);
 subplot(2,2,1)
 plot(t,cos(t).*exp(-2*t));
@@ -2678,7 +2678,7 @@ plot(t,cos(t*4).*exp(-2*t));
 Here we use the second form of `subplot` to generate one subplot
 that is twice as large.
 
-```fm
+```fm-exec:figure
 t = linspace(-pi,pi);
 subplot(2,2,[1,2])
 plot(t,cos(t).*exp(-2*t));
@@ -2691,7 +2691,7 @@ plot(t,cos(t*4).*exp(-2*t));
 Note that the subplots can contain any handle graphics objects,
 not only simple plots.
 
-```fm
+```fm-exec:figure
 t=0:(2*pi/100):(2*pi);
 x=cos(t*2).*(2+sin(t*3)*.3);
 y=sin(t*2).*(2+sin(t*3)*.3);
@@ -3148,7 +3148,7 @@ that it is always far from the tangent vector the frame will not twist unduly.
 ## Example
 Here is an example of a `tubeplot`.
 
-```fm
+```fm-exec:figure
 t=0:(2*pi/100):(2*pi);
 x=cos(t*2).*(2+sin(t*3)*.3);
 y=sin(t*2).*(2+sin(t*3)*.3);
@@ -3442,7 +3442,7 @@ The window level function is fairly easy to demonstrate.  Consider
 the following image, which is a Gaussian pulse image that is very
 narrow:
 
-```fm
+```fm-exec:figure
 t = linspace(-1,1,256);
 xmat = ones(256,1)*t; ymat = xmat';
 A = exp(-(xmat.^2 + ymat.^2)*100);
@@ -3451,7 +3451,7 @@ image(A);
 
 The data range of `A` is `[0,1]`, as we can verify numerically:
 
-```fm
+```fm-exec
 min(A(:))
 max(A(:))
 ```
@@ -3459,7 +3459,7 @@ max(A(:))
 To see the tail behavior, we use the `winlev` command to force FreeMat
 to map a smaller range of `A` to the colormap.
 
-```fm
+```fm-exec:figure
 image(A);
 winlev(1e-4,0.5e-4)
 ```
@@ -3468,7 +3468,7 @@ The result is a look at more of the tail behavior of `A`.
 We can also use the winlev function to find out what the
 window and level are once set, as in the following example.
 
-```fm
+```fm-exec
 image(A);
 winlev(1e-4,0.5e-4)
 winlev

@@ -80,6 +80,10 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("polar", b_polar);
     table.add_builtin("quiver", b_quiver);
     table.add_builtin("text", b_text);
+    table.add_builtin("tubeplot", b_tubeplot);
+    table.add_builtin("clabel", b_clabel);
+    table.add_builtin("winlev", b_winlev);
+    table.add_builtin("pvalid", b_pvalid);
     // Named-colormap generator functions: `gray`, `copper`, `jet`, … each return
     // an `N×3` RGB matrix (default 64 rows) usable as `colormap(jet)` etc.
     table.add_builtin("gray", |_i, a, _n| colormap_fn("gray", a));
@@ -520,13 +524,26 @@ fn read_property(i: &Interpreter, h: u64, prop: &str) -> Array {
                 }
             }
             ObjLocation::Series { fig, axes, series } => {
-                if let Some(Series::Line(line)) = i
+                let ser = i
                     .graphics
                     .scene
                     .figure(fig)
                     .and_then(|f| f.axes.get(axes))
-                    .and_then(|a| a.series.get(series))
-                {
+                    .and_then(|a| a.series.get(series));
+                if let Some(Series::Contour(c)) = ser {
+                    match prop_l.as_str() {
+                        "type" => return Array::char_string("contour"),
+                        "levellist" => {
+                            return build_real(
+                                DataClass::Double,
+                                &[1, c.levels.len()],
+                                c.levels.clone(),
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(Series::Line(line)) = ser {
                     match prop_l.as_str() {
                         "type" => return Array::char_string("line"),
                         "color" | "linecolor" => return Array::char_string(&line.color),
@@ -737,6 +754,7 @@ fn contour(i: &mut Interpreter, args: &[Array], filled: bool) -> Flow<Vec<Array>
             levels,
             colormap: cmap,
             filled,
+            labels: false,
         }));
     let h = i.graphics.register_series(fig, axes_idx, ObjKind::Contour);
     i.graphics.dirty = true;
@@ -1164,6 +1182,8 @@ fn surface(i: &mut Interpreter, args: &[Array], wireframe: bool) -> Flow<Vec<Arr
             z,
             x,
             y,
+            xmat: Vec::new(),
+            ymat: Vec::new(),
             colormap: cmap,
             wireframe,
         }));
@@ -2155,4 +2175,333 @@ fn log_plot(
     }
     i.graphics.dirty = true;
     Ok(r)
+}
+
+// ---- tubeplot / clabel / winlev / pvalid ------------------------------------
+
+/// Compute a Frenet-like frame `(t, n, b)` for a polygonal space curve, matching
+/// FreeMat's `toolbox/graph/tubeplot.m` `frenet` subfunction. Each output is an
+/// `N x 3` set of unit row vectors (tangent, normal, binormal). Degenerate
+/// segments reuse the previous frame; a zero-length normalization falls back to
+/// a safe unit vector so the result stays finite (and the figure JSON stable).
+type Frame = Vec<[f64; 3]>;
+
+fn frenet(x: &[f64], y: &[f64], z: &[f64]) -> (Frame, Frame, Frame) {
+    let n = x.len();
+    let mut t = vec![[0.0; 3]; n];
+    let mut nn = vec![[0.0; 3]; n];
+    let mut b = vec![[0.0; 3]; n];
+    if n == 0 {
+        return (t, nn, b);
+    }
+    let p = |k: usize| [x[k], y[k], z[k]];
+    let sub = |a: [f64; 3], c: [f64; 3]| [a[0] - c[0], a[1] - c[1], a[2] - c[2]];
+    let norm = |v: [f64; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    let normalize = |v: [f64; 3], fallback: [f64; 3]| {
+        let l = norm(v);
+        if l > 0.0 {
+            [v[0] / l, v[1] / l, v[2] / l]
+        } else {
+            fallback
+        }
+    };
+    let cross = |a: [f64; 3], c: [f64; 3]| {
+        [
+            a[1] * c[2] - a[2] * c[1],
+            a[2] * c[0] - a[0] * c[2],
+            a[0] * c[1] - a[1] * c[0],
+        ]
+    };
+    // Tangents.
+    for k in 1..n.saturating_sub(1) {
+        let raw = sub(p(k + 1), p(k - 1));
+        t[k] = if norm(raw) > 0.0 {
+            normalize(raw, t[k - 1])
+        } else {
+            t[k - 1]
+        };
+    }
+    if n >= 2 {
+        t[0] = normalize(sub(p(1), p(0)), [1.0, 0.0, 0.0]);
+        t[n - 1] = normalize(sub(p(n - 1), p(n - 2)), t[n - 2]);
+    } else {
+        t[0] = [1.0, 0.0, 0.0];
+    }
+    // Normals (derivative of the tangent).
+    for k in 1..n.saturating_sub(1) {
+        let raw = sub(t[k + 1], t[k - 1]);
+        nn[k] = if norm(raw) > 0.0 {
+            normalize(raw, nn[k - 1])
+        } else {
+            nn[k - 1]
+        };
+    }
+    if n >= 2 {
+        nn[0] = normalize(sub(t[1], t[0]), [0.0, 1.0, 0.0]);
+        nn[n - 1] = normalize(sub(t[n - 1], t[n - 2]), nn[n - 2]);
+    } else {
+        nn[0] = [0.0, 1.0, 0.0];
+    }
+    // If a normal collapsed to zero (straight curve), pick any vector not
+    // parallel to the tangent so the binormal stays well-defined and finite.
+    for k in 0..n {
+        if norm(nn[k]) == 0.0 {
+            let trial = if t[k][0].abs() < 0.9 {
+                [1.0, 0.0, 0.0]
+            } else {
+                [0.0, 1.0, 0.0]
+            };
+            nn[k] = normalize(cross(t[k], trial), [0.0, 1.0, 0.0]);
+        }
+    }
+    // Binormals.
+    for k in 0..n {
+        b[k] = normalize(cross(t[k], nn[k]), [0.0, 0.0, 1.0]);
+    }
+    (t, nn, b)
+}
+
+/// `tubeplot(x, y, z)` / `tubeplot(x, y, z, r)` / `tubeplot(x, y, z, r, v)` /
+/// `tubeplot(x, y, z, r, v, s)` — sweep a circle of radius `r` around the space
+/// curve `(x, y, z)` using a Frenet frame, producing a 3-D tube surface.
+///
+/// Faithful port of `toolbox/graph/tubeplot.m`: with no output arguments it
+/// draws the tube as a parametric `surf`; with outputs it returns the `N x S`
+/// `X`/`Y`/`Z` mesh matrices.
+fn b_tubeplot(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
+    if args.len() < 3 {
+        return err("tubeplot: expected tubeplot(x, y, z, ...)");
+    }
+    let x = to_f64_vec(&args[0]);
+    let y = to_f64_vec(&args[1]);
+    let z = to_f64_vec(&args[2]);
+    let n = x.len();
+    if n == 0 || y.len() != n || z.len() != n {
+        return err("tubeplot: x, y and z must be vectors of the same length");
+    }
+    // Radius: scalar → constant, vector → per-vertex (default 1).
+    let radius: Vec<f64> = match args.get(3) {
+        None => vec![1.0; n],
+        Some(a) => {
+            let r = to_f64_vec(a);
+            if r.len() == 1 {
+                vec![r[0]; n]
+            } else if r.len() == n {
+                r
+            } else {
+                return err("tubeplot: radius must be a scalar or match the curve length");
+            }
+        }
+    };
+    // Tangential subdivisions: tubeplot(x,y,z,r,v,s) → s+1 points around (default 6).
+    let subdivs: usize = match args.get(5).and_then(Array::as_f64) {
+        Some(s) => (s.round().max(1.0) as usize) + 1,
+        None => 6,
+    };
+    // Optional per-vertex color vector v (arg index 4).
+    let color_vec: Option<Vec<f64>> = args.get(4).map(to_f64_vec).filter(|v| !v.is_empty());
+
+    let (_t, nrm, bnm) = frenet(&x, &y, &z);
+
+    // theta = 0 : 2*pi/(subdivs-1) : 2*pi  → `subdivs` angles.
+    let two_pi = std::f64::consts::TAU;
+    let denom = (subdivs.max(2) - 1) as f64;
+    let theta: Vec<f64> = (0..subdivs).map(|k| two_pi * k as f64 / denom).collect();
+
+    // Build the N x subdivs mesh (row = vertex along curve, col = around tube).
+    let mut xmat = vec![vec![0.0; subdivs]; n];
+    let mut ymat = vec![vec![0.0; subdivs]; n];
+    let mut zmat = vec![vec![0.0; subdivs]; n];
+    for r in 0..n {
+        for (c, &th) in theta.iter().enumerate() {
+            let (ct, st) = (th.cos(), th.sin());
+            xmat[r][c] = x[r] + radius[r] * (nrm[r][0] * ct + bnm[r][0] * st);
+            ymat[r][c] = y[r] + radius[r] * (nrm[r][1] * ct + bnm[r][1] * st);
+            zmat[r][c] = z[r] + radius[r] * (nrm[r][2] * ct + bnm[r][2] * st);
+        }
+    }
+
+    if nargout > 0 {
+        // Return the X/Y/Z mesh matrices (column-major Array, N x subdivs).
+        let to_array = |m: &Vec<Vec<f64>>| {
+            let mut col_major = Vec::with_capacity(n * subdivs);
+            for c in 0..subdivs {
+                for row in m.iter() {
+                    col_major.push(row[c]);
+                }
+            }
+            build_real(DataClass::Double, &[n, subdivs], col_major)
+        };
+        return Ok(vec![to_array(&xmat), to_array(&ymat), to_array(&zmat)]);
+    }
+
+    // Draw as a parametric surface. If a color vector v was given, the surface
+    // colors come from v replicated across the tube; otherwise color by height.
+    clear_current_series_unless_hold(i);
+    let cmap = current_colormap(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    let cmat = match color_vec {
+        Some(v) if v.len() == n => (0..n).map(|r| vec![v[r]; subdivs]).collect(),
+        _ => zmat.clone(),
+    };
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    ax.series.push(Series::Surface(SurfaceSeries {
+        z: cmat,
+        x: Vec::new(),
+        y: Vec::new(),
+        xmat,
+        ymat,
+        colormap: cmap,
+        wireframe: false,
+    }));
+    // A tube is inherently 3-D: give it a default 3-D view if none is set yet.
+    if ax.view.is_none() {
+        ax.view = Some([-37.5, 30.0]);
+    }
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Surface);
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+/// `clabel(contourhandle, ...)` — add inline level labels to a contour plot.
+///
+/// Faithful-enough port of `toolbox/graph/clabel.m`: the first argument must be
+/// the handle of a `contour` object; remaining args (a value subset and/or
+/// text property/value pairs) are accepted. We flag the target contour series so
+/// the renderer draws its labels. Returns an empty handle list.
+fn b_clabel(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let Some(h) = args.first().and_then(Array::as_f64).map(|v| v as u64) else {
+        return err("clabel: expected a contour handle");
+    };
+    let loc = i.graphics.resolve(h);
+    match loc.and_then(|l| i.graphics.series_at_mut(l)) {
+        Some(Series::Contour(c)) => {
+            c.labels = true;
+        }
+        _ => {
+            return err("First argument to clabel must be the handle of a contour.");
+        }
+    }
+    i.graphics.dirty = true;
+    Ok(vec![build_real(DataClass::Double, &[0, 0], Vec::new())])
+}
+
+/// `winlev(window, level)` / `winlev` — window/level control for the current
+/// image, i.e. the data range mapped onto the colormap (a `clim` variant).
+///
+/// Port of `toolbox/graph/winlev.m`: with two arguments it sets the current
+/// axes' color limits to `[level - window/2, level + window/2]`; with none it
+/// returns `[window, level]` derived from the current limits.
+fn b_winlev(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    if args.len() >= 2 {
+        let window = args[0].as_f64().unwrap_or(0.0);
+        let level = args[1].as_f64().unwrap_or(0.0);
+        ax.clim = Some([level - window / 2.0, level + window / 2.0]);
+        i.graphics.dirty = true;
+        return Ok(vec![]);
+    }
+    // Query form: derive window/level from the current color limits.
+    let [lo, hi] = ax.clim.unwrap_or([0.0, 1.0]);
+    let win = hi - lo;
+    let lev = (hi + lo) / 2.0;
+    Ok(vec![build_real(DataClass::Double, &[1, 2], vec![win, lev])])
+}
+
+/// `pvalid(type, propertyname)` — true if `propertyname` is a valid property of
+/// the given graphics object `type`. Mirrors FreeMat's `pvalid` helper: we test
+/// the property name against the known property set for each object type, plus
+/// the universal properties common to every handle.
+fn b_pvalid(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let Some(ty) = str_arg(args, 0) else {
+        return err("pvalid: expected pvalid(type, propertyname)");
+    };
+    let Some(prop) = str_arg(args, 1) else {
+        return err("pvalid: expected pvalid(type, propertyname)");
+    };
+    let ty = ty.to_ascii_lowercase();
+    let prop = prop.to_ascii_lowercase();
+    // Properties shared by every handle graphics object.
+    const COMMON: &[&str] = &[
+        "type",
+        "parent",
+        "children",
+        "tag",
+        "userdata",
+        "visible",
+        "handlevisibility",
+        "selected",
+    ];
+    let specific: &[&str] = match ty.as_str() {
+        "figure" => &[
+            "color",
+            "colormap",
+            "name",
+            "number",
+            "position",
+            "nextplot",
+            "currentaxes",
+            "menubar",
+            "resize",
+        ],
+        "axes" => &[
+            "title",
+            "xlabel",
+            "ylabel",
+            "zlabel",
+            "xlim",
+            "ylim",
+            "zlim",
+            "clim",
+            "xscale",
+            "yscale",
+            "zscale",
+            "grid",
+            "view",
+            "position",
+            "outerposition",
+            "nextplot",
+            "color",
+            "box",
+        ],
+        "line" => &[
+            "color",
+            "linestyle",
+            "linewidth",
+            "marker",
+            "markersize",
+            "xdata",
+            "ydata",
+            "zdata",
+            "displayname",
+        ],
+        "surface" => &["xdata", "ydata", "zdata", "cdata", "facecolor", "edgecolor"],
+        "image" => &["cdata", "xdata", "ydata", "cdatamapping"],
+        "contour" => &[
+            "contourmatrix",
+            "levellist",
+            "linecolor",
+            "linestyle",
+            "fill",
+            "xdata",
+            "ydata",
+            "zdata",
+        ],
+        "text" => &[
+            "string",
+            "position",
+            "rotation",
+            "color",
+            "fontsize",
+            "fontname",
+            "fontweight",
+            "horizontalalignment",
+            "verticalalignment",
+            "backgroundcolor",
+            "edgecolor",
+        ],
+        _ => &[],
+    };
+    let valid = COMMON.contains(&prop.as_str()) || specific.contains(&prop.as_str());
+    Ok(vec![Array::Scalar(fm_core::ScalarValue::Bool(valid))])
 }

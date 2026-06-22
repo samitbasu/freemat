@@ -72,8 +72,8 @@
       function surfaceToTrace(s) {
         return {
           type: "surface", z: s.z,
-          x: s.x && s.x.length ? s.x : undefined,
-          y: s.y && s.y.length ? s.y : undefined,
+          x: (s.xmat && s.xmat.length) ? s.xmat : (s.x && s.x.length ? s.x : undefined),
+          y: (s.ymat && s.ymat.length) ? s.ymat : (s.y && s.y.length ? s.y : undefined),
           colorscale: colorScale(s.colormap),
         };
       }
@@ -100,6 +100,7 @@
         };
         if (s.filled) t.contours = Object.assign(t.contours || {}, { coloring: "fill" });
         else t.contours = Object.assign(t.contours || {}, { coloring: "lines" });
+        if (s.labels) t.contours = Object.assign(t.contours || {}, { showlabels: true });
         if (s.levels && s.levels.length) {
           const lo = Math.min.apply(null, s.levels);
           const hi = Math.max.apply(null, s.levels);

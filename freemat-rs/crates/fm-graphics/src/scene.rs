@@ -357,6 +357,14 @@ pub struct SurfaceSeries {
     /// Optional y coordinates (length = number of rows).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub y: Vec<f64>,
+    /// Optional full 2-D X grid (`xmat[row][col]`) for parametric surfaces such
+    /// as `tubeplot`, where each vertex has independent x/y/z coordinates and a
+    /// 1-D `x`/`y` vector cannot describe the mesh. Empty = use `x`/`y` instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub xmat: Vec<Vec<f64>>,
+    /// Optional full 2-D Y grid (`ymat[row][col]`) for parametric surfaces.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ymat: Vec<Vec<f64>>,
     /// Colormap name (Plotly colorscale, e.g. `Viridis`, `Jet`).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub colormap: String,
@@ -385,6 +393,9 @@ pub struct ContourSeries {
     /// `true` = filled contour (`contourf`) → Plotly `contours.coloring:"fill"`.
     #[serde(default, skip_serializing_if = "is_false")]
     pub filled: bool,
+    /// `true` = draw inline level labels on the contour lines (`clabel`).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub labels: bool,
 }
 
 /// A 2-D pseudocolor plot (`pcolor`): a value grid plus optional x/y vectors,
