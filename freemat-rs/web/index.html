@@ -440,6 +440,20 @@
         });
       }
 
+      // Render a figure to image bytes for `print`/`copy` and reply over the ws.
+      function handleCapture(ws, msg) {
+        const gd = document.getElementById("plot-" + msg.figure);
+        if (!gd) { ws.send(JSON.stringify({type:"image", reqid:msg.reqid, error:"no such figure " + msg.figure})); return; }
+        const fmt = (msg.format || "png").toLowerCase();
+        Plotly.toImage(gd, { format: fmt })
+          .then((dataUrl) => {
+            const i = dataUrl.indexOf("base64,");
+            const data = i >= 0 ? dataUrl.slice(i + 7) : dataUrl; // raster formats are base64 data URLs
+            ws.send(JSON.stringify({ type:"image", reqid: msg.reqid, data }));
+          })
+          .catch((e) => ws.send(JSON.stringify({ type:"image", reqid: msg.reqid, error: String(e) })));
+      }
+
       function connect() {
         const proto = location.protocol === "https:" ? "wss" : "ws";
         const ws = new WebSocket(proto + "://" + location.host + "/ws");
@@ -450,6 +464,7 @@
           try {
             const msg = JSON.parse(ev.data);
             if (msg.type === "scene") renderScene(msg.scene);
+            else if (msg.type === "capture") handleCapture(ws, msg);
           } catch (e) { console.error("bad scene message", e); }
         };
       }

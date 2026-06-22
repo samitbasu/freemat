@@ -62,6 +62,30 @@ pub enum WireMessage<'a> {
         /// The scene to render.
         scene: &'a Scene,
     },
+    /// A request that the browser render a figure to image bytes and reply with
+    /// an `{"type":"image",...}` frame carrying the same `reqid` (the `print`
+    /// round-trip). Owned, so it is `'static`-friendly for the server's blocking
+    /// request path.
+    Capture {
+        /// Correlation id matching the eventual `image` reply.
+        reqid: u64,
+        /// The figure id to render.
+        figure: u64,
+        /// Image format (`png`/`jpeg`/`webp`/`svg`).
+        format: String,
+    },
+}
+
+/// Serialize a `capture` request frame (`{"type":"capture",reqid,figure,format}`).
+///
+/// # Errors
+/// Propagates any `serde_json` serialization error (should not happen).
+pub fn capture_message(reqid: u64, figure: u64, format: &str) -> Result<String, serde_json::Error> {
+    serde_json::to_string(&WireMessage::Capture {
+        reqid,
+        figure,
+        format: format.to_string(),
+    })
 }
 
 /// A figure window: an ordered stack of axes plus a title/visibility.

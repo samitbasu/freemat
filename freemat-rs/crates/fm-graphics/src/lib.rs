@@ -19,7 +19,7 @@ pub use scene::{
     AreaSeries, Axes, AxisLimits, BarSeries, ContourSeries, ErrorbarSeries, Figure, FillSeries,
     ImageSeries, Legend, Line3dSeries, LineSeries, PcolorSeries, PieSeries, PolarSeries,
     QuiverSeries, Scale, Scene, Series, StairsSeries, StemSeries, SurfaceSeries, TextLabel,
-    WireMessage, default_color,
+    WireMessage, capture_message, default_color,
 };
 
 /// A consumer the interpreter pushes scene snapshots to (e.g. the webserver,
@@ -37,6 +37,17 @@ pub trait GraphicsSink: Send + Sync {
     /// `{base}/help/<name>` page URL. The default returns `None` so non-server
     /// sinks (library/conformance test stubs) need no change.
     fn base_url(&self) -> Option<String> {
+        None
+    }
+
+    /// Render a figure to image bytes of `format` (png/jpeg/svg). Returns None if
+    /// this sink can't render images at all (no server); Some(Err) if it can but
+    /// failed (no browser connected / timeout); Some(Ok(bytes)) on success.
+    ///
+    /// The default returns `None` so non-server sinks (library/conformance test
+    /// stubs) need no change. The signature is std-only on purpose — no tokio
+    /// leaks into this crate; the server implementation blocks on a std channel.
+    fn render_image(&self, _figure: u64, _format: &str) -> Option<Result<Vec<u8>, String>> {
         None
     }
 }

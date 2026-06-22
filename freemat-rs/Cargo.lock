@@ -661,6 +661,7 @@ name = "fm-cli"
 version = "0.0.0"
 dependencies = [
  "axum",
+ "base64",
  "fm-builtins",
  "fm-core",
  "fm-doc",

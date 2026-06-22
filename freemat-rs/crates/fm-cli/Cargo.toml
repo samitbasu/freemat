@@ -33,6 +33,9 @@ serde_json.workspace = true
 # P4 browser help: serde derives on the /help/search query + JSON response
 # types (axum's Query/Json extractors).
 serde = { workspace = true, features = ["derive"] }
+# `print`/`copy` round-trip: decode the base64 image bytes the browser returns
+# from `Plotly.toImage`. Already in the lock file (transitive) — no new download.
+base64 = "0.22"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "net", "macros", "time"] }

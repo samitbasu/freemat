@@ -15,17 +15,46 @@
 //! draw, it stores the snapshot and broadcasts the JSON; connected clients
 //! receive it and Plotly redraws in place.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::Sender as StdSender;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::{Html, IntoResponse};
 use axum::routing::get;
-use fm_graphics::{GraphicsSink, Scene};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use fm_graphics::{GraphicsSink, Scene, capture_message};
 use futures_util::{SinkExt, StreamExt};
+use serde::Deserialize;
 use tokio::sync::broadcast;
+
+/// In-flight `print`/`capture` requests, keyed by `reqid`. The blocking
+/// `render_image` call inserts a std mpsc Sender here and waits; the websocket
+/// `recv_task` looks it up when the matching `image` reply arrives and forwards
+/// the result.
+type PendingMap = Arc<Mutex<HashMap<u64, StdSender<Result<Vec<u8>, String>>>>>;
+
+/// The browser's reply to a `capture` request.
+#[derive(Deserialize)]
+struct ImageReply {
+    /// Frame discriminator; we only act on `"image"`.
+    #[serde(rename = "type")]
+    kind: String,
+    /// The correlation id from the originating `capture` frame.
+    reqid: u64,
+    /// Base64 image data (optionally a `data:...;base64,` data URL) on success.
+    #[serde(default)]
+    data: Option<String>,
+    /// Error string on failure.
+    #[serde(default)]
+    error: Option<String>,
+}
 
 /// The static frontend, embedded so the binary is self-contained.
 const INDEX_HTML: &str = include_str!("../../../web/index.html");
@@ -37,6 +66,8 @@ struct AppState {
     tx: broadcast::Sender<String>,
     /// The latest scene snapshot (sent to each new connection).
     latest: Arc<Mutex<Scene>>,
+    /// In-flight `print`/`capture` requests, keyed by `reqid`.
+    pending: PendingMap,
 }
 
 /// A handle the interpreter uses to publish scenes; implements
@@ -45,6 +76,10 @@ struct AppState {
 pub struct ServerHandle {
     tx: broadcast::Sender<String>,
     latest: Arc<Mutex<Scene>>,
+    /// In-flight `print`/`capture` requests, keyed by `reqid`.
+    pending: PendingMap,
+    /// Monotonic source of `reqid`s for capture round-trips.
+    next_reqid: Arc<AtomicU64>,
     /// The bound address (so the REPL can print / open the URL).
     pub addr: SocketAddr,
 }
@@ -74,6 +109,47 @@ impl GraphicsSink for ServerHandle {
     fn base_url(&self) -> Option<String> {
         Some(self.url())
     }
+
+    /// Render a figure to image bytes via a websocket round-trip to the browser
+    /// (which calls `Plotly.toImage`). Runs on the synchronous interpreter
+    /// thread and blocks (via `recv_timeout`) until the browser replies.
+    fn render_image(&self, figure: u64, format: &str) -> Option<Result<Vec<u8>, String>> {
+        // No browser tab is subscribed → nothing can render the figure.
+        if self.tx.receiver_count() == 0 {
+            return Some(Err(
+                "no browser is connected — open the graphics URL to use print".into(),
+            ));
+        }
+
+        let reqid = self.next_reqid.fetch_add(1, Ordering::Relaxed);
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel::<Result<Vec<u8>, String>>();
+        if let Ok(mut pend) = self.pending.lock() {
+            pend.insert(reqid, reply_tx);
+        }
+
+        // Broadcast the capture request to all connected browsers.
+        match capture_message(reqid, figure, format) {
+            Ok(json) => {
+                let _ = self.tx.send(json);
+            }
+            Err(e) => {
+                if let Ok(mut pend) = self.pending.lock() {
+                    pend.remove(&reqid);
+                }
+                return Some(Err(format!("failed to build capture request: {e}")));
+            }
+        }
+
+        // Block waiting for the browser's reply (or time out).
+        let result = match reply_rx.recv_timeout(Duration::from_secs(15)) {
+            Ok(r) => r,
+            Err(_) => Err("timed out waiting for the browser to render the figure".into()),
+        };
+        if let Ok(mut pend) = self.pending.lock() {
+            pend.remove(&reqid);
+        }
+        Some(result)
+    }
 }
 
 /// Start the graphics webserver on `127.0.0.1:<port>` (port `0` = OS-chosen).
@@ -87,9 +163,12 @@ impl GraphicsSink for ServerHandle {
 pub fn start(port: u16) -> Result<ServerHandle, String> {
     let (tx, _rx) = broadcast::channel::<String>(64);
     let latest = Arc::new(Mutex::new(Scene::new()));
+    let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
+    let next_reqid = Arc::new(AtomicU64::new(1));
     let state = AppState {
         tx: tx.clone(),
         latest: latest.clone(),
+        pending: pending.clone(),
     };
 
     // Bind synchronously with a std listener so we know the real address before
@@ -138,7 +217,13 @@ pub fn start(port: u16) -> Result<ServerHandle, String> {
         })
         .map_err(|e| e.to_string())?;
 
-    Ok(ServerHandle { tx, latest, addr })
+    Ok(ServerHandle {
+        tx,
+        latest,
+        pending,
+        next_reqid,
+        addr,
+    })
 }
 
 /// Upgrade an HTTP request to a websocket connection.
@@ -171,10 +256,13 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             }
         }
     });
+    let pending = state.pending.clone();
     let recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
-            if matches!(msg, Message::Close(_)) {
-                break;
+            match msg {
+                Message::Close(_) => break,
+                Message::Text(t) => handle_inbound(&pending, &t),
+                _ => {}
             }
         }
     });
@@ -183,4 +271,34 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         _ = send_task => {}
         _ = recv_task => {}
     }
+}
+
+/// Parse one inbound text frame; if it is an `image` reply to a pending
+/// `capture` request, decode it and forward the result to the waiting
+/// `render_image` caller. Unknown frames are ignored.
+fn handle_inbound(pending: &PendingMap, text: &str) {
+    let Ok(reply) = serde_json::from_str::<ImageReply>(text) else {
+        return;
+    };
+    if reply.kind != "image" {
+        return;
+    }
+    let Some(sender) = pending.lock().ok().and_then(|mut p| p.remove(&reply.reqid)) else {
+        return; // No waiter (already timed out / removed); drop the reply.
+    };
+    let result = if let Some(err) = reply.error {
+        Err(err)
+    } else if let Some(data) = reply.data {
+        // Strip an optional `data:...;base64,` data-URL prefix before decoding.
+        let b64 = match data.find("base64,") {
+            Some(i) => &data[i + "base64,".len()..],
+            None => data.as_str(),
+        };
+        BASE64
+            .decode(b64.as_bytes())
+            .map_err(|e| format!("failed to decode image data: {e}"))
+    } else {
+        Err("browser returned an image reply with neither data nor error".into())
+    };
+    let _ = sender.send(result);
 }

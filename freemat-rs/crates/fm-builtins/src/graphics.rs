@@ -88,6 +88,8 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("polar", b_polar);
     table.add_builtin("quiver", b_quiver);
     table.add_builtin("text", b_text);
+    table.add_builtin("print", b_print);
+    table.add_builtin("copy", b_copy);
     // Low-level handle constructors: create one child object in the current axes
     // from property name/value pairs and return its handle.
     table.add_builtin("hline", b_hline);
@@ -336,6 +338,90 @@ fn b_delete(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> 
 fn b_drawnow(i: &mut Interpreter, _a: &[Array], _n: usize) -> Flow<Vec<Array>> {
     i.graphics.flush();
     Ok(vec![])
+}
+
+// ---- print / copy -----------------------------------------------------------
+
+/// Map a `-d<device>` flag (e.g. `-dpng`) to an image format, if recognized.
+fn device_format(flag: &str) -> Option<&'static str> {
+    match flag.strip_prefix("-d")?.to_ascii_lowercase().as_str() {
+        "png" => Some("png"),
+        "jpeg" | "jpg" => Some("jpeg"),
+        "svg" => Some("svg"),
+        "webp" => Some("webp"),
+        _ => None,
+    }
+}
+
+/// Infer the image format from a filename extension; defaults to `png`.
+fn format_from_ext(filename: &str) -> &'static str {
+    match filename
+        .rsplit('.')
+        .next()
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("jpg" | "jpeg") => "jpeg",
+        Some("svg") => "svg",
+        Some("webp") => "webp",
+        _ => "png",
+    }
+}
+
+/// `print('file.png')` / `print(fig, 'file.png')` / `print('file', '-dpng')`:
+/// save a figure to an image file via a websocket round-trip to the browser.
+fn b_print(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    // Walk args: an explicit numeric figure handle (first), a `-d...` device
+    // flag, and the filename (the remaining string).
+    let mut figure: Option<u64> = None;
+    let mut device: Option<&'static str> = None;
+    let mut filename: Option<String> = None;
+    for a in args {
+        if let Some(s) = a.as_string() {
+            if let Some(stripped) = device_format(&s) {
+                device = Some(stripped);
+            } else if s.starts_with("-d") {
+                return err(format!("print: unsupported device flag '{s}'"));
+            } else {
+                filename = Some(s);
+            }
+        } else if let Some(v) = a.as_f64() {
+            figure = Some(v.round() as u64);
+        }
+    }
+
+    let Some(filename) = filename else {
+        return err("print: a filename is required, e.g. print('figure.png')");
+    };
+    let fig = figure.unwrap_or_else(|| i.graphics.current_figure_handle());
+    let fmt = device.unwrap_or_else(|| format_from_ext(&filename));
+
+    // Publish the current scene so the browser is up to date before capture.
+    i.graphics.flush();
+
+    match i
+        .graphics
+        .sink
+        .as_deref()
+        .and_then(|s| s.render_image(fig, fmt))
+    {
+        None => err("print: the graphics server is not running (start without --no-gfx)"),
+        Some(Err(e)) => err(e),
+        Some(Ok(bytes)) => match std::fs::write(&filename, bytes) {
+            Ok(()) => Ok(vec![]),
+            Err(e) => err(format!("print: cannot write '{filename}': {e}")),
+        },
+    }
+}
+
+/// `copy('file.png')`: there is no system clipboard in this headless server, so
+/// `copy` to a file is an alias of `print`; `copy` with no filename errors.
+fn b_copy(i: &mut Interpreter, args: &[Array], n: usize) -> Flow<Vec<Array>> {
+    if args.iter().any(|a| a.as_string().is_some()) {
+        b_print(i, args, n)
+    } else {
+        err("copy to clipboard is not supported; use print('file.png')")
+    }
 }
 
 // ---- ishandle / findobj -----------------------------------------------------
