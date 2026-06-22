@@ -181,7 +181,7 @@ fn need(args: &[Array], n: usize, name: &str) -> Flow<()> {
 
 fn b_disp(interp: &mut Interpreter, args: &[Array], _nargout: usize) -> Flow<Vec<Array>> {
     need(args, 1, "disp")?;
-    let body = args[0].format(interp.format);
+    let body = interp.format_value(&args[0]);
     interp.emit(&body);
     interp.emit("\n");
     Ok(vec![])

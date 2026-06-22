@@ -27,14 +27,61 @@ pub enum FormatMode {
     Short,
     /// `format long` — ~15 significant digits.
     Long,
+    /// `format short e` — 4 decimals, always exponential.
+    ShortE,
+    /// `format long e` — 15 decimals, always exponential.
+    LongE,
+    /// `format short g` — compact, ~5 significant digits.
+    ShortG,
+    /// `format long g` — compact, ~15 significant digits.
+    LongG,
 }
 
 impl FormatMode {
     /// Decimal places used for non-integer reals.
     const fn decimals(self) -> usize {
         match self {
-            FormatMode::Short => 4,
-            FormatMode::Long => 15,
+            FormatMode::Short | FormatMode::ShortE | FormatMode::ShortG => 4,
+            FormatMode::Long | FormatMode::LongE | FormatMode::LongG => 15,
+        }
+    }
+
+    /// Whether this mode always renders reals in exponential notation.
+    const fn always_exponential(self) -> bool {
+        matches!(self, FormatMode::ShortE | FormatMode::LongE)
+    }
+
+    /// Whether this mode uses the compact (`%g`-style) presentation, which
+    /// drops trailing zeros and picks fixed/exponential per value.
+    const fn compact(self) -> bool {
+        matches!(self, FormatMode::ShortG | FormatMode::LongG)
+    }
+
+    /// Parse the FreeMat `format` argument(s) (already lower-cased and joined by
+    /// a single space, e.g. `"short e"`). Returns `None` for unknown modes.
+    #[must_use]
+    pub fn from_arg(s: &str) -> Option<FormatMode> {
+        Some(match s.trim() {
+            "short" | "" => FormatMode::Short,
+            "long" => FormatMode::Long,
+            "short e" | "shorte" => FormatMode::ShortE,
+            "long e" | "longe" => FormatMode::LongE,
+            "short g" | "shortg" => FormatMode::ShortG,
+            "long g" | "longg" => FormatMode::LongG,
+            _ => return None,
+        })
+    }
+
+    /// The canonical name string returned by `t = format`.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            FormatMode::Short => "short",
+            FormatMode::Long => "long",
+            FormatMode::ShortE => "short e",
+            FormatMode::LongE => "long e",
+            FormatMode::ShortG => "short g",
+            FormatMode::LongG => "long g",
         }
     }
 }
@@ -122,11 +169,20 @@ fn format_real(v: f64, mode: FormatMode) -> String {
     if v.is_infinite() {
         return if v < 0.0 { "-Inf" } else { "Inf" }.to_string();
     }
+    let d = mode.decimals();
+    // The `e` modes always use exponential notation, even for integer values.
+    if mode.always_exponential() {
+        let s = format!("{v:.*e}", d);
+        return normalize_exp(&s);
+    }
+    // The `g` modes use the compact `%g`-style presentation.
+    if mode.compact() {
+        return format_compact(v, d);
+    }
     if is_integer_valued(v) && v.abs() < 1e15 {
         // Print as an integer.
         return format!("{}", v as i64);
     }
-    let d = mode.decimals();
     let mag = v.abs();
     // Use exponential notation for very large/small magnitudes, like MATLAB.
     if !(1e-5..1e5).contains(&mag) {
@@ -136,6 +192,35 @@ fn format_real(v: f64, mode: FormatMode) -> String {
     } else {
         format!("{v:.*}", d)
     }
+}
+
+/// Compact (`%g`-style) rendering used by `format short g` / `long g`:
+/// `d` significant digits, trailing zeros dropped, exponential only when the
+/// magnitude is very large or very small.
+fn format_compact(v: f64, d: usize) -> String {
+    if is_integer_valued(v) && v.abs() < 1e15 {
+        return format!("{}", v as i64);
+    }
+    let mag = v.abs();
+    if !(1e-5..1e5).contains(&mag) {
+        // Significant-digit exponential, trailing zeros trimmed.
+        let s = format!("{v:.*e}", d.saturating_sub(1));
+        let (mantissa, exp) = s.split_once('e').unwrap_or((s.as_str(), ""));
+        let mantissa = trim_trailing_zeros(mantissa);
+        normalize_exp(&format!("{mantissa}e{exp}"))
+    } else {
+        let s = format!("{v:.*}", d);
+        trim_trailing_zeros(&s)
+    }
+}
+
+/// Drop trailing zeros (and a dangling decimal point) from a fixed-point string.
+fn trim_trailing_zeros(s: &str) -> String {
+    if !s.contains('.') {
+        return s.to_string();
+    }
+    let trimmed = s.trim_end_matches('0');
+    trimmed.trim_end_matches('.').to_string()
 }
 
 /// Format a complex value as `re + imi` / `re - imi`.

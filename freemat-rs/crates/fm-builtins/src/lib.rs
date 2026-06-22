@@ -25,6 +25,7 @@ mod graphics;
 mod help;
 mod inspection;
 mod interp_ops;
+mod io;
 mod linalg;
 mod logical;
 mod misc;
@@ -107,6 +108,7 @@ pub fn register_into(table: &mut FunctionTable) {
     cellstruct::register(table);
     time::register(table);
     interp_ops::register(table);
+    io::register(table);
     bitops::register(table);
     baseconv::register(table);
     polynomial::register(table);

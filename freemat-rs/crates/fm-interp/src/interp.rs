@@ -40,6 +40,9 @@ pub struct Interpreter {
     pub functions: FunctionTable,
     /// The display format mode (`format short` / `long`).
     pub format: FormatMode,
+    /// Maximum number of array elements echoed/`disp`-ed before the display is
+    /// truncated (FreeMat's `printlimit`; default 1000).
+    pub print_limit: usize,
     /// The most recent caught error message (FreeMat's `lasterr` state).
     pub last_error: String,
     /// Buffered output (so tests can assert on `disp`/echo output).
@@ -70,6 +73,7 @@ impl Interpreter {
             context: Context::new(),
             functions: FunctionTable::new(),
             format: FormatMode::Short,
+            print_limit: 1000,
             last_error: String::new(),
             output: String::new(),
             nargin_stack: vec![0],
@@ -1410,9 +1414,38 @@ impl Interpreter {
     // ---- Display ------------------------------------------------------------
 
     fn echo(&mut self, name: &str, value: &Array) {
-        let body = value.format(self.format);
+        let body = self.format_value(value);
         // MATLAB prints `name =\n\n<body>\n` for every value class.
         self.output.push_str(&format!("\n{name} =\n\n{body}\n\n"));
+    }
+
+    /// Render a value for display, honoring the current `format` mode and
+    /// `print_limit`. When the array has more elements than `print_limit`, the
+    /// body is replaced by a truncation notice (matching FreeMat's behavior of
+    /// not dumping huge arrays to the console).
+    #[must_use]
+    pub fn format_value(&self, value: &Array) -> String {
+        if value.numel() > self.print_limit && self.is_truncatable(value) {
+            let dims = value
+                .dims()
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join("x");
+            return format!(
+                "  [{dims} {} array - too many elements to display\n   (print limit is {}; use setprintlimit to change)]",
+                value.class_name(),
+                self.print_limit
+            );
+        }
+        value.format(self.format)
+    }
+
+    /// Whether a value participates in print-limit truncation. Char strings are
+    /// always shown in full (they print as text); cells/structs have their own
+    /// summarized display.
+    fn is_truncatable(&self, value: &Array) -> bool {
+        !value.is_char() && value.as_cell().is_none() && value.as_struct().is_none()
     }
 }
 

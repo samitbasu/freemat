@@ -505,7 +505,7 @@ where `s` is a string describing the current format.
 We start with the short format, and two matrices, one of double precision, and the
 other of single precision.
 
-```fm
+```fm-exec
 format short
 a = randn(4)
 b = float(randn(4))
@@ -514,7 +514,7 @@ b = float(randn(4))
 Note that in the short format, these two matrices are displayed with the same format.
 In `long` format, however, they display differently
 
-```fm
+```fm-exec
 format long
 a
 b
@@ -523,7 +523,7 @@ b
 Note also that we we scale the contents of the matrices, FreeMat rescales the entries
 with a scale premultiplier.
 
-```fm
+```fm-exec
 format short
 a*1e4
 a*1e-4
@@ -533,7 +533,7 @@ b*1e-4
 
 Next, we use the exponential formats:
 
-```fm
+```fm-exec
 format short e
 a*1e4
 a*1e-4
@@ -544,7 +544,7 @@ b*1e-4
 Finally, if we assign the `format` function to a variable, we can retrieve the
 current format:
 
-```fm
+```fm-exec
 format short
 t = format
 ```
@@ -910,7 +910,7 @@ where `n` is the current limit in use.
 ## Example
 Here is an example of using `getprintlimit` along with `setprintlimit` to temporarily change the output behavior of FreeMat.
 
-```fm
+```fm-exec
 A = randn(100,1);
 n = getprintlimit
 setprintlimit(5);
@@ -1506,7 +1506,7 @@ where `n` is the new limit to use.
 ## Example
 Setting a smaller print limit avoids pages of output when you forget the semicolon on an expression.
 
-```fm
+```fm-exec
 A = randn(512);
 setprintlimit(10)
 A
