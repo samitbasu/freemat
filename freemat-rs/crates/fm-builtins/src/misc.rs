@@ -40,6 +40,9 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("betainc", b_betainc);
     table.add_builtin("legendre", b_legendre);
     table.add_builtin("interplin1", b_interplin1);
+    table.add_builtin("interp2", b_interp2);
+    table.add_builtin("trapz", b_trapz);
+    table.add_builtin("cumtrapz", b_cumtrapz);
     table.add_builtin("cov", b_cov);
     table.add_builtin("teps", b_teps);
 }
@@ -479,6 +482,292 @@ fn extrap_scalar(y1: &[f64], xtrap: i32, _xq: f64, _x1: &[f64]) -> f64 {
         3 => y1[0],
         _ => f64::NAN,
     }
+}
+
+/// `trapz(y)` / `trapz(x, y)` — trapezoidal numeric integration. For a vector
+/// the result is a scalar; for a matrix the integration runs down each column
+/// and the result is a `1 x ncols` row vector (mirroring FreeMat's `trapz.m`).
+fn b_trapz(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() || args.len() > 2 {
+        return err("trapz: expects trapz(y) or trapz(x, y)");
+    }
+    let (x, y_arr) = if args.len() == 1 {
+        (None, &args[0])
+    } else {
+        (Some(to_f64_vec(&args[0])), &args[1])
+    };
+    let dims = y_arr.dims();
+    let y = to_f64_vec(y_arr);
+    let is_vector = dims.len() == 2 && (dims[0] == 1 || dims[1] == 1);
+    if is_vector {
+        let acc = trapz_segment(x.as_deref(), &y);
+        return Ok(vec![build_real(DataClass::Double, &[1, 1], vec![acc])]);
+    }
+    if dims.len() != 2 {
+        return err("trapz: only vectors and 2-D matrices are supported");
+    }
+    // Matrix: integrate down each column.
+    let (m, c) = (dims[0], dims[1]);
+    if let Some(ref xv) = x
+        && xv.len() != m
+    {
+        return err("trapz: length(x) must equal the number of rows of y");
+    }
+    let mut out = Vec::with_capacity(c);
+    for j in 0..c {
+        let col: Vec<f64> = (0..m).map(|i| y[i + j * m]).collect();
+        out.push(trapz_segment(x.as_deref(), &col));
+    }
+    Ok(vec![build_real(DataClass::Double, &[1, c], out)])
+}
+
+/// Trapezoidal integral of a single sequence, optionally over sample points `x`.
+fn trapz_segment(x: Option<&[f64]>, y: &[f64]) -> f64 {
+    let mut acc = 0.0;
+    for i in 1..y.len() {
+        let dx = match x {
+            Some(xv) => xv[i] - xv[i - 1],
+            None => 1.0,
+        };
+        acc += dx * (y[i] + y[i - 1]) * 0.5;
+    }
+    acc
+}
+
+/// `cumtrapz(y)` / `cumtrapz(x, y)` — cumulative trapezoidal integral. The
+/// result has the same shape as `y`; the first sample (per column) is 0.
+fn b_cumtrapz(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() || args.len() > 2 {
+        return err("cumtrapz: expects cumtrapz(y) or cumtrapz(x, y)");
+    }
+    let (x, y_arr) = if args.len() == 1 {
+        (None, &args[0])
+    } else {
+        (Some(to_f64_vec(&args[0])), &args[1])
+    };
+    let dims = y_arr.dims();
+    let y = to_f64_vec(y_arr);
+    let is_vector = dims.len() == 2 && (dims[0] == 1 || dims[1] == 1);
+    if is_vector {
+        let out = cumtrapz_segment(x.as_deref(), &y);
+        return Ok(vec![build_real(DataClass::Double, &dims, out)]);
+    }
+    if dims.len() != 2 {
+        return err("cumtrapz: only vectors and 2-D matrices are supported");
+    }
+    let (m, c) = (dims[0], dims[1]);
+    if let Some(ref xv) = x
+        && xv.len() != m
+    {
+        return err("cumtrapz: length(x) must equal the number of rows of y");
+    }
+    let mut out = vec![0.0f64; m * c];
+    for j in 0..c {
+        let col: Vec<f64> = (0..m).map(|i| y[i + j * m]).collect();
+        let cum = cumtrapz_segment(x.as_deref(), &col);
+        for i in 0..m {
+            out[i + j * m] = cum[i];
+        }
+    }
+    Ok(vec![build_real(DataClass::Double, &[m, c], out)])
+}
+
+/// Running trapezoidal sum of a single sequence; first element is 0.
+fn cumtrapz_segment(x: Option<&[f64]>, y: &[f64]) -> Vec<f64> {
+    let mut out = vec![0.0f64; y.len()];
+    for i in 1..y.len() {
+        let dx = match x {
+            Some(xv) => xv[i] - xv[i - 1],
+            None => 1.0,
+        };
+        out[i] = out[i - 1] + dx * (y[i] + y[i - 1]) * 0.5;
+    }
+    out
+}
+
+/// `interp2(...)` — 2-D interpolation over a regular grid. Supported forms:
+///   `interp2(Z, xi, yi)` (grid x = 1:cols, y = 1:rows),
+///   `interp2(X, Y, Z, xi, yi)` with X/Y as monotonic grid vectors (or matrices
+///   produced by `meshgrid`), plus an optional trailing `method` string
+///   (`'linear'` default, or `'nearest'`) and an optional `extrapval` for
+///   out-of-range queries (default NaN).
+fn b_interp2(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    // Split off an optional trailing extrapval (numeric scalar) and method
+    // string. Possible tails: ..., method ; ..., method, extrapval ;
+    // ..., extrapval (when no method given but extrapval present is uncommon;
+    // FreeMat requires method before extrapval, so we follow that).
+    let mut a: Vec<&Array> = args.iter().collect();
+    let mut extrapval = f64::NAN;
+    let mut method = "linear".to_string();
+
+    // Trailing extrapval: a numeric scalar after a method string.
+    if a.len() >= 2 {
+        let last = a[a.len() - 1];
+        let prev = a[a.len() - 2];
+        if last.numel() == 1 && !last.is_complex() && prev.as_string().is_some() {
+            extrapval = to_f64_vec(last)[0];
+            a.pop();
+        }
+    }
+    // Trailing method string.
+    if let Some(s) = a.last().and_then(|v| v.as_string()) {
+        method = s.to_lowercase();
+        a.pop();
+    }
+    if method != "linear" && method != "nearest" {
+        return err("interp2: only 'linear' and 'nearest' methods are supported");
+    }
+
+    // Now `a` is either [Z, xi, yi] or [X, Y, Z, xi, yi].
+    let (xgrid, ygrid, z_arr, xi_arr, yi_arr) = match a.len() {
+        3 => {
+            let z = a[0];
+            let zdims = z.dims();
+            if zdims.len() != 2 {
+                return err("interp2: Z must be a 2-D matrix");
+            }
+            let (rows, cols) = (zdims[0], zdims[1]);
+            let xg: Vec<f64> = (1..=cols).map(|v| v as f64).collect();
+            let yg: Vec<f64> = (1..=rows).map(|v| v as f64).collect();
+            (xg, yg, z, a[1], a[2])
+        }
+        5 => {
+            let xg = grid_vector_x(a[0])?;
+            let yg = grid_vector_y(a[1])?;
+            (xg, yg, a[2], a[3], a[4])
+        }
+        _ => {
+            return err("interp2: expects interp2(Z,xi,yi) or interp2(X,Y,Z,xi,yi)");
+        }
+    };
+
+    let zdims = z_arr.dims();
+    if zdims.len() != 2 {
+        return err("interp2: Z must be a 2-D matrix");
+    }
+    let (rows, cols) = (zdims[0], zdims[1]);
+    if xgrid.len() != cols || ygrid.len() != rows {
+        return err("interp2: X/Y grid sizes are inconsistent with Z");
+    }
+    let z = to_f64_vec(z_arr);
+
+    let xi = to_f64_vec(xi_arr);
+    let yi = to_f64_vec(yi_arr);
+    if xi.len() != yi.len() {
+        return err("interp2: xi and yi must have the same number of elements");
+    }
+    let out_dims = xi_arr.dims().to_vec();
+
+    let nearest = method == "nearest";
+    let out: Vec<f64> = xi
+        .iter()
+        .zip(&yi)
+        .map(|(&xq, &yq)| interp2_point(&xgrid, &ygrid, &z, rows, xq, yq, nearest, extrapval))
+        .collect();
+    Ok(vec![build_real(DataClass::Double, &out_dims, out)])
+}
+
+/// Extract a monotonic x grid-vector from an `interp2` X argument, accepting
+/// either a plain vector or a `meshgrid`-style matrix (first row).
+fn grid_vector_x(arr: &Array) -> Flow<Vec<f64>> {
+    let dims = arr.dims();
+    let data = to_f64_vec(arr);
+    if dims.len() == 2 && dims[0] != 1 && dims[1] != 1 {
+        // meshgrid X: rows are identical, take the first row (one value per col).
+        let (m, c) = (dims[0], dims[1]);
+        Ok((0..c).map(|j| data[j * m]).collect())
+    } else {
+        Ok(data)
+    }
+}
+
+/// Extract a monotonic y grid-vector from an `interp2` Y argument, accepting
+/// either a plain vector or a `meshgrid`-style matrix (first column).
+fn grid_vector_y(arr: &Array) -> Flow<Vec<f64>> {
+    let dims = arr.dims();
+    let data = to_f64_vec(arr);
+    if dims.len() == 2 && dims[0] != 1 && dims[1] != 1 {
+        // meshgrid Y: columns are identical, take the first column.
+        let m = dims[0];
+        Ok((0..m).map(|i| data[i]).collect())
+    } else {
+        Ok(data)
+    }
+}
+
+/// Interpolate Z (column-major, `rows` rows) at `(xq, yq)` over grid vectors
+/// `xgrid` (columns) and `ygrid` (rows). Returns `extrapval` if out of range.
+#[allow(clippy::too_many_arguments)]
+fn interp2_point(
+    xgrid: &[f64],
+    ygrid: &[f64],
+    z: &[f64],
+    rows: usize,
+    xq: f64,
+    yq: f64,
+    nearest: bool,
+    extrapval: f64,
+) -> f64 {
+    let cols = xgrid.len();
+    if cols == 0 || rows == 0 {
+        return extrapval;
+    }
+    // Out-of-range check against the grid extents.
+    if xq < xgrid[0] || xq > xgrid[cols - 1] || yq < ygrid[0] || yq > ygrid[rows - 1] {
+        return extrapval;
+    }
+    let cj = grid_cell(xgrid, xq);
+    let ri = grid_cell(ygrid, yq);
+    let at = |i: usize, j: usize| -> f64 { z[i + j * rows] };
+    if nearest {
+        let tx = if xgrid[cj + 1] != xgrid[cj] {
+            (xq - xgrid[cj]) / (xgrid[cj + 1] - xgrid[cj])
+        } else {
+            0.0
+        };
+        let ty = if ygrid[ri + 1] != ygrid[ri] {
+            (yq - ygrid[ri]) / (ygrid[ri + 1] - ygrid[ri])
+        } else {
+            0.0
+        };
+        let j = if tx >= 0.5 { cj + 1 } else { cj };
+        let i = if ty >= 0.5 { ri + 1 } else { ri };
+        return at(i, j);
+    }
+    // Bilinear.
+    let x0 = xgrid[cj];
+    let x1 = xgrid[cj + 1];
+    let y0 = ygrid[ri];
+    let y1 = ygrid[ri + 1];
+    let tx = if x1 != x0 { (xq - x0) / (x1 - x0) } else { 0.0 };
+    let ty = if y1 != y0 { (yq - y0) / (y1 - y0) } else { 0.0 };
+    let z00 = at(ri, cj);
+    let z01 = at(ri, cj + 1);
+    let z10 = at(ri + 1, cj);
+    let z11 = at(ri + 1, cj + 1);
+    let top = z00 * (1.0 - tx) + z01 * tx;
+    let bot = z10 * (1.0 - tx) + z11 * tx;
+    top * (1.0 - ty) + bot * ty
+}
+
+/// Index of the lower edge of the grid cell containing `q` (clamped so that
+/// `idx + 1` is always a valid index). Assumes `grid` is monotonic increasing.
+fn grid_cell(grid: &[f64], q: f64) -> usize {
+    let n = grid.len();
+    if n < 2 {
+        return 0;
+    }
+    let mut lo = 0usize;
+    let mut hi = n - 1;
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        if grid[mid] <= q {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    lo.min(n - 2)
 }
 
 /// `idiv(a, b)` — integer (truncating-toward-zero) division, element-wise with

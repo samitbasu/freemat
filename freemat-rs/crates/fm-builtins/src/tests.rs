@@ -1220,6 +1220,58 @@ fn dot_and_cross() {
 }
 
 #[test]
+fn trapz_unit_spacing() {
+    assert_eq!(eval_scalar("trapz([1 2 3])"), 4.0);
+}
+
+#[test]
+fn trapz_with_x() {
+    assert_eq!(eval_scalar("trapz([1 2 3],[1 2 3])"), 4.0);
+}
+
+#[test]
+fn trapz_matrix_per_column() {
+    let mut i = interp();
+    i.run("r = trapz([1 2; 3 4]);").unwrap();
+    let r = i.context.lookup("r").unwrap();
+    assert_eq!(r.dims(), vec![1, 2]);
+    assert_eq!(fm_interp::value::to_f64_vec(r), vec![2.0, 3.0]);
+}
+
+#[test]
+fn cumtrapz_vector() {
+    let mut i = interp();
+    i.run("r = cumtrapz([1 2 3]);").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("r").unwrap()),
+        vec![0.0, 1.5, 4.0]
+    );
+}
+
+#[test]
+fn interp2_bilinear_midpoint() {
+    assert!((eval_scalar("interp2([1 2; 3 4], 1.5, 1.5)") - 2.5).abs() < 1e-12);
+}
+
+#[test]
+fn interp2_nearest() {
+    // Z=[1 2;3 4], query (1.4,1.4) rounds toward (row1,col1) => 1.
+    assert_eq!(eval_scalar("interp2([1 2; 3 4], 1.4, 1.4, 'nearest')"), 1.0);
+}
+
+#[test]
+fn interp2_out_of_range_nan() {
+    assert!(eval_scalar("interp2([1 2; 3 4], 5, 5)").is_nan());
+}
+
+#[test]
+fn interp2_full_grid_form() {
+    // X=[10 20], Y=[100 200], midpoint should give bilinear average 2.5.
+    let v = eval_scalar("interp2([10 20],[100 200],[1 2; 3 4], 15, 150)");
+    assert!((v - 2.5).abs() < 1e-12);
+}
+
+#[test]
 fn meshgrid_shapes() {
     let mut i = interp();
     i.run("[X,Y] = meshgrid([1 2 3],[4 5]);").unwrap();
