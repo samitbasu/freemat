@@ -416,3 +416,146 @@ mod path_builtins {
         assert_eq!(s.dims(), vec![1, 1]);
     }
 }
+
+// ---- directory / file builtins ------------------------------------------
+
+mod fs_builtins {
+    use std::path::PathBuf;
+
+    use fm_core::Array;
+    use fm_interp::Interpreter;
+    use fm_parser::Span;
+
+    fn interp() -> Interpreter {
+        let mut i = Interpreter::new();
+        crate::register_io(&mut i);
+        i
+    }
+
+    /// A unique temporary directory path for this test process (not yet created).
+    fn unique_tmp() -> PathBuf {
+        let mut p = std::env::temp_dir();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        p.push(format!("fm_io_fs_test_{}_{}", std::process::id(), stamp));
+        p
+    }
+
+    #[test]
+    fn mkdir_copyfile_fileattrib_rmdir_roundtrip() {
+        let mut i = interp();
+        let root = unique_tmp();
+        let root_str = root.to_string_lossy().into_owned();
+
+        // mkdir(root) — creates it, returns success flag 1.
+        let out = i
+            .call_function(
+                "mkdir",
+                &[Array::char_string(&root_str)],
+                1,
+                "",
+                Span::empty(0),
+            )
+            .expect("mkdir ok");
+        assert_eq!(out[0].as_f64(), Some(1.0));
+        assert!(root.is_dir());
+
+        // mkdir(root, "sub") — two-arg form creates a subdir.
+        let out = i
+            .call_function(
+                "mkdir",
+                &[Array::char_string(&root_str), Array::char_string("sub")],
+                1,
+                "",
+                Span::empty(0),
+            )
+            .expect("mkdir sub ok");
+        assert_eq!(out[0].as_f64(), Some(1.0));
+        let sub = root.join("sub");
+        assert!(sub.is_dir());
+
+        // mkdir on an existing dir does not fail (still returns 1).
+        let out = i
+            .call_function(
+                "mkdir",
+                &[Array::char_string(&root_str)],
+                1,
+                "",
+                Span::empty(0),
+            )
+            .expect("mkdir existing ok");
+        assert_eq!(out[0].as_f64(), Some(1.0));
+
+        // Write a file, then copyfile it; the copy must exist with same content.
+        let src = root.join("a.txt");
+        std::fs::write(&src, b"hello fileio").expect("write src");
+        let dst = root.join("b.txt");
+        let out = i
+            .call_function(
+                "copyfile",
+                &[
+                    Array::char_string(&src.to_string_lossy()),
+                    Array::char_string(&dst.to_string_lossy()),
+                ],
+                1,
+                "",
+                Span::empty(0),
+            )
+            .expect("copyfile ok");
+        assert_eq!(out[0].as_f64(), Some(1.0));
+        assert!(dst.is_file());
+        assert_eq!(std::fs::read(&dst).expect("read dst"), b"hello fileio");
+
+        // fileattrib(root) — success + directory flag set.
+        let out = i
+            .call_function(
+                "fileattrib",
+                &[Array::char_string(&root_str)],
+                3,
+                "",
+                Span::empty(0),
+            )
+            .expect("fileattrib ok");
+        assert_eq!(out[0].as_f64(), Some(1.0));
+        let attribs = &out[1];
+        assert_eq!(attribs.class_name(), "struct");
+        let dir_flag = attribs
+            .as_struct()
+            .and_then(|s| s.field("directory"))
+            .and_then(|v| v.first())
+            .and_then(Array::as_f64)
+            .expect("directory field");
+        assert_eq!(dir_flag, 1.0);
+
+        // fileattrib on a missing path returns success 0 (no throw).
+        let missing = root.join("does_not_exist");
+        let out = i
+            .call_function(
+                "fileattrib",
+                &[Array::char_string(&missing.to_string_lossy())],
+                3,
+                "",
+                Span::empty(0),
+            )
+            .expect("fileattrib missing ok");
+        assert_eq!(out[0].as_f64(), Some(0.0));
+
+        // rmdir(root, 's') — recursive remove; the tree must be gone.
+        let out = i
+            .call_function(
+                "rmdir",
+                &[Array::char_string(&root_str), Array::char_string("s")],
+                1,
+                "",
+                Span::empty(0),
+            )
+            .expect("rmdir ok");
+        assert_eq!(out[0].as_f64(), Some(1.0));
+        assert!(!root.exists());
+
+        // Defensive cleanup in case any assertion above left the tree behind.
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

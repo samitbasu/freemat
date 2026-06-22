@@ -44,6 +44,11 @@ pub fn register(table: &mut FunctionTable) {
     table.add_builtin("ls", b_ls);
     table.add_builtin("which", b_which);
     table.add_builtin("type", b_type);
+    table.add_builtin("mkdir", b_mkdir);
+    table.add_builtin("rmdir", b_rmdir);
+    table.add_builtin("copyfile", b_copyfile);
+    table.add_builtin("fileattrib", b_fileattrib);
+    table.add_builtin("exit", b_exit);
     // Path / separator builtins.
     table.add_builtin("filesep", b_filesep);
     table.add_builtin("dirsep", b_filesep);
@@ -698,6 +703,193 @@ fn b_exist(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
         0.0
     };
     Ok(vec![Array::double(code)])
+}
+
+/// `mkdir(dirname)` / `mkdir(parentdir, dirname)` — create a directory (and any
+/// missing parents, like FreeMat's `QDir::mkpath`). Returns `[success, msg,
+/// msgid]`: a logical `1` on success (or if the directory already exists), `0`
+/// on failure. Does not throw on an existing directory.
+fn b_mkdir(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return err("mkdir requires at least one argument (the directory to create)");
+    }
+    let target = match args.len() {
+        1 => args[0].as_string().unwrap_or_default(),
+        _ => {
+            let parent = args[0].as_string().unwrap_or_default();
+            let child = args[1].as_string().unwrap_or_default();
+            let mut p = std::path::PathBuf::from(parent);
+            p.push(child);
+            p.to_string_lossy().into_owned()
+        }
+    };
+    let path = Path::new(&target);
+    let (success, msg, msgid) = if path.is_dir() {
+        (true, "directory already exists".to_string(), String::new())
+    } else {
+        match std::fs::create_dir_all(path) {
+            Ok(()) => (true, String::new(), String::new()),
+            Err(e) => (false, e.to_string(), "FreeMat:mkdir".to_string()),
+        }
+    };
+    Ok(vec![
+        Array::bool(success),
+        Array::char_string(&msg),
+        Array::char_string(&msgid),
+    ])
+}
+
+/// `rmdir(dirname)` / `rmdir(dirname, 's')` — remove a directory. Without the
+/// `'s'` flag only an empty directory is removed; with `'s'` (or `'S'`) the
+/// directory and all its contents are removed recursively. Returns a logical
+/// success flag (does not throw on a missing/non-empty directory).
+fn b_rmdir(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return err("rmdir requires at least one argument (the directory to remove)");
+    }
+    let dirname = args[0].as_string().unwrap_or_default();
+    let recursive = match args.get(1).and_then(Array::as_string) {
+        None => false,
+        Some(flag) if flag.eq_ignore_ascii_case("s") => true,
+        Some(_) => {
+            return err("rmdir second argument must be 's' to do a recursive delete");
+        }
+    };
+    let result = if recursive {
+        std::fs::remove_dir_all(&dirname)
+    } else {
+        std::fs::remove_dir(&dirname)
+    };
+    let (success, msg, msgid) = match result {
+        Ok(()) => (true, String::new(), String::new()),
+        Err(e) => (false, e.to_string(), "FreeMat:rmdir".to_string()),
+    };
+    Ok(vec![
+        Array::bool(success),
+        Array::char_string(&msg),
+        Array::char_string(&msgid),
+    ])
+}
+
+/// `copyfile(src, dst)` — copy a file. If `dst` is an existing directory the
+/// file is copied into it under its original name (FreeMat behaviour). Returns
+/// a logical success flag (does not throw on a missing source).
+fn b_copyfile(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.len() < 2 {
+        return err("copyfile requires two arguments - source and destination");
+    }
+    let src = args[0].as_string().unwrap_or_default();
+    let dst = args[1].as_string().unwrap_or_default();
+    let src_path = Path::new(&src);
+    let dst_path = Path::new(&dst);
+    // If the destination is a directory, copy into it under the source's name.
+    let final_dst = if dst_path.is_dir() {
+        match src_path.file_name() {
+            Some(name) => dst_path.join(name),
+            None => dst_path.to_path_buf(),
+        }
+    } else {
+        dst_path.to_path_buf()
+    };
+    let (success, msg, msgid) = match std::fs::copy(src_path, &final_dst) {
+        Ok(_) => (true, String::new(), String::new()),
+        Err(e) => (false, e.to_string(), "FreeMat:copyfile".to_string()),
+    };
+    Ok(vec![
+        Array::bool(success),
+        Array::char_string(&msg),
+        Array::char_string(&msgid),
+    ])
+}
+
+/// `fileattrib(path)` — report a file's attributes. Returns `[success, attribs,
+/// msgid]` where `attribs` is a struct with `Name`, `directory`, and the
+/// `UserRead`/`UserWrite`/`UserExecute` (plus group/other) permission flags,
+/// matching FreeMat's `FileAttrib` field set. On a missing path `success` is `0`
+/// and `attribs` is empty (does not throw).
+fn b_fileattrib(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return err("fileattrib requires at least one argument (the file name)");
+    }
+    let name = args[0].as_string().unwrap_or_default();
+    let path = Path::new(&name);
+    let Ok(meta) = std::fs::metadata(path) else {
+        return Ok(vec![
+            Array::bool(false),
+            Array::char_string(""),
+            Array::char_string("FreeMat:fileattrib"),
+        ]);
+    };
+    let abs = std::fs::canonicalize(path)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| name.clone());
+    let is_dir = meta.is_dir();
+    let perm = meta.permissions();
+
+    // Decode read/write/execute for user/group/other. On unix we read the mode
+    // bits; elsewhere we fall back to the read-only flag for the user triad.
+    let (ur, uw, ux, gr, gw, gx, or_, ow, ox);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = perm.mode();
+        ur = mode & 0o400 != 0;
+        uw = mode & 0o200 != 0;
+        ux = mode & 0o100 != 0;
+        gr = mode & 0o040 != 0;
+        gw = mode & 0o020 != 0;
+        gx = mode & 0o010 != 0;
+        or_ = mode & 0o004 != 0;
+        ow = mode & 0o002 != 0;
+        ox = mode & 0o001 != 0;
+    }
+    #[cfg(not(unix))]
+    {
+        let writable = !perm.readonly();
+        ur = true;
+        uw = writable;
+        ux = is_dir;
+        gr = true;
+        gw = writable;
+        gx = is_dir;
+        or_ = true;
+        ow = writable;
+        ox = is_dir;
+    }
+
+    let fields = vec![
+        ("Name".to_string(), vec![Array::char_string(&abs)]),
+        ("archive".to_string(), vec![Array::double(0.0)]),
+        ("system".to_string(), vec![Array::double(0.0)]),
+        ("hidden".to_string(), vec![Array::double(0.0)]),
+        ("directory".to_string(), vec![Array::bool(is_dir)]),
+        ("UserRead".to_string(), vec![Array::bool(ur)]),
+        ("UserWrite".to_string(), vec![Array::bool(uw)]),
+        ("UserExecute".to_string(), vec![Array::bool(ux)]),
+        ("GroupRead".to_string(), vec![Array::bool(gr)]),
+        ("GroupWrite".to_string(), vec![Array::bool(gw)]),
+        ("GroupExecute".to_string(), vec![Array::bool(gx)]),
+        ("OtherRead".to_string(), vec![Array::bool(or_)]),
+        ("OtherWrite".to_string(), vec![Array::bool(ow)]),
+        ("OtherExecute".to_string(), vec![Array::bool(ox)]),
+    ];
+    Ok(vec![
+        Array::bool(true),
+        Array::struct_array(StructArray::from_fields(vec![1, 1], fields)),
+        Array::char_string(""),
+    ])
+}
+
+/// `exit` / `exit(code)` — quit FreeMat. A synonym for `quit`: in this
+/// interpreter `quit` is a keyword that signals `Signal::Return` to unwind out
+/// of the current scope, and the CLI's REPL loop separately breaks on the
+/// literal `exit`/`quit` input. We mirror `quit` exactly — emit `Signal::Return`
+/// — so there is no `process::exit` in library code and a test that evaluates
+/// `exit` only sees a benign return (it cannot kill the test runner). The
+/// optional numeric exit code is accepted and ignored (there is no process to
+/// hand it to from inside the interpreter).
+fn b_exit(_i: &mut Interpreter, _args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    Err(Signal::Return)
 }
 
 // ---- path / separators ---------------------------------------------------
