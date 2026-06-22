@@ -1816,3 +1816,69 @@ fn mfilename_empty_at_repl() {
     i.run("m = mfilename;").unwrap();
     assert_eq!(i.context.lookup("m").unwrap().as_string().unwrap(), "");
 }
+
+#[test]
+fn odeset_builds_options_struct() {
+    let mut i = interp();
+    i.run("o = odeset('RelTol',1e-4,'AbsTol',1e-7);").unwrap();
+    let o = i.context.lookup("o").unwrap();
+    let s = o.as_struct().expect("odeset returns a struct");
+    let rt = s.scalar_field("RelTol").and_then(fm_core::Array::as_f64);
+    let at = s.scalar_field("AbsTol").and_then(fm_core::Array::as_f64);
+    assert_eq!(rt, Some(1e-4));
+    assert_eq!(at, Some(1e-7));
+}
+
+#[test]
+fn odeset_updates_existing_struct_case_insensitive() {
+    let mut i = interp();
+    i.run("o = odeset('reltol',1e-3); o = odeset(o,'AbsTol',1e-9);")
+        .unwrap();
+    let o = i.context.lookup("o").unwrap();
+    let s = o.as_struct().unwrap();
+    // 'reltol' normalises to the canonical 'RelTol'.
+    assert_eq!(
+        s.scalar_field("RelTol").and_then(fm_core::Array::as_f64),
+        Some(1e-3)
+    );
+    assert_eq!(
+        s.scalar_field("AbsTol").and_then(fm_core::Array::as_f64),
+        Some(1e-9)
+    );
+}
+
+#[test]
+fn deval_interpolates_ode45_solution() {
+    let mut i = interp();
+    i.run("SOL = ode45(@(t,y) y,[0 3],1);").unwrap();
+    i.run("a = deval(SOL, 3);").unwrap();
+    i.run("b = deval(SOL, 0);").unwrap();
+    let a = i.context.lookup("a").unwrap().as_f64().unwrap();
+    let b = i.context.lookup("b").unwrap().as_f64().unwrap();
+    assert!((a - 3.0_f64.exp()).abs() < 1e-2, "deval(SOL,3)={a}");
+    assert!((b - 1.0).abs() < 1e-6, "deval(SOL,0)={b}");
+}
+
+#[test]
+fn deval_vector_query_returns_states_by_n() {
+    let mut i = interp();
+    i.run("SOL = ode45(@(t,y) y,[0 3],1);").unwrap();
+    i.run("v = deval(SOL, [0 1 2 3]);").unwrap();
+    let v = i.context.lookup("v").unwrap();
+    assert_eq!(v.dims(), vec![1, 4]);
+    let data = fm_interp::value::to_f64_vec(v);
+    assert!((data[0] - 1.0).abs() < 1e-6);
+    assert!((data[3] - 3.0_f64.exp()).abs() < 1e-2);
+}
+
+#[test]
+fn ode45_accepts_odeset_options() {
+    let mut i = interp();
+    // Tight tolerance via odeset should solve y'=y to high accuracy.
+    i.run("o = odeset('RelTol',1e-8,'AbsTol',1e-10); [t,y]=ode45(@(t,y) y,[0 1],1,o);")
+        .unwrap();
+    let y = i.context.lookup("y").unwrap();
+    let data = fm_interp::value::to_f64_vec(y);
+    let last = *data.last().unwrap();
+    assert!((last - 1.0_f64.exp()).abs() < 1e-6, "y(end)={last}");
+}

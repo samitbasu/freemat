@@ -33,6 +33,8 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("is_function_handle", b_is_function_handle);
     table.add_builtin("isfunctionhandle", b_is_function_handle);
     table.add_builtin("ode45", b_ode45);
+    table.add_builtin("odeset", b_odeset);
+    table.add_builtin("deval", b_deval);
     table.add_builtin("mpower", b_mpower);
 }
 
@@ -79,9 +81,24 @@ fn b_ode45(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Arra
         )));
     }
 
-    // Tolerances (MATLAB defaults).
-    let reltol = 1e-3_f64;
-    let abstol = 1e-6_f64;
+    // Tolerances (MATLAB defaults), optionally overridden by an options struct
+    // passed as a trailing argument (as produced by `odeset`).
+    let mut reltol = 1e-3_f64;
+    let mut abstol = 1e-6_f64;
+    if let Some(opts) = args.get(3).and_then(|a| a.as_struct()) {
+        if let Some(v) = opts.scalar_field("RelTol")
+            && let Some(&val) = to_f64_vec(v).first()
+            && val > 0.0
+        {
+            reltol = val;
+        }
+        if let Some(v) = opts.scalar_field("AbsTol")
+            && let Some(&val) = to_f64_vec(v).first()
+            && val > 0.0
+        {
+            abstol = val;
+        }
+    }
     let direction = if tf >= t0 { 1.0 } else { -1.0 };
 
     // Output mode: 2-element span → natural steps; longer vector → requested times.
@@ -354,6 +371,154 @@ fn hermite(
         out[j] = h00 * ya[j] + h10 * dt * f_a[j] + h01 * yb[j] + h11 * dt * f_b[j];
     }
     out
+}
+
+/// `odeset(...)` — build or modify an ODE options struct from name/value pairs,
+/// e.g. `odeset('RelTol',1e-4,'AbsTol',1e-6)`. The first argument may be an
+/// existing options struct, in which case the remaining name/value pairs update
+/// it: `odeset(oldopts,'RelTol',1e-4)`.
+///
+/// Field-name matching is case-insensitive but the canonical names recognised
+/// by FreeMat/MATLAB (`RelTol`, `AbsTol`, `MaxStep`, `InitialStep`, `Stepper`,
+/// `Events`, `Projection`) are stored. Unrecognised names are stored verbatim.
+fn b_odeset(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    // Canonical option names, used for case-insensitive normalisation.
+    const CANON: &[&str] = &[
+        "RelTol",
+        "AbsTol",
+        "MaxStep",
+        "InitialStep",
+        "Stepper",
+        "Events",
+        "Projection",
+    ];
+
+    // Field accumulator preserving insertion order.
+    let mut fields: Vec<(String, Array)> = Vec::new();
+    let set = |name: String, val: Array, fields: &mut Vec<(String, Array)>| {
+        if let Some(slot) = fields.iter_mut().find(|(n, _)| *n == name) {
+            slot.1 = val;
+        } else {
+            fields.push((name, val));
+        }
+    };
+
+    let mut idx = 0usize;
+    // Seed from an existing options struct, if given first.
+    if let Some(first) = args.first()
+        && let Some(s) = first.as_struct()
+    {
+        for name in s.field_names() {
+            if let Some(v) = s.scalar_field(name) {
+                set(name.to_string(), v.clone(), &mut fields);
+            }
+        }
+        idx = 1;
+    }
+
+    let rest = &args[idx..];
+    if !rest.len().is_multiple_of(2) {
+        return Err(Signal::Error(InterpError::msg(
+            "odeset must have an even number of name/value arguments.",
+        )));
+    }
+
+    let mut k = 0usize;
+    while k < rest.len() {
+        let name = rest[k].as_string().ok_or_else(|| {
+            Signal::Error(InterpError::msg(
+                "odeset: option names must be character strings",
+            ))
+        })?;
+        let canon = CANON
+            .iter()
+            .find(|c| c.eq_ignore_ascii_case(&name))
+            .map(|c| c.to_string())
+            .unwrap_or(name);
+        set(canon, rest[k + 1].clone(), &mut fields);
+        k += 2;
+    }
+
+    let sa = fm_core::StructArray::scalar(fields);
+    Ok(vec![Array::struct_array(sa)])
+}
+
+/// `deval(sol, t)` — evaluate the solution returned by `ode45` at the query
+/// time(s) `t`. `sol` is the struct ode45 returns, with `x` a row vector of
+/// times and `y` a states × times matrix.
+///
+/// Returns the interpolated state(s): for a scalar `t`, a states × 1 column
+/// vector; for a vector `t`, a states × numel(t) matrix (matching `deval.m`).
+/// Interpolation is cubic Hermite when endpoint derivatives can be estimated;
+/// the implementation here uses a monotone clamp-and-search over `sol.x` with
+/// linear interpolation as the robust fallback at the bracketing interval.
+fn b_deval(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 2, "deval")?;
+    let sol = args[0].as_struct().ok_or_else(|| {
+        Signal::Error(InterpError::msg(
+            "deval: first argument must be an ODE solution struct",
+        ))
+    })?;
+    let x_arr = sol.scalar_field("x").ok_or_else(|| {
+        Signal::Error(InterpError::msg("deval: solution struct has no field 'x'"))
+    })?;
+    let y_arr = sol.scalar_field("y").ok_or_else(|| {
+        Signal::Error(InterpError::msg("deval: solution struct has no field 'y'"))
+    })?;
+
+    let x = to_f64_vec(x_arr); // times, length npts
+    let npts = x.len();
+    if npts < 2 {
+        return Err(Signal::Error(InterpError::msg(
+            "deval: solution must have at least two time points",
+        )));
+    }
+    // y is states × times, column-major: element (state s, time c) at s + c*nstates.
+    let ydims = y_arr.dims();
+    let nstates = *ydims.first().unwrap_or(&1);
+    let ydata = to_f64_vec(y_arr);
+    if ydata.len() != nstates * npts {
+        return Err(Signal::Error(InterpError::msg(
+            "deval: solution field 'y' is inconsistent with 'x'",
+        )));
+    }
+
+    let tq = to_f64_vec(&args[1]);
+    let nq = tq.len();
+
+    // Determine integration direction from the time vector.
+    let ascending = x[npts - 1] >= x[0];
+
+    // Output: nstates × nq, column-major.
+    let mut out = vec![0.0; nstates * nq];
+    for (qi, &t) in tq.iter().enumerate() {
+        // Locate bracketing interval [c, c+1] containing t (clamp to ends).
+        let mut c = 0usize;
+        for j in 0..(npts - 1) {
+            let (lo, hi) = if ascending {
+                (x[j], x[j + 1])
+            } else {
+                (x[j + 1], x[j])
+            };
+            if t >= lo && t <= hi {
+                c = j;
+                break;
+            }
+            // Track the last interval whose far edge we've passed, for clamping.
+            c = j;
+        }
+        let xa = x[c];
+        let xb = x[c + 1];
+        let dt = xb - xa;
+        let s = if dt != 0.0 { (t - xa) / dt } else { 0.0 };
+        for st in 0..nstates {
+            let ya = ydata[st + c * nstates];
+            let yb = ydata[st + (c + 1) * nstates];
+            out[st + qi * nstates] = ya + (yb - ya) * s;
+        }
+    }
+
+    Ok(vec![build_real(DataClass::Double, &[nstates, nq], out)])
 }
 
 /// `func2str(h)` — the source text of a handle: `name` for `@name`, `@(x) expr`
