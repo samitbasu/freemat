@@ -18,8 +18,10 @@ pub mod fft;
 pub mod fileio;
 pub mod image_io;
 pub mod matfile;
+pub mod osio;
 pub mod regexp;
 pub mod scanf;
+pub mod wav;
 
 pub use builtins::register;
 pub use matfile::{MatError, MatVar, read_mat, write_mat};

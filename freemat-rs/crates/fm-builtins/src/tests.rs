@@ -843,6 +843,98 @@ fn etime_of_known_clock_vectors() {
 }
 
 #[test]
+fn clocktotime_known_value() {
+    // 2000-01-01 00:00:00 UTC is exactly 946684800 seconds past the Unix epoch.
+    let mut i = interp();
+    i.run("t = clocktotime([2000 1 1 0 0 0]);").unwrap();
+    let t = i
+        .context
+        .lookup("t")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+    assert!(
+        (t - 946_684_800.0).abs() < 1e-6,
+        "clocktotime mismatch: {t}"
+    );
+    // Fractional seconds carry through.
+    i.run("t2 = clocktotime([2000 1 1 0 0 0.5]);").unwrap();
+    let t2 = i
+        .context
+        .lookup("t2")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+    assert!((t2 - 946_684_800.5).abs() < 1e-6, "frac mismatch: {t2}");
+}
+
+#[test]
+fn wav_write_then_read_roundtrip() {
+    let mut i = interp();
+    let path = std::env::temp_dir().join(format!(
+        "fm_wav_roundtrip_{}_{}.wav",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let p = path.to_string_lossy().replace('\\', "/");
+    // A short known mono signal in [-1, 1].
+    i.run(&format!(
+        "y = [0; 0.5; -0.5; 1; -1; 0.25]; wavwrite(y, 22050, '{p}');"
+    ))
+    .unwrap();
+    i.run(&format!("[z, fs, nb] = wavread('{p}');")).unwrap();
+    let z = fm_interp::value::to_f64_vec(i.context.lookup("z").unwrap());
+    let expected = [0.0, 0.5, -0.5, 1.0, -1.0, 0.25];
+    assert_eq!(z.len(), expected.len(), "sample count mismatch");
+    for (a, b) in z.iter().zip(expected.iter()) {
+        assert!((a - b).abs() < 1e-4, "sample mismatch: {a} vs {b}");
+    }
+    let fs = i
+        .context
+        .lookup("fs")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+    let nb = i
+        .context
+        .lookup("nb")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+    assert_eq!(fs, 22050.0);
+    assert_eq!(nb, 16.0);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn license_returns_gpl() {
+    let mut i = interp();
+    i.run("l = license;").unwrap();
+    let l = i.context.lookup("l").and_then(|a| a.as_string()).unwrap();
+    assert_eq!(l, "GNU General Public License");
+}
+
+#[test]
+fn diary_off_runs_clean() {
+    let mut i = interp();
+    i.run("diary('off');").unwrap();
+    i.run("diary('on');").unwrap();
+    i.run("s = diary;").unwrap();
+    // After 'on', a value query reports logical true.
+    let s = i.context.lookup("s").unwrap();
+    assert_eq!(s.as_f64(), Some(1.0));
+    i.run("diary('off');").unwrap();
+}
+
+#[test]
+fn zlim_roundtrip() {
+    let mut i = interp();
+    i.run("zlim([0 5]);").unwrap();
+    i.run("zl = zlim;").unwrap();
+    let zl = fm_interp::value::to_f64_vec(i.context.lookup("zl").unwrap());
+    assert_eq!(zl, vec![0.0, 5.0]);
+}
+
+#[test]
 fn now_is_a_reasonable_serial_date() {
     let mut i = interp();
     i.run("n = now;").unwrap();

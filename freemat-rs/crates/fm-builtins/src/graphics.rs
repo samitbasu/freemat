@@ -37,6 +37,7 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("axis", b_axis);
     table.add_builtin("xlim", |i, a, _n| axis_limit(i, a, LimAxis::X));
     table.add_builtin("ylim", |i, a, _n| axis_limit(i, a, LimAxis::Y));
+    table.add_builtin("zlim", |i, a, _n| axis_limit(i, a, LimAxis::Z));
     table.add_builtin("clim", b_clim);
     table.add_builtin("patch", b_patch);
     table.add_builtin("contour3", b_contour3);
@@ -425,6 +426,8 @@ fn apply_property(i: &mut Interpreter, h: u64, prop: &str, value: &Array) -> Flo
                     xmax: v[1],
                     ymin: 0.0,
                     ymax: 1.0,
+                    zmin: None,
+                    zmax: None,
                 });
                 lim.xmin = v[0];
                 lim.xmax = v[1];
@@ -436,9 +439,24 @@ fn apply_property(i: &mut Interpreter, h: u64, prop: &str, value: &Array) -> Flo
                     xmax: 1.0,
                     ymin: v[0],
                     ymax: v[1],
+                    zmin: None,
+                    zmax: None,
                 });
                 lim.ymin = v[0];
                 lim.ymax = v[1];
+                ax.limits = Some(lim);
+            }
+            "zlim" if v.len() >= 2 => {
+                let mut lim = ax.limits.unwrap_or(AxisLimits {
+                    xmin: 0.0,
+                    xmax: 1.0,
+                    ymin: 0.0,
+                    ymax: 1.0,
+                    zmin: Some(v[0]),
+                    zmax: Some(v[1]),
+                });
+                lim.zmin = Some(v[0]);
+                lim.zmax = Some(v[1]);
                 ax.limits = Some(lim);
             }
             "xscale" => ax.xscale = scale_of(&value.as_string().unwrap_or_default()),
@@ -886,6 +904,8 @@ fn b_axis(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
                 xmax: v[1],
                 ymin: v[2],
                 ymax: v[3],
+                zmin: None,
+                zmax: None,
             });
         }
     }
@@ -970,10 +990,42 @@ fn auto_xy_bounds(series: &[Series]) -> [f64; 4] {
     b
 }
 
-/// Which coordinate `xlim`/`ylim` operate on.
+/// Which coordinate `xlim`/`ylim`/`zlim` operate on.
 enum LimAxis {
     X,
     Y,
+    Z,
+}
+
+/// The auto `[zmin, zmax]` extent over the 3-D series (`surf`/`mesh`/`plot3`),
+/// falling back to `[0, 1]` when there is no 3-D data.
+fn auto_z_bounds(series: &[Series]) -> (f64, f64) {
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    for s in series {
+        match s {
+            Series::Line3d(l) => {
+                for &z in &l.z {
+                    if z.is_finite() {
+                        lo = lo.min(z);
+                        hi = hi.max(z);
+                    }
+                }
+            }
+            Series::Surface(sf) => {
+                for row in &sf.z {
+                    for &z in row {
+                        if z.is_finite() {
+                            lo = lo.min(z);
+                            hi = hi.max(z);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if lo > hi { (0.0, 1.0) } else { (lo, hi) }
 }
 
 /// `xlim`/`ylim` — get or set the axis limits. No argument returns the current
@@ -983,15 +1035,21 @@ enum LimAxis {
 fn axis_limit(i: &mut Interpreter, args: &[Array], which: LimAxis) -> Flow<Vec<Array>> {
     let ax = i.graphics.current_figure_mut().current_axes_mut();
     let auto = auto_xy_bounds(&ax.series);
+    let auto_z = auto_z_bounds(&ax.series);
     let (auto_lo, auto_hi) = match which {
         LimAxis::X => (auto[0], auto[1]),
         LimAxis::Y => (auto[2], auto[3]),
+        LimAxis::Z => auto_z,
     };
     // Query form: report the current (explicit or auto) limits.
     if args.is_empty() {
         let (lo, hi) = match (&ax.limits, &which) {
             (Some(l), LimAxis::X) => (l.xmin, l.xmax),
             (Some(l), LimAxis::Y) => (l.ymin, l.ymax),
+            (Some(l), LimAxis::Z) => match (l.zmin, l.zmax) {
+                (Some(lo), Some(hi)) => (lo, hi),
+                _ => (auto_lo, auto_hi),
+            },
             (None, _) => (auto_lo, auto_hi),
         };
         return Ok(vec![build_real(DataClass::Double, &[1, 2], vec![lo, hi])]);
@@ -1017,6 +1075,8 @@ fn axis_limit(i: &mut Interpreter, args: &[Array], which: LimAxis) -> Flow<Vec<A
         xmax: auto[1],
         ymin: auto[2],
         ymax: auto[3],
+        zmin: None,
+        zmax: None,
     });
     match which {
         LimAxis::X => {
@@ -1026,6 +1086,10 @@ fn axis_limit(i: &mut Interpreter, args: &[Array], which: LimAxis) -> Flow<Vec<A
         LimAxis::Y => {
             lim.ymin = lo;
             lim.ymax = hi;
+        }
+        LimAxis::Z => {
+            lim.zmin = Some(lo);
+            lim.zmax = Some(hi);
         }
     }
     ax.limits = Some(lim);

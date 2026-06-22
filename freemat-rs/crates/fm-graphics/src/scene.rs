@@ -241,6 +241,13 @@ pub struct AxisLimits {
     pub ymin: f64,
     /// Maximum y.
     pub ymax: f64,
+    /// Minimum z (3-D). `None` = auto / not set (kept out of serialized JSON so
+    /// existing 2-D figure transcripts are byte-for-byte unchanged).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zmin: Option<f64>,
+    /// Maximum z (3-D). `None` = auto / not set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zmax: Option<f64>,
 }
 
 /// An axis scale.

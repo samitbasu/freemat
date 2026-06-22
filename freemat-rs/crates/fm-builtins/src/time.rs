@@ -11,7 +11,7 @@
 use std::cell::Cell;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use chrono::{Datelike, Local, TimeZone, Timelike};
+use chrono::{Datelike, Local, TimeZone, Timelike, Utc};
 use fm_core::{Array, DataClass};
 use fm_interp::error::Flow;
 use fm_interp::value::{build_real, to_f64_vec};
@@ -42,6 +42,39 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("etime", b_etime);
     table.add_builtin("pause", b_pause);
     table.add_builtin("now", b_now);
+    table.add_builtin("clocktotime", b_clocktotime);
+}
+
+/// `clocktotime(c)` — convert a clock vector
+/// `[year month day hour minute seconds]` to epoch time: the number of seconds
+/// since 1970-01-01 00:00:00 UTC (FreeMat's documented convention). This is a
+/// pure conversion of the argument (independent of the current time and of the
+/// host time zone), so the clock fields are interpreted as UTC.
+fn b_clocktotime(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.len() != 1 {
+        return err(
+            "clocktotime expects 1 argument - a vector in clock format: \
+             [year month day hour minute seconds]",
+        );
+    }
+    let v = to_f64_vec(&args[0]);
+    if v.len() != 6 {
+        return err(
+            "clocktotime expects 1 argument - a vector in clock format: \
+             [year month day hour minute seconds]",
+        );
+    }
+    let year = v[0] as i32;
+    let month = v[1] as u32;
+    let day = v[2] as u32;
+    let hour = v[3] as u32;
+    let minute = v[4] as u32;
+    let whole_sec = v[5].trunc() as u32;
+    let frac = v[5] - v[5].trunc();
+    match Utc.with_ymd_and_hms(year, month, day, hour, minute, whole_sec) {
+        chrono::LocalResult::Single(dt) => Ok(vec![Array::double(dt.timestamp() as f64 + frac)]),
+        _ => err("clocktotime: invalid clock vector"),
+    }
 }
 
 /// `tic` — start the stopwatch. Always records the default (no-handle) start

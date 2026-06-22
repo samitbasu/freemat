@@ -9,7 +9,7 @@ use fm_interp::{FunctionTable, Interpreter};
 use fm_parser::Span;
 
 use crate::matfile::{MatVar, read_mat, write_mat};
-use crate::{fft, fileio, regexp, scanf};
+use crate::{fft, fileio, osio, regexp, scanf, wav};
 
 /// Register every `fm-io` builtin into `table`.
 pub fn register(table: &mut FunctionTable) {
@@ -82,9 +82,15 @@ pub fn register(table: &mut FunctionTable) {
     table.add_builtin("regexp", |_i, a, n| regexp::regexp(a, false, n));
     table.add_builtin("regexpi", |_i, a, n| regexp::regexp(a, true, n));
     table.add_builtin("regexprep", |_i, a, n| regexp::regexprep(a, n));
+
+    table.add_builtin("system", |_i, a, n| osio::system(a, n));
+    table.add_builtin("diary", |_i, a, n| osio::diary(a, n));
+    table.add_builtin("license", |_i, a, _n| osio::license(a));
+    table.add_builtin("wavwrite", |_i, a, _n| wav::wavwrite(a));
+    table.add_builtin("wavread", |_i, a, _n| wav::wavread(a));
 }
 
-fn err<T>(msg: impl Into<String>) -> Flow<T> {
+pub(crate) fn err<T>(msg: impl Into<String>) -> Flow<T> {
     Err(Signal::Error(InterpError::msg(msg)))
 }
 
