@@ -493,9 +493,53 @@ fn apply_property(i: &mut Interpreter, h: u64, prop: &str, value: &Array) -> Flo
     Ok(())
 }
 
+/// An empty `0x0` double (MATLAB's `[]`), used for absent properties.
+fn empty() -> Array {
+    build_real(DataClass::Double, &[0, 0], Vec::new())
+}
+
+/// A column vector of handles (MATLAB returns `children` as an n×1 column).
+fn handle_column(handles: &[u64]) -> Array {
+    let n = handles.len();
+    build_real(
+        DataClass::Double,
+        &[n, 1],
+        handles.iter().map(|&h| h as f64).collect(),
+    )
+}
+
 /// Read a single property from the handle's object.
 fn read_property(i: &Interpreter, h: u64, prop: &str) -> Array {
     let prop_l = prop.to_ascii_lowercase();
+    // Hierarchy-navigation properties work for every object kind (incl. root).
+    match prop_l.as_str() {
+        "type" => {
+            if let Some(k) = i.graphics.kind_of(h) {
+                return Array::char_string(k.type_name());
+            }
+        }
+        "parent" => {
+            // The root's parent is empty []; every other object has a scalar.
+            return match i.graphics.parent(h) {
+                Some(p) => scalar(p as f64),
+                None => empty(),
+            };
+        }
+        "children" => return handle_column(&i.graphics.children(h)),
+        _ => {}
+    }
+    // The root object (handle 0): a small set of read-only properties.
+    if h == 0 {
+        match prop_l.as_str() {
+            "currentfigure" => return scalar(i.graphics.current_figure as f64),
+            // A fixed, deterministic screen size [left bottom width height].
+            "screensize" | "monitorpositions" => {
+                return build_real(DataClass::Double, &[1, 4], vec![1.0, 1.0, 1920.0, 1080.0]);
+            }
+            _ => {}
+        }
+        return i.graphics.get_extra(h, prop).unwrap_or_else(empty);
+    }
     if let Some(loc) = i.graphics.resolve(h) {
         match loc {
             ObjLocation::Figure { fig } => {
@@ -590,9 +634,7 @@ fn read_property(i: &Interpreter, h: u64, prop: &str) -> Array {
         }
     }
     // Unknown / free-form: echo from the bag, or empty.
-    i.graphics
-        .get_extra(h, prop)
-        .unwrap_or_else(|| build_real(DataClass::Double, &[0, 0], Vec::new()))
+    i.graphics.get_extra(h, prop).unwrap_or_else(empty)
 }
 
 fn scale_of(s: &str) -> Scale {

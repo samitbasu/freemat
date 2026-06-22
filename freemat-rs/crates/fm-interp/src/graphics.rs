@@ -24,6 +24,8 @@ use fm_graphics::{Axes, Figure, GraphicsSink, Scene, Series};
 /// `ishandle(h,'axes')`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjKind {
+    /// The root object (handle `0`); parent of all figures.
+    Root,
     /// A figure window.
     Figure,
     /// A coordinate system (an axes).
@@ -45,6 +47,7 @@ impl ObjKind {
     #[must_use]
     pub fn type_name(self) -> &'static str {
         match self {
+            ObjKind::Root => "root",
             ObjKind::Figure => "figure",
             ObjKind::Axes => "axes",
             ObjKind::Line => "line",
@@ -215,16 +218,74 @@ impl GraphicsState {
         self.objects.get(&handle)
     }
 
-    /// True if `handle` names a live graphics object.
+    /// True if `handle` names a live graphics object. Handle `0` is the root
+    /// object, which always exists.
     #[must_use]
     pub fn is_handle(&self, handle: u64) -> bool {
-        self.objects.contains_key(&handle)
+        handle == 0 || self.objects.contains_key(&handle)
     }
 
-    /// The kind of the object named by `handle`, if any.
+    /// The kind of the object named by `handle`, if any. Handle `0` is the root.
     #[must_use]
     pub fn kind_of(&self, handle: u64) -> Option<ObjKind> {
+        if handle == 0 {
+            return Some(ObjKind::Root);
+        }
         self.objects.get(&handle).map(|r| r.kind)
+    }
+
+    /// The parent handle of `handle` in the object hierarchy:
+    /// figure → root (`0`); axes → its figure; series/text → its axes; the root
+    /// has no parent (`None`).
+    #[must_use]
+    pub fn parent(&self, handle: u64) -> Option<u64> {
+        if handle == 0 {
+            return None; // the root has no parent.
+        }
+        match self.resolve(handle)? {
+            ObjLocation::Figure { .. } => Some(0),
+            ObjLocation::Axes { fig, .. } => Some(fig),
+            ObjLocation::Series { fig, axes, .. } => self
+                .scene
+                .figure(fig)
+                .and_then(|f| f.axes.get(axes))
+                .map(|a| a.handle),
+        }
+    }
+
+    /// The child handles of `handle`, in a deterministic (sorted-ascending)
+    /// order: root → all figure handles; figure → its axes handles; axes → its
+    /// series/text children; a leaf object → empty.
+    #[must_use]
+    pub fn children(&self, handle: u64) -> Vec<u64> {
+        let mut out: Vec<u64> = if handle == 0 {
+            // The root: every figure.
+            self.objects
+                .iter()
+                .filter(|(_, r)| matches!(r.location, ObjLocation::Figure { .. }))
+                .map(|(&h, _)| h)
+                .collect()
+        } else {
+            match self.resolve(handle) {
+                Some(ObjLocation::Figure { fig }) => self
+                    .objects
+                    .iter()
+                    .filter(|(_, r)| matches!(r.location, ObjLocation::Axes { fig: f, .. } if f == fig))
+                    .map(|(&h, _)| h)
+                    .collect(),
+                Some(ObjLocation::Axes { fig, axes }) => self
+                    .objects
+                    .iter()
+                    .filter(|(_, r)| {
+                        matches!(r.location, ObjLocation::Series { fig: f, axes: a, .. } if f == fig && a == axes)
+                    })
+                    .map(|(&h, _)| h)
+                    .collect(),
+                _ => Vec::new(),
+            }
+        };
+        out.sort_unstable();
+        out
     }
 
     /// Resolve a handle to its current location (the location may have shifted

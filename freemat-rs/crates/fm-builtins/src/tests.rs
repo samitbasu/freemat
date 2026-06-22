@@ -745,6 +745,101 @@ fn ishandle_and_gco_and_delete() {
 }
 
 #[test]
+fn root_object_and_hierarchy_navigation() {
+    let mut i = interp();
+    // The root (handle 0) always exists, even before any plotting.
+    i.run("r = ishandle(0); rt = get(0, 'type');").unwrap();
+    assert!(
+        i.context
+            .lookup("r")
+            .and_then(fm_core::Array::as_f64)
+            .unwrap()
+            != 0.0
+    );
+    assert_eq!(
+        i.context.lookup("rt").and_then(fm_core::Array::as_string),
+        Some("root".to_string())
+    );
+
+    // Build a scene: one figure, one axes, one line.
+    i.run("ln = plot(1:3, [1 2 3]);").unwrap();
+    i.run("f = gcf; a = gca;").unwrap();
+    let fig = i
+        .context
+        .lookup("f")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+    let ax = i
+        .context
+        .lookup("a")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+    let line = i
+        .context
+        .lookup("ln")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+
+    // Types.
+    i.run("ft = get(f,'type'); at = get(a,'type'); lt = get(ln,'type');")
+        .unwrap();
+    assert_eq!(
+        i.context.lookup("ft").and_then(fm_core::Array::as_string),
+        Some("figure".to_string())
+    );
+    assert_eq!(
+        i.context.lookup("at").and_then(fm_core::Array::as_string),
+        Some("axes".to_string())
+    );
+    assert_eq!(
+        i.context.lookup("lt").and_then(fm_core::Array::as_string),
+        Some("line".to_string())
+    );
+
+    // Parents: figure → 0, axes → figure, line → axes.
+    i.run("fp = get(f,'parent'); ap = get(a,'parent'); lp = get(ln,'parent');")
+        .unwrap();
+    assert_eq!(
+        i.context.lookup("fp").and_then(fm_core::Array::as_f64),
+        Some(0.0)
+    );
+    assert_eq!(
+        i.context.lookup("ap").and_then(fm_core::Array::as_f64),
+        Some(fig)
+    );
+    assert_eq!(
+        i.context.lookup("lp").and_then(fm_core::Array::as_f64),
+        Some(ax)
+    );
+
+    // Children: root contains figure, figure contains axes, axes contains line.
+    i.run("rc = get(0,'children'); fc = get(f,'children'); ac = get(a,'children');")
+        .unwrap();
+    let rc = fm_interp::value::to_f64_vec(i.context.lookup("rc").unwrap());
+    let fc = fm_interp::value::to_f64_vec(i.context.lookup("fc").unwrap());
+    let ac = fm_interp::value::to_f64_vec(i.context.lookup("ac").unwrap());
+    assert!(
+        rc.contains(&fig),
+        "root children {rc:?} should contain {fig}"
+    );
+    assert!(
+        fc.contains(&ax),
+        "figure children {fc:?} should contain {ax}"
+    );
+    assert!(
+        ac.contains(&line),
+        "axes children {ac:?} should contain {line}"
+    );
+
+    // The root's currentfigure tracks gcf.
+    i.run("cf = get(0,'currentfigure');").unwrap();
+    assert_eq!(
+        i.context.lookup("cf").and_then(fm_core::Array::as_f64),
+        Some(fig)
+    );
+}
+
+#[test]
 fn contour_builds_a_contour_series() {
     use fm_graphics::Series;
     let mut i = interp();
