@@ -1,7 +1,7 @@
 //! Linear-algebra builtins wrapping [`fm_linalg`]: `inv`, `det`, `eig`, `svd`,
 //! `lu`, `qr`, `chol`, `norm`, `rank`, `pinv`, `trace`, `transpose`, `mtimes`.
 
-use fm_core::{Array, DataClass};
+use fm_core::{Array, DataClass, SparseMatrix};
 use fm_interp::error::{Flow, InterpError, Signal};
 use fm_interp::value::{build_real, to_f64_vec};
 use fm_interp::{FunctionTable, Interpreter};
@@ -159,8 +159,183 @@ fn b_lu(_i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>
                 "lu: sparse LU is only supported for square matrices",
             )));
         }
+        let sp = a.as_sparse().expect("is_sparse() but as_sparse() is None");
+        if sp.is_complex() {
+            return Err(Signal::Error(InterpError::msg(
+                "lu: complex sparse LU is not yet supported",
+            )));
+        }
+        return sparse_lu(sp, nargout);
     }
     fm_linalg::lu(a, nargout).map_err(wrap)
+}
+
+/// Sparse LU factorization for square, real, double sparse matrices.
+///
+/// Produces `[L, U, P, Q, R]` such that `L*U = P*R*A*Q`, matching FreeMat's
+/// (UMFPACK-backed) output conventions where `P` and `Q` are permutation
+/// **vectors** (1-based) and `R` is a diagonal row-scaling matrix.
+///
+/// Convention used here (deterministic):
+/// - `R` = identity row scaling (`speye(n)`).
+/// - `Q` = identity column permutation (`1:n`); no fill-reducing reorder.
+/// - `P` = the partial-pivoting row permutation (largest-magnitude pivot,
+///   ties broken by smallest row index — fully deterministic).
+///
+/// With `R = I` and `Q = I` the identity collapses to `L*U = P*A`, so in the
+/// doc example `b = r*a == a` and `full(b(p,q)) == full(P*A) == full(L*U)`.
+///
+/// The factorization is left-looking (Gilbert–Peierls style): it keeps `L` and
+/// `U` sparse, using a single O(n) dense workspace per column (the matrix
+/// itself is never densified).
+fn sparse_lu(a: &SparseMatrix, nargout: usize) -> Flow<Vec<Array>> {
+    let n = a.rows();
+    // `perm[i]` = original row index currently sitting in position `i`.
+    let mut perm: Vec<usize> = (0..n).collect();
+    // `pos[r]` = current position of original row `r` (inverse of `perm`).
+    let mut pos: Vec<usize> = (0..n).collect();
+
+    // L and U accumulated as triplets in *final* (permuted) row order.
+    // L is unit-lower-triangular (implicit unit diagonal stored explicitly).
+    let mut l_i: Vec<usize> = Vec::new();
+    let mut l_j: Vec<usize> = Vec::new();
+    let mut l_v: Vec<f64> = Vec::new();
+    let mut u_i: Vec<usize> = Vec::new();
+    let mut u_j: Vec<usize> = Vec::new();
+    let mut u_v: Vec<f64> = Vec::new();
+
+    let col_ptr = a.col_ptr();
+    let row_idx = a.row_idx();
+    let re = a.re();
+
+    // Dense workspace `x`, indexed by *position* (permuted row index).
+    let mut x = vec![0.0f64; n];
+
+    for j in 0..n {
+        // Scatter column j of A into x, indexed by current position.
+        for v in x.iter_mut() {
+            *v = 0.0;
+        }
+        for k in col_ptr[j]..col_ptr[j + 1] {
+            let orig_row = row_idx[k];
+            x[pos[orig_row]] = re[k];
+        }
+
+        // Forward-substitution against the already-computed columns of L:
+        // for each pivot row r < j (in position order), eliminate using the
+        // multipliers stored in L's column r.
+        for r in 0..j {
+            let xr = x[r];
+            if xr == 0.0 {
+                continue;
+            }
+            // x[i] -= L(i, r) * x[r] for i > r.
+            for (idx, &lj) in l_j.iter().enumerate() {
+                if lj == r && l_i[idx] > r {
+                    x[l_i[idx]] -= l_v[idx] * xr;
+                }
+            }
+        }
+
+        // Partial pivoting: pick the largest |x[i]| among i >= j.
+        let mut piv = j;
+        let mut best = x[j].abs();
+        for (off, &xi) in x[(j + 1)..n].iter().enumerate() {
+            if xi.abs() > best {
+                best = xi.abs();
+                piv = j + 1 + off;
+            }
+        }
+        if best == 0.0 {
+            return Err(Signal::Error(InterpError::msg(
+                "lu: sparse matrix is singular to working precision",
+            )));
+        }
+
+        // Swap positions j and piv (both the value workspace and the
+        // permutation bookkeeping, plus already-emitted L entries).
+        if piv != j {
+            x.swap(j, piv);
+            let (oj, op) = (perm[j], perm[piv]);
+            perm.swap(j, piv);
+            pos[oj] = piv;
+            pos[op] = j;
+            for ri in l_i.iter_mut() {
+                if *ri == j {
+                    *ri = piv;
+                } else if *ri == piv {
+                    *ri = j;
+                }
+            }
+        }
+
+        // Emit U's column j (rows 0..=j) and L's column j (rows j..n, divided
+        // by the pivot, with a unit diagonal entry).
+        let pivot = x[j];
+        for (i, &xi) in x[..=j].iter().enumerate() {
+            if xi != 0.0 {
+                u_i.push(i);
+                u_j.push(j);
+                u_v.push(xi);
+            }
+        }
+        l_i.push(j);
+        l_j.push(j);
+        l_v.push(1.0);
+        for (off, &xi) in x[(j + 1)..n].iter().enumerate() {
+            if xi != 0.0 {
+                l_i.push(j + 1 + off);
+                l_j.push(j);
+                l_v.push(xi / pivot);
+            }
+        }
+    }
+
+    // Build sparse outputs. Triplet indices are 0-based positions; convert to
+    // 1-based for `from_triplets`.
+    let to_one = |v: &[usize]| -> Vec<usize> { v.iter().map(|&x| x + 1).collect() };
+    let l = SparseMatrix::from_triplets(
+        &to_one(&l_i),
+        &to_one(&l_j),
+        &l_v,
+        None,
+        Some(n),
+        Some(n),
+        DataClass::Double,
+    )
+    .map_err(|e| Signal::Error(InterpError::msg(e)))?;
+    let u = SparseMatrix::from_triplets(
+        &to_one(&u_i),
+        &to_one(&u_j),
+        &u_v,
+        None,
+        Some(n),
+        Some(n),
+        DataClass::Double,
+    )
+    .map_err(|e| Signal::Error(InterpError::msg(e)))?;
+
+    // P as a 1-based column permutation vector: P*A takes row perm[i] to row i,
+    // i.e. p(i) = perm[i] + 1.
+    let p_vec: Vec<f64> = perm.iter().map(|&r| (r + 1) as f64).collect();
+    // Q = identity, R = identity (see convention above).
+    let q_vec: Vec<f64> = (1..=n).map(|i| i as f64).collect();
+
+    let mut out: Vec<Array> = Vec::with_capacity(nargout.max(1));
+    out.push(Array::sparse(l));
+    if nargout >= 2 {
+        out.push(Array::sparse(u));
+    }
+    if nargout >= 3 {
+        out.push(Array::double_matrix(&[n, 1], p_vec));
+    }
+    if nargout >= 4 {
+        out.push(Array::double_matrix(&[n, 1], q_vec));
+    }
+    if nargout >= 5 {
+        out.push(Array::sparse(SparseMatrix::eye(n, n)));
+    }
+    Ok(out)
 }
 
 fn b_qr(_i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {

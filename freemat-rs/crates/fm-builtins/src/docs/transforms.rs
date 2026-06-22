@@ -461,7 +461,7 @@ and `R` is a diagonal matrix of row scaling factors.  The decomposition
 ## Example
 First, we compute the LU decomposition of a dense matrix.
 
-```fm
+```fm-exec
 a = float([1,2,3;4,5,8;10,12,3])
 [l,u,p] = lu(a)
 l*u
@@ -471,7 +471,7 @@ p*a
 Now we repeat the exercise with a sparse matrix, and demonstrate
 the use of the permutation vectors.
 
-```fm
+```fm-exec
 a = sparse([1,0,0,4;3,2,0,0;0,0,0,1;4,3,2,4])
 [l,u,p,q,r] = lu(a)
 full(l*a)
