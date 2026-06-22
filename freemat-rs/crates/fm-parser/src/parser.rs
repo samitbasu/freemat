@@ -89,6 +89,10 @@ pub struct Parser<'src> {
     furthest: Option<ParseError>,
 }
 
+/// The result of parsing a call's argument list: positional arguments paired
+/// with IDL-style keyword arguments (`(name, optional value)`).
+type CallArgs = (Vec<Expr>, Vec<(String, Option<Expr>)>);
+
 /// A snapshot used to backtrack a tentative parse.
 struct Save<'src> {
     lexer: Lexer<'src>,
@@ -890,15 +894,29 @@ impl<'src> Parser<'src> {
             match self.peek() {
                 TokenKind::LParen => {
                     self.bump()?;
-                    let args = self.index_args(&TokenKind::RParen)?;
+                    let (args, keywords) = self.call_args(&TokenKind::RParen)?;
                     let end = self.expect(&TokenKind::RParen, "to close indexing")?;
                     let span = e.span.merge(end.span);
-                    e = Expr {
-                        kind: ExprKind::Index {
-                            base: Box::new(e),
-                            args,
-                        },
-                        span,
+                    // Keyword arguments (`/name` / `/name=expr`) are an IDL-style
+                    // call form; produce them only when present so ordinary calls
+                    // and array indexing stay on the plain `Index` node.
+                    e = if keywords.is_empty() {
+                        Expr {
+                            kind: ExprKind::Index {
+                                base: Box::new(e),
+                                args,
+                            },
+                            span,
+                        }
+                    } else {
+                        Expr {
+                            kind: ExprKind::KeywordCall {
+                                base: Box::new(e),
+                                args,
+                                keywords,
+                            },
+                            span,
+                        }
                     };
                 }
                 TokenKind::LBrace => {
@@ -957,28 +975,74 @@ impl<'src> Parser<'src> {
         Ok(e)
     }
 
+    /// Parse a call's argument list, splitting positional arguments from
+    /// IDL-style keyword arguments. A keyword argument is recognized **only** at
+    /// the start of an argument (just after `(` or a `,`) as a `/` immediately
+    /// followed by an identifier: `/name` (bare → binds `logical(1)`) or
+    /// `/name = expr`. Everywhere else `/` is the ordinary division operator, so
+    /// this peek-and-commit is the sole place `/` gets special treatment.
+    fn call_args(&mut self, close: &TokenKind) -> Result<CallArgs> {
+        let mut args = Vec::new();
+        let mut keywords = Vec::new();
+        while !self.at(close) {
+            if self.at(&TokenKind::RDivide) {
+                // Peek past `/` for an identifier without consuming on failure.
+                let snap = self.save();
+                self.bump()?;
+                if let TokenKind::Ident(name) = self.peek().clone() {
+                    self.bump()?;
+                    let value = if self.eat(&TokenKind::Assign)? {
+                        Some(self.expression()?)
+                    } else {
+                        None
+                    };
+                    keywords.push((name, value));
+                    if !self.at(close) {
+                        self.expect(&TokenKind::Comma, "between call arguments")?;
+                    }
+                    continue;
+                }
+                // Not `/ident` — `/` was not a keyword marker. Back up and parse
+                // as an ordinary expression (where `/` is division).
+                self.restore(snap);
+            }
+            self.push_index_arg(&mut args, close)?;
+            if !self.at(close) {
+                self.expect(&TokenKind::Comma, "between call arguments")?;
+            }
+        }
+        Ok((args, keywords))
+    }
+
+    /// Parse one positional argument (handling the bare `:` magic-colon) and push
+    /// it onto `args`. Shared by [`call_args`] and [`index_args`].
+    fn push_index_arg(&mut self, args: &mut Vec<Expr>, close: &TokenKind) -> Result<()> {
+        if self.at(&TokenKind::Colon) {
+            // A bare `:` is the magic colon only if it stands alone as an
+            // argument (next is `,` or the closer).
+            let snap = self.save();
+            let cspan = self.peek_span();
+            self.bump()?;
+            if self.at(&TokenKind::Comma) || self.at(close) {
+                args.push(Expr {
+                    kind: ExprKind::Colon,
+                    span: cspan,
+                });
+            } else {
+                self.restore(snap);
+                args.push(self.expression()?);
+            }
+        } else {
+            args.push(self.expression()?);
+        }
+        Ok(())
+    }
+
     /// Parse comma-separated index arguments, allowing the bare `:` magic-colon.
     fn index_args(&mut self, close: &TokenKind) -> Result<Vec<Expr>> {
         let mut args = Vec::new();
         while !self.at(close) {
-            if self.at(&TokenKind::Colon) {
-                // A bare `:` is the magic colon only if it stands alone as an
-                // argument (next is `,` or the closer).
-                let snap = self.save();
-                let cspan = self.peek_span();
-                self.bump()?;
-                if self.at(&TokenKind::Comma) || self.at(close) {
-                    args.push(Expr {
-                        kind: ExprKind::Colon,
-                        span: cspan,
-                    });
-                } else {
-                    self.restore(snap);
-                    args.push(self.expression()?);
-                }
-            } else {
-                args.push(self.expression()?);
-            }
+            self.push_index_arg(&mut args, close)?;
             if !self.at(close) {
                 self.expect(&TokenKind::Comma, "between index arguments")?;
             }

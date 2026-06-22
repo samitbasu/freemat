@@ -370,7 +370,8 @@ function c = keyfunc(a,b,operation,printit)
 Now some examples of how this function can be called using
 `keywords`.
 
-```fm
+```fm-exec
+# errors: 1
 keyfunc(1,3)                % specify a and b, defaults for the others
 keyfunc(1,3,/printit)       % specify printit is true
 keyfunc(/operation='-',2,3) % assigns a=2, b=3

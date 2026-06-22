@@ -741,7 +741,10 @@ impl Interpreter {
                 Ok(self.make_anon_handle(params, body, src, e.span))
             }
             // Possibly multi-valued (function call / cell-content): take first.
-            ExprKind::Ident(_) | ExprKind::Index { .. } | ExprKind::CellIndex { .. } => {
+            ExprKind::Ident(_)
+            | ExprKind::Index { .. }
+            | ExprKind::KeywordCall { .. }
+            | ExprKind::CellIndex { .. } => {
                 let vals = self.eval_multi(e, 1, src)?;
                 vals.into_iter().next().ok_or_else(|| {
                     Signal::Error(
@@ -780,6 +783,11 @@ impl Interpreter {
                 Ok(vec![transpose(&v, *conjugate)?])
             }
             ExprKind::Index { base, args } => self.eval_index(base, args, nargout, src, e.span),
+            ExprKind::KeywordCall {
+                base,
+                args,
+                keywords,
+            } => self.eval_keyword_call(base, args, keywords, nargout, src, e.span),
             ExprKind::CellIndex { base, args } => self.eval_cell_index(base, args, src),
             ExprKind::Field { base, name } => {
                 let b = self.eval(base, src)?;
@@ -1010,6 +1018,113 @@ impl Interpreter {
         }
         let plan = self.plan_for(&value, args, src)?;
         Ok(vec![index::gather(&value, &plan)?])
+    }
+
+    /// Evaluate an IDL-style **keyword call** `name(pos..., /key=val, /key)`.
+    ///
+    /// Keyword calls are only meaningful for interpreted (user `.m`) functions —
+    /// only they declare named parameters. Each keyword binds its named parameter
+    /// (value = the supplied expression, or `logical(1)` for the bare `/name`
+    /// form); the positional arguments then fill the parameter slots left
+    /// unfilled by keywords, in declaration order. Any remaining slots are passed
+    /// as `[]` (empty), which `isset` reports as unset — matching FreeMat.
+    fn eval_keyword_call(
+        &mut self,
+        base: &Expr,
+        args: &[Expr],
+        keywords: &[(String, Option<Expr>)],
+        nargout: usize,
+        src: &str,
+        span: Span,
+    ) -> Flow<Vec<Array>> {
+        // The callee must be a bare name resolving to an interpreted function;
+        // keyword syntax has no meaning for builtins, handles, or indexing.
+        let ExprKind::Ident(name) = &base.kind else {
+            return Err(Signal::Error(
+                InterpError::msg("keyword arguments require a function name").located(src, span),
+            ));
+        };
+        if self.context.exists(name) {
+            return Err(Signal::Error(
+                InterpError::msg(format!(
+                    "keyword arguments cannot be used to index the variable '{name}'"
+                ))
+                .located(src, span),
+            ));
+        }
+        let def = self.lookup_interpreted_def(name).ok_or_else(|| {
+            Signal::Error(
+                InterpError::msg(format!(
+                    "keyword arguments are only supported for user-defined functions, not '{name}'"
+                ))
+                .located(src, span),
+            )
+        })?;
+
+        // Map each keyword to its parameter index (declaration order).
+        let mut keyword_ndx = Vec::with_capacity(keywords.len());
+        let mut max_ndx = 0usize;
+        for (kname, _) in keywords {
+            let idx = def
+                .inputs
+                .iter()
+                .position(|p| &p.name == kname)
+                .ok_or_else(|| {
+                    Signal::Error(
+                        InterpError::msg(format!(
+                            "out-of-order argument /{kname} is not defined in the called function!"
+                        ))
+                        .located(src, span),
+                    )
+                })?;
+            keyword_ndx.push(idx);
+            max_ndx = max_ndx.max(idx);
+        }
+
+        // Evaluate keyword values (`/name=expr`) or default the bare form to
+        // `logical(1)`.
+        let mut keyvals = Vec::with_capacity(keywords.len());
+        for (_, value) in keywords {
+            match value {
+                Some(expr) => keyvals.push(self.eval(expr, src)?),
+                None => keyvals.push(Array::bool(true)),
+            }
+        }
+
+        // Evaluate the positional arguments (may expand cs-lists).
+        let pos_vals = self.eval_args(args, src)?;
+
+        // Determine the total number of slots: enough for the highest keyword
+        // index, plus any positional values that overflow the holes left between
+        // them (mirrors FreeMat's `sortKeywords`).
+        let holes = (max_ndx + 1).saturating_sub(keywords.len());
+        let total = if holes > pos_vals.len() {
+            max_ndx + 1
+        } else {
+            max_ndx + 1 + (pos_vals.len() - holes)
+        };
+
+        let mut filled = vec![false; total];
+        let mut to_fill: Vec<Array> = vec![Array::empty(); total];
+        for (i, &slot) in keyword_ndx.iter().enumerate() {
+            to_fill[slot] = keyvals[i].clone();
+            filled[slot] = true;
+        }
+        // Fill the unfilled slots, in order, from the positional values.
+        let mut p = 0usize;
+        for v in pos_vals {
+            while p < total && filled[p] {
+                p += 1;
+            }
+            if p >= total {
+                break;
+            }
+            to_fill[p] = v;
+            filled[p] = true;
+            p += 1;
+        }
+
+        self.call_function(name, &to_fill, nargout, src, span)
     }
 
     /// Call a function-handle value with `args`, requesting `nargout` outputs.
@@ -1697,6 +1812,21 @@ pub fn collect_free_vars(e: &Expr, out: &mut Vec<String>) {
             for row in rows {
                 for el in row {
                     collect_free_vars(el, out);
+                }
+            }
+        }
+        ExprKind::KeywordCall {
+            base,
+            args,
+            keywords,
+        } => {
+            collect_free_vars(base, out);
+            for a in args {
+                collect_free_vars(a, out);
+            }
+            for (_, v) in keywords {
+                if let Some(v) = v {
+                    collect_free_vars(v, out);
                 }
             }
         }

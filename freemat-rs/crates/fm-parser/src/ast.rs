@@ -200,6 +200,16 @@ pub enum ExprKind {
     Transpose { operand: Box<Expr>, conjugate: bool },
     /// `base(args)` — paren indexing / function call.
     Index { base: Box<Expr>, args: Vec<Expr> },
+    /// `base(args, /key=val, /key)` — an IDL-style keyword call. Produced only
+    /// when at least one `/keyword` argument is present; ordinary calls stay
+    /// [`Index`](ExprKind::Index). `args` holds the positional arguments (in
+    /// source order); `keywords` holds the named ones, each a `(name, value)`
+    /// where `value` is `None` for the bare `/name` form (binds `logical(1)`).
+    KeywordCall {
+        base: Box<Expr>,
+        args: Vec<Expr>,
+        keywords: Vec<(String, Option<Expr>)>,
+    },
     /// `base{args}` — cell-content (brace) indexing.
     CellIndex { base: Box<Expr>, args: Vec<Expr> },
     /// `base.field` — static field access.
