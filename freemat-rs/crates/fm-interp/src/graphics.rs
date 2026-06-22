@@ -509,6 +509,31 @@ impl GraphicsState {
         }
     }
 
+    /// Drop every series/text child handle of the axes `(fig, axes)` from the
+    /// registry. This does NOT touch the underlying `Axes::series`/`Axes::texts`
+    /// vectors — the caller is expected to clear those (e.g. `cla`, or
+    /// `clear_current_series_unless_hold`). Keeping the two in sync avoids
+    /// dangling handles that still `resolve` to stale (now-reindexed) series.
+    pub fn clear_axes_children(&mut self, fig: u64, axes: usize) {
+        self.objects.retain(|_, r| {
+            !matches!(r.location,
+                ObjLocation::Series { fig: f, axes: a, .. } | ObjLocation::Text { fig: f, axes: a, .. }
+                if f == fig && a == axes)
+        });
+    }
+
+    /// Drop every *series* child handle of the axes `(fig, axes)` from the
+    /// registry, leaving text handles intact. Used by the replot path
+    /// (`clear_current_series_unless_hold`), which clears `Axes::series` but not
+    /// `Axes::texts`.
+    pub fn clear_axes_series_children(&mut self, fig: u64, axes: usize) {
+        self.objects.retain(|_, r| {
+            !matches!(r.location,
+                ObjLocation::Series { fig: f, axes: a, .. }
+                if f == fig && a == axes)
+        });
+    }
+
     /// Reset a figure to a single fresh default axes (`clf`), dropping all of
     /// its axes/series children from the registry.
     pub fn delete_children_of_figure(&mut self, fig: u64) {

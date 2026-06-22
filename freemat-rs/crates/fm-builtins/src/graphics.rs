@@ -74,6 +74,8 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("plot3", b_plot3);
     table.add_builtin("peaks", b_peaks);
     table.add_builtin("view", b_view);
+    table.add_builtin("islinespec", b_islinespec);
+    table.add_builtin("is2dview", b_is2dview);
     table.add_builtin("colormap", b_colormap);
     table.add_builtin("colorbar", b_colorbar);
     table.add_builtin("pcolor", b_pcolor);
@@ -285,8 +287,13 @@ fn b_gco(i: &mut Interpreter, _a: &[Array], _n: usize) -> Flow<Vec<Array>> {
 }
 
 fn b_cla(i: &mut Interpreter, _a: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let (fig, axes_idx) = current_axes_loc(i);
+    // Drop the registry handles for the children we are about to remove, so old
+    // handles stop resolving to (now-stale) series/text entries.
+    i.graphics.clear_axes_children(fig, axes_idx);
     let ax = i.graphics.current_figure_mut().current_axes_mut();
     ax.series.clear();
+    ax.texts.clear();
     ax.xscale = Scale::Linear;
     ax.yscale = Scale::Linear;
     ax.limits = None;
@@ -1533,6 +1540,8 @@ fn b_newplot(i: &mut Interpreter, _a: &[Array], _n: usize) -> Flow<Vec<Array>> {
         .as_string()
         .unwrap_or_default();
     if ax_mode.eq_ignore_ascii_case("replace") || ax_mode.eq_ignore_ascii_case("replacechildren") {
+        let (fig_id, axes_idx) = current_axes_loc(i);
+        i.graphics.clear_axes_series_children(fig_id, axes_idx);
         let a = i.graphics.current_figure_mut().current_axes_mut();
         a.series.clear();
         a.xscale = Scale::Linear;
@@ -1602,11 +1611,20 @@ fn b_plot(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     Ok(vec![build_real(DataClass::Double, &[n, 1], handles)])
 }
 
-/// Clear the current axes' series unless it is in `hold on` mode.
+/// Clear the current axes' series unless it is in `hold on` mode. Also drops the
+/// removed series' child handles from the registry so old handles stop resolving
+/// to stale series (this runs BEFORE the new series is pushed, so only the prior
+/// series' handles are dropped).
 fn clear_current_series_unless_hold(i: &mut Interpreter) {
-    let ax = i.graphics.current_figure_mut().current_axes_mut();
-    if !ax.hold {
-        ax.series.clear();
+    let holding = i.graphics.current_figure_mut().current_axes_mut().hold;
+    if !holding {
+        let (fig, axes_idx) = current_axes_loc(i);
+        i.graphics.clear_axes_series_children(fig, axes_idx);
+        i.graphics
+            .current_figure_mut()
+            .current_axes_mut()
+            .series
+            .clear();
     }
 }
 
@@ -1768,6 +1786,57 @@ fn b_view(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
         i.graphics.dirty = true;
     }
     Ok(vec![])
+}
+
+/// `islinespec(s)` — logical true iff `s` is a string consisting solely of valid
+/// MATLAB/FreeMat line-spec characters (a color `[rgbcmykw]`, a line style `-`,
+/// `--`, `:`, `-.`, and/or a marker `[.ox+*sdv^<>ph]`), with no other characters.
+/// Mirrors FreeMat's `islinespec.m`: a non-string or any unrecognized character
+/// yields false (so the empty string is false).
+fn b_islinespec(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let result = match args.first().and_then(Array::as_string) {
+        Some(s) if !s.is_empty() => parse_linespec(&s).valid,
+        _ => false,
+    };
+    Ok(vec![Array::Scalar(fm_core::ScalarValue::Bool(result))])
+}
+
+/// `is2dview` / `is2dview(ax)` — logical true iff the axes view is 2-D, i.e. the
+/// default top-down view (azimuth 0, elevation 90) or no 3-D view has been set
+/// (`view` field is `None`). Defaults to the current axes (`gca`). Mirrors
+/// FreeMat's `is2dview`.
+fn b_is2dview(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    // Resolve the target axes location: an explicit handle arg, else gca.
+    let loc = match args.first().and_then(Array::as_f64) {
+        Some(v) => {
+            let h = v as u64;
+            match i.graphics.resolve(h) {
+                Some(loc @ ObjLocation::Axes { .. }) => loc,
+                _ => return err("is2dview: argument must be a handle to an axes"),
+            }
+        }
+        None => {
+            let h = i.graphics.current_axes_handle();
+            match i.graphics.resolve(h) {
+                Some(loc) => loc,
+                None => return err("is2dview: no current axes"),
+            }
+        }
+    };
+    let view = match loc {
+        ObjLocation::Axes { fig, axes } => i
+            .graphics
+            .scene
+            .figure(fig)
+            .and_then(|f| f.axes.get(axes))
+            .and_then(|a| a.view),
+        _ => None,
+    };
+    let is2d = match view {
+        None => true,
+        Some([az, el]) => az == 0.0 && el == 90.0,
+    };
+    Ok(vec![Array::Scalar(fm_core::ScalarValue::Bool(is2d))])
 }
 
 // ---- labels / title ---------------------------------------------------------

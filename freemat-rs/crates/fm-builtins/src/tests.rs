@@ -2639,3 +2639,69 @@ fn text_handle_delete_reindexes() {
         Some("b".into())
     );
 }
+
+// ---- Task 6: registry-cleanup on replot + islinespec / is2dview ------------
+
+/// Read a scalar f64 from a named variable.
+fn var_f64(i: &Interpreter, name: &str) -> f64 {
+    i.context
+        .lookup(name)
+        .and_then(fm_core::Array::as_f64)
+        .unwrap_or_else(|| panic!("{name} not a scalar"))
+}
+
+#[test]
+fn replot_without_hold_leaves_single_child() {
+    let mut i = interp();
+    i.run("plot(1:3,'r'); plot(4:6);").unwrap();
+    // The current axes has exactly one line child, and findobj agrees.
+    i.run("nc = numel(get(gca,'children')); nl = numel(findobj('type','line'));")
+        .unwrap();
+    assert_eq!(var_f64(&i, "nc"), 1.0);
+    assert_eq!(var_f64(&i, "nl"), 1.0);
+    // The single remaining line carries the NEW series' (default) color, not red.
+    i.run("c = get(findobj('type','line'),'color');").unwrap();
+    let c = fm_interp::value::to_f64_vec(i.context.lookup("c").unwrap());
+    assert_ne!(c, vec![1.0, 0.0, 0.0], "should not be red (the old series)");
+}
+
+#[test]
+fn replot_with_hold_keeps_both_children() {
+    let mut i = interp();
+    i.run("plot(1:3,'r'); hold on; plot(4:6);").unwrap();
+    i.run("nc = numel(get(gca,'children')); nl = numel(findobj('type','line'));")
+        .unwrap();
+    assert_eq!(var_f64(&i, "nc"), 2.0);
+    assert_eq!(var_f64(&i, "nl"), 2.0);
+}
+
+#[test]
+fn cla_empties_children_and_invalidates_old_handle() {
+    let mut i = interp();
+    i.run("h = plot(1:3,'r');").unwrap();
+    i.run("cla; nc = numel(get(gca,'children')); gone = ishandle(h);")
+        .unwrap();
+    assert_eq!(var_f64(&i, "nc"), 0.0);
+    assert_eq!(var_f64(&i, "gone"), 0.0, "old line handle must be invalid");
+}
+
+#[test]
+fn islinespec_recognizes_valid_specs() {
+    let mut i = interp();
+    i.run("a = islinespec('r-'); b = islinespec('r--o'); c = islinespec('ro'); d = islinespec('zq'); e = islinespec('-.');")
+        .unwrap();
+    assert_eq!(var_f64(&i, "a"), 1.0);
+    assert_eq!(var_f64(&i, "b"), 1.0);
+    assert_eq!(var_f64(&i, "c"), 1.0);
+    assert_eq!(var_f64(&i, "d"), 0.0);
+    assert_eq!(var_f64(&i, "e"), 1.0);
+}
+
+#[test]
+fn is2dview_reflects_view_state() {
+    let mut i = interp();
+    i.run("plot(1:3); a = is2dview(gca);").unwrap();
+    assert_eq!(var_f64(&i, "a"), 1.0, "fresh 2-D plot should be a 2-D view");
+    i.run("view(3); b = is2dview(gca);").unwrap();
+    assert_eq!(var_f64(&i, "b"), 0.0, "after view(3) it is a 3-D view");
+}
