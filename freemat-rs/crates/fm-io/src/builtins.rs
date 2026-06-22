@@ -43,6 +43,7 @@ pub fn register(table: &mut FunctionTable) {
     table.add_builtin("dir", b_dir);
     table.add_builtin("ls", b_ls);
     table.add_builtin("which", b_which);
+    table.add_builtin("type", b_type);
     // FFT.
     table.add_builtin("fft", |_i, a, _n| fft::fft1(a, false));
     table.add_builtin("ifft", |_i, a, _n| fft::fft1(a, true));
@@ -568,6 +569,50 @@ fn b_which(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
         return Ok(vec![Array::char_string(&abs)]);
     }
     Ok(vec![Array::char_string("")])
+}
+
+/// `type name` / `type('name')` — display the contents of a function or file.
+///
+/// Resolution order (mirrors `which`): an interpreted `.m` function prints its
+/// stored source text; a registered builtin prints a deterministic one-line
+/// notice; an `.m` file in the current directory is read and printed verbatim;
+/// otherwise an error is raised. Output goes through `i.emit` (no return value),
+/// matching FreeMat where `type` is a console command.
+fn b_type(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return err("type: name required");
+    }
+    let name = args[0].as_string().unwrap_or_default();
+    // An interpreted function loaded from source: print its source text.
+    if let Some(src) = i.functions.source_text(&name) {
+        i.emit(&src);
+        if !src.ends_with('\n') {
+            i.emit("\n");
+        }
+        return Ok(vec![]);
+    }
+    // A registered builtin with no backing source: a deterministic notice
+    // (consistent with `which`'s "is a built-in function" wording).
+    if i.functions.contains(&name) {
+        i.emit(&format!("{name} is a built-in function\n"));
+        return Ok(vec![]);
+    }
+    // An `.m` file in the current directory: print its contents verbatim.
+    let candidate = if name.ends_with(".m") {
+        name.clone()
+    } else {
+        format!("{name}.m")
+    };
+    if Path::new(&candidate).exists() {
+        let text = std::fs::read_to_string(&candidate)
+            .map_err(|e| Signal::Error(InterpError::msg(format!("type: {e}"))))?;
+        i.emit(&text);
+        if !text.ends_with('\n') {
+            i.emit("\n");
+        }
+        return Ok(vec![]);
+    }
+    err(format!("type: '{name}' not found"))
 }
 
 /// Split a `dir`/`ls` pattern into a directory and an optional glob of its last

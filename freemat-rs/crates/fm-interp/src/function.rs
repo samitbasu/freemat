@@ -142,6 +142,16 @@ impl FunctionTable {
         }
     }
 
+    /// The `.m` source text a function was parsed from, if it is an interpreted
+    /// function (used by `type` to display a function's contents).
+    #[must_use]
+    pub fn source_text(&self, name: &str) -> Option<String> {
+        match self.funcs.get(name) {
+            Some(Function::Interpreted { src, .. }) => Some(src.as_str().to_string()),
+            _ => None,
+        }
+    }
+
     /// Every registered function name, **sorted** — the authoritative builtin
     /// set for `fm --list-builtins` / coverage reporting.
     #[must_use]

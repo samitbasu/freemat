@@ -1615,7 +1615,7 @@ in which case the function named `'function.m'` will be displayed.
 ## Example
 Here we use `type` to display the contents of itself
 
-```fm
+```fm-exec
 type('type')
 ```
 "#,
