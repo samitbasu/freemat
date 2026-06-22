@@ -189,7 +189,7 @@ Here is an example of simple linear interpolation with the different
 extrapolation modes.  We start with a fairly coarse sampling of a
 cosine.
 
-```fm
+```fm-exec:figure
 x = linspace(-pi*7/8,pi*7/8,15);
 y = cos(x);
 plot(x,y,'ro');
@@ -200,7 +200,7 @@ Next, we generate a finer sampling over a slightly broader range
 (in this case `[-pi,pi]`).  First, we demonstrate the `'nan'`
 extrapolation method
 
-```fm
+```fm-exec:figure
 xi = linspace(-4,4,100);
 yi_nan = interplin1(x,y,xi,'nan');
 yi_zero = interplin1(x,y,xi,'zero');

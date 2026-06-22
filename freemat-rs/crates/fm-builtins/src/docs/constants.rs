@@ -283,7 +283,7 @@ compute epsilon based on the type of the array.
 The following example demonstrates the use of the `teps` function,
 and one of its numerical consequences.
 
-```fm
+```fm-exec
 teps(float(3.4))
 teps(complex(3.4+i*2))
 ```

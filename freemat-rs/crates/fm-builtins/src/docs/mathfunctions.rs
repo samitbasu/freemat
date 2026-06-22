@@ -735,7 +735,7 @@ $$
 ## Example
 Here is a plot of the betainc function over the range `[.2,.8]`.
 
-```fm
+```fm-exec:figure
 x=.2:.01:.8;
 y = betainc(x,5,3);
 plot(x,y); xlabel('x'); ylabel('betainc(x,5,3)');
@@ -1408,7 +1408,7 @@ vector `y` is the same size (and type) as `x`.
 ## Example
 Here is a plot of the `legendre` function over the range `[-1,1]`.
 
-```fm
+```fm-exec:figure
 x = linspace(-1,1,30);
 y = legendre(4,x);
 plot(x,y); xlabel('x'); ylabel('legendre(4,x)');

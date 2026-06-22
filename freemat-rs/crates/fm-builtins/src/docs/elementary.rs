@@ -292,32 +292,32 @@ for the one-argument case.
 ## Example
 The following demonstrates some uses of the `cov` function
 
-```fm
+```fm-exec
 A = [5,1,3;3,2,1;0,3,1]
 B = [4,-2,0;1,5,2;-2,0,1];
 ```
 
 We start with the covariance matrix for `A`
 
-```fm
+```fm-exec
 cov(A)
 ```
 
 and again with the (biased) normalization
 
-```fm
+```fm-exec
 cov(A,1)
 ```
 
 Here we compute the cross covariance between `A` and `B`
 
-```fm
+```fm-exec
 cov(A,B)
 ```
 
 and again with biased normalization
 
-```fm
+```fm-exec
 cov(A,B,1)
 ```
 "#,
