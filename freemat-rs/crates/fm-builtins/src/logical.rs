@@ -18,6 +18,7 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("xor", b_xor);
     table.add_builtin("not", b_not);
     table.add_builtin("isequal", b_isequal);
+    table.add_builtin("isequalwithequalnans", b_isequalwithequalnans);
     table.add_builtin("true", b_true);
     table.add_builtin("false", b_false);
     table.add_builtin("find", b_find);
@@ -121,12 +122,27 @@ fn b_not(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
 fn b_isequal(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     need(args, 2, "isequal")?;
     let first = &args[0];
-    let eq = args[1..].iter().all(|other| arrays_equal(first, other));
+    let eq = args[1..]
+        .iter()
+        .all(|other| arrays_equal(first, other, false));
     Ok(vec![Array::bool(eq)])
 }
 
-/// Structural + numeric equality (used by `isequal`).
-fn arrays_equal(a: &Array, b: &Array) -> bool {
+/// `isequalwithequalnans(a, b, ...)` — like `isequal` but `NaN`s in matching
+/// positions are considered equal.
+fn b_isequalwithequalnans(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 2, "isequalwithequalnans")?;
+    let first = &args[0];
+    let eq = args[1..]
+        .iter()
+        .all(|other| arrays_equal(first, other, true));
+    Ok(vec![Array::bool(eq)])
+}
+
+/// Structural + numeric equality (used by `isequal` /
+/// `isequalwithequalnans`). When `nan_equal` is set, two `NaN`s in matching
+/// positions compare as equal.
+fn arrays_equal(a: &Array, b: &Array, nan_equal: bool) -> bool {
     if a.is_char() && b.is_char() {
         return a.as_string() == b.as_string();
     }
@@ -135,7 +151,10 @@ fn arrays_equal(a: &Array, b: &Array) -> bool {
     }
     let x = to_f64_vec(a);
     let y = to_f64_vec(b);
-    x.len() == y.len() && x.iter().zip(&y).all(|(p, q)| p == q)
+    x.len() == y.len()
+        && x.iter()
+            .zip(&y)
+            .all(|(p, q)| p == q || (nan_equal && p.is_nan() && q.is_nan()))
 }
 
 fn b_true(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {

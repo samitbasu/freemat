@@ -31,7 +31,9 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("lcm", b_lcm);
     table.add_builtin("factorial", b_factorial);
     table.add_builtin("isnan", |_i, a, _n| predicate(a, "isnan", f64::is_nan));
+    table.add_builtin("IsNaN", |_i, a, _n| predicate(a, "IsNaN", f64::is_nan));
     table.add_builtin("isinf", |_i, a, _n| predicate(a, "isinf", f64::is_infinite));
+    table.add_builtin("IsInf", |_i, a, _n| predicate(a, "IsInf", f64::is_infinite));
     table.add_builtin("isfinite", |_i, a, _n| {
         predicate(a, "isfinite", f64::is_finite)
     });

@@ -65,6 +65,83 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("isstruct", |_i, a, _n| {
         pred(a, "isstruct", |x| x.class() == DataClass::Struct)
     });
+    table.add_builtin("issquare", |_i, a, _n| pred(a, "issquare", is_square));
+    table.add_builtin("isinttype", |_i, a, _n| {
+        pred(a, "isinttype", |x| x.class().is_integer())
+    });
+    table.add_builtin("maxdim", b_maxdim);
+    table.add_builtin("computer", b_computer);
+    table.add_builtin("mfilename", b_mfilename);
+}
+
+/// `issquare(x)` — true iff `x` is an empty array or a 2-D matrix whose row and
+/// column counts are equal. Mirrors FreeMat's `issquare.m`
+/// (`isempty(x) || ((s(1)==s(2)) && ismatrix(x))`).
+fn is_square(x: &Array) -> bool {
+    if x.numel() == 0 {
+        return true;
+    }
+    let d = x.dims();
+    d.len() == 2 && d[0] == d[1]
+}
+
+/// `maxdim(x)` — the (1-based) index of the largest dimension of `x`, i.e.
+/// `min(find(size(x) == max(size(x))))`. Mirrors FreeMat's `maxdim.m`.
+fn b_maxdim(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "maxdim")?;
+    let dims = args[0].dims();
+    let max = dims.iter().copied().max().unwrap_or(0);
+    let idx = dims
+        .iter()
+        .position(|&d| d == max)
+        .map(|p| p + 1)
+        .unwrap_or(0);
+    Ok(vec![Array::double(idx as f64)])
+}
+
+/// `computer` — a deterministic platform string for this build, derived from
+/// `std::env::consts::{OS,ARCH}`. FreeMat returns values like `PCWIN64`,
+/// `GLNXA64`, `MACI64`; we map the host accordingly.
+fn b_computer(_i: &mut Interpreter, _args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
+    let arch64 = std::env::consts::ARCH.contains("64");
+    let s = match std::env::consts::OS {
+        "windows" => {
+            if arch64 {
+                "PCWIN64"
+            } else {
+                "PCWIN"
+            }
+        }
+        "macos" => {
+            if std::env::consts::ARCH == "aarch64" {
+                "MACA64"
+            } else {
+                "MACI64"
+            }
+        }
+        _ => {
+            if arch64 {
+                "GLNXA64"
+            } else {
+                "GLNX86"
+            }
+        }
+    };
+    let mut out = vec![Array::char_string(s)];
+    // `[str, maxsize] = computer` also reports the largest array size (in
+    // elements). We report the host pointer width's max signed value.
+    if nargout >= 2 {
+        out.push(Array::double(isize::MAX as f64));
+    }
+    Ok(out)
+}
+
+/// `mfilename` — the name of the function currently executing. At the top-level
+/// REPL (the base scope) this is the empty string. Subfunctions report their
+/// own name, matching FreeMat semantics.
+fn b_mfilename(i: &mut Interpreter, _args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let name = i.context.top().name.clone();
+    Ok(vec![Array::char_string(&name)])
 }
 
 /// A one-argument logical predicate over an [`Array`].

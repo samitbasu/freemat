@@ -1696,3 +1696,71 @@ fn char_multi_arg_pads_matrix() {
     i.run("c = cast(pi,'uint8');").unwrap();
     assert_eq!(eval_scalar("cast(pi,'uint8')"), 3.0);
 }
+
+#[test]
+fn isstr_alias_of_ischar() {
+    assert_eq!(eval_scalar("isstr('x')"), 1.0);
+    assert_eq!(eval_scalar("isstr(1)"), 0.0);
+}
+
+#[test]
+fn issquare_predicate() {
+    assert_eq!(eval_scalar("issquare(eye(3))"), 1.0);
+    assert_eq!(eval_scalar("issquare([1 2 3])"), 0.0);
+}
+
+#[test]
+fn isinttype_predicate() {
+    assert_eq!(eval_scalar("isinttype(int8(1))"), 1.0);
+    assert_eq!(eval_scalar("isinttype(1)"), 0.0);
+}
+
+#[test]
+fn mpower_matches_operator() {
+    let mut i = interp();
+    i.run("a = mpower([1,2;3,4],2); b = [1,2;3,4]^2; d = isequal(a,b);")
+        .unwrap();
+    assert_eq!(i.context.lookup("d").unwrap().as_f64(), Some(1.0));
+}
+
+#[test]
+fn isequalwithequalnans_treats_nans_equal() {
+    assert_eq!(eval_scalar("isequalwithequalnans(nan,nan)"), 1.0);
+    assert_eq!(eval_scalar("isequal(nan,nan)"), 0.0);
+}
+
+#[test]
+fn maxdim_returns_index_of_largest_dim() {
+    // FreeMat's maxdim returns the *index* of the largest dimension:
+    // size([..]) = [2,5] -> max is dim 2.
+    assert_eq!(eval_scalar("maxdim(zeros(2,5))"), 2.0);
+    assert_eq!(eval_scalar("maxdim(zeros(7,3))"), 1.0);
+}
+
+#[test]
+fn isinf_isnan_capitalized_aliases() {
+    assert_eq!(eval_scalar("IsInf(inf)"), 1.0);
+    assert_eq!(eval_scalar("IsNaN(nan)"), 1.0);
+}
+
+#[test]
+fn computer_returns_nonempty_string() {
+    let mut i = interp();
+    i.run("c = computer;").unwrap();
+    assert!(i.context.lookup("c").unwrap().is_char());
+    assert!(
+        !i.context
+            .lookup("c")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn mfilename_empty_at_repl() {
+    let mut i = interp();
+    i.run("m = mfilename;").unwrap();
+    assert_eq!(i.context.lookup("m").unwrap().as_string().unwrap(), "");
+}

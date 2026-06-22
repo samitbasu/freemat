@@ -31,6 +31,7 @@ pub fn register_defaults(table: &mut FunctionTable) {
     table.add_builtin("ones", b_ones);
     table.add_builtin("isa", b_isa);
     table.add_builtin("ischar", b_ischar);
+    table.add_builtin("isstr", b_ischar);
     table.add_builtin("isnumeric", b_isnumeric);
     table.add_builtin("iscell", b_iscell);
     table.add_builtin("isreal", b_isreal);

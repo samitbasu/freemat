@@ -33,6 +33,15 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("is_function_handle", b_is_function_handle);
     table.add_builtin("isfunctionhandle", b_is_function_handle);
     table.add_builtin("ode45", b_ode45);
+    table.add_builtin("mpower", b_mpower);
+}
+
+/// `mpower(a, b)` — the matrix power `a ^ b`. Delegates to the exact same
+/// operator path as the `^` operator so the results match identically.
+fn b_mpower(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 2, "mpower")?;
+    let out = fm_interp::ops::binary(fm_parser::ast::BinaryOp::Pow, &args[0], &args[1])?;
+    Ok(vec![out])
 }
 
 /// `ode45(f, tspan, y0[, options])` — solve the IVP `y' = f(t,y)`, `y(t0)=y0`
