@@ -57,6 +57,10 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("get", b_get);
     table.add_builtin("ishandle", b_ishandle);
     table.add_builtin("findobj", b_findobj);
+    table.add_builtin("copyobj", b_copyobj);
+    table.add_builtin("newplot", b_newplot);
+    table.add_builtin("figraise", b_figraise);
+    table.add_builtin("figlower", b_figlower);
     table.add_builtin("surf", |i, a, _n| surface(i, a, false));
     table.add_builtin("mesh", |i, a, _n| surface(i, a, true));
     table.add_builtin("image", b_image);
@@ -342,34 +346,105 @@ fn b_ishandle(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>
     Ok(vec![Array::Scalar(fm_core::ScalarValue::Bool(result))])
 }
 
-/// `findobj` / `findobj('type', 'axes')` — return matching handles as a column.
+/// `findobj` / `findobj('prop',val,...)` / `findobj(h0,'prop',val,...)`.
+///
+/// Returns the handles (an n×1 column) of every object whose `get(h,'propK')`
+/// equals `valK` for ALL property/value pairs (a logical AND). `'type'` is just
+/// one such property. If the first argument is a handle (or a vector of
+/// handles), the search is scoped to those handles and their descendants
+/// (depth-first via `children`); otherwise the search covers the whole object
+/// tree (the root `0` and every registered object). Char-valued properties are
+/// compared case-insensitively; numeric properties by (elementwise) equality.
+///
+/// Result order: the scoped depth-first preorder when a root set is given;
+/// otherwise ascending handle id (deterministic).
 fn b_findobj(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
-    // Optional ('Type', name) filter (the common case used by toolbox code).
-    let mut type_filter: Option<String> = None;
-    let mut idx = 0;
-    while idx + 1 < args.len() {
-        if let Some(prop) = str_arg(args, idx)
-            && prop.eq_ignore_ascii_case("type")
-        {
-            type_filter = str_arg(args, idx + 1);
+    // A leading numeric argument is the root set to scope the search to.
+    let (roots, rest): (Option<Vec<u64>>, &[Array]) = match args.first() {
+        Some(a) if !a.is_char() => {
+            let roots: Vec<u64> = to_f64_vec(a).into_iter().map(|v| v as u64).collect();
+            (Some(roots), &args[1..])
         }
-        idx += 2;
+        _ => (None, args),
+    };
+    // Collect (lowercased-name, value) filter pairs from the remaining args.
+    let mut filters: Vec<(String, Array)> = Vec::new();
+    let mut k = 0;
+    while k + 1 < rest.len() + 1 && k < rest.len() {
+        let Some(prop) = str_arg(rest, k) else {
+            return err("findobj: expected a property name string");
+        };
+        let Some(val) = rest.get(k + 1) else {
+            return err(format!("findobj: no value given for '{prop}'"));
+        };
+        filters.push((prop.to_ascii_lowercase(), val.clone()));
+        k += 2;
     }
-    let handles: Vec<f64> = i
-        .graphics
-        .all_handles()
+    // The candidate handle set: the scoped depth-first set, or all handles.
+    let candidates: Vec<u64> = match roots {
+        Some(roots) => {
+            let mut out = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            for r in roots {
+                collect_descendants(i, r, &mut out, &mut seen);
+            }
+            out
+        }
+        None => {
+            // The whole tree: the root plus every registered object, ascending.
+            let mut v = vec![0u64];
+            v.extend(i.graphics.all_handles());
+            v
+        }
+    };
+    let handles: Vec<f64> = candidates
         .into_iter()
-        .filter(|&h| match &type_filter {
-            Some(t) => i
-                .graphics
-                .kind_of(h)
-                .is_some_and(|k| k.type_name().eq_ignore_ascii_case(t)),
-            None => true,
+        .filter(|&h| {
+            filters
+                .iter()
+                .all(|(prop, want)| prop_matches(&read_property(i, h, prop), want))
         })
         .map(|h| h as f64)
         .collect();
     let n = handles.len();
     Ok(vec![build_real(DataClass::Double, &[n, 1], handles)])
+}
+
+/// Depth-first preorder collection of `h` and all its descendants, skipping
+/// handles already visited (so a tree shared via root sets is not duplicated).
+fn collect_descendants(
+    i: &Interpreter,
+    h: u64,
+    out: &mut Vec<u64>,
+    seen: &mut std::collections::HashSet<u64>,
+) {
+    if !seen.insert(h) {
+        return;
+    }
+    out.push(h);
+    for c in i.graphics.children(h) {
+        collect_descendants(i, c, out, seen);
+    }
+}
+
+/// Compare a property's current value against a `findobj` filter value. Char
+/// values compare case-insensitively (as strings); otherwise both are flattened
+/// to `f64` vectors and compared elementwise (so `'color', [1 0 0]` works too).
+fn prop_matches(got: &Array, want: &Array) -> bool {
+    if let (Some(a), Some(b)) = (got.as_string(), want.as_string()) {
+        if a.eq_ignore_ascii_case(&b) {
+            return true;
+        }
+        // Color equivalence: a stored CSS color (`rgb(255,0,0)`) matches the
+        // single-letter / named spec the user filters with (`'r'`, `'red'`).
+        return normalize_color(&a) == normalize_color(&b);
+    }
+    if got.is_char() != want.is_char() {
+        return false;
+    }
+    let a = to_f64_vec(got);
+    let b = to_f64_vec(want);
+    a.len() == b.len() && a.iter().zip(&b).all(|(x, y)| x == y)
 }
 
 // ---- set / get --------------------------------------------------------------
@@ -381,6 +456,19 @@ fn b_set(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     let h = args[0].as_f64().unwrap_or(0.0) as u64;
     if !i.graphics.is_handle(h) {
         return err(format!("set: {h} is not a valid handle"));
+    }
+    // set(h) with no property/value pairs — return a 1x1 struct whose fields are
+    // this kind's settable property names (each field empty, mirroring MATLAB's
+    // "list of allowed values" form, which we leave empty here).
+    if args.len() == 1 {
+        let kind = i.graphics.kind_of(h).unwrap_or(ObjKind::Root);
+        let pairs: Vec<(String, Array)> = property_names(kind)
+            .into_iter()
+            .map(|name| (name.to_string(), empty()))
+            .collect();
+        return Ok(vec![Array::struct_array(fm_core::StructArray::scalar(
+            pairs,
+        ))]);
     }
     // Property/value pairs follow the handle.
     let mut k = 1;
@@ -407,9 +495,16 @@ fn b_get(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
         return err(format!("get: {h} is not a valid handle"));
     }
     let Some(prop) = str_arg(args, 1) else {
-        // get(h) with no property — return the type string (a minimal summary).
-        let ty = i.graphics.kind_of(h).map(ObjKind::type_name).unwrap_or("");
-        return Ok(vec![Array::char_string(ty)]);
+        // get(h) with no property — return a 1x1 struct mapping every property
+        // name (for this object's kind) to its current value.
+        let kind = i.graphics.kind_of(h).unwrap_or(ObjKind::Root);
+        let pairs: Vec<(String, Array)> = property_names(kind)
+            .into_iter()
+            .map(|name| (name.to_string(), read_property(i, h, name)))
+            .collect();
+        return Ok(vec![Array::struct_array(fm_core::StructArray::scalar(
+            pairs,
+        ))]);
     };
     Ok(vec![read_property(i, h, &prop)])
 }
@@ -1144,6 +1239,333 @@ fn default_color_order() -> Array {
         }
     }
     build_real(DataClass::Double, &[7, 3], col_major)
+}
+
+/// Normalize a color spec to a canonical CSS `rgb(...)` string so the
+/// single-letter (`'r'`), full-name (`'red'`), and stored (`'rgb(255,0,0)'`)
+/// forms compare equal in `findobj`. Unknown strings pass through (lowercased).
+fn normalize_color(s: &str) -> String {
+    let t = s.trim().to_ascii_lowercase();
+    match t.as_str() {
+        "r" | "red" => "rgb(255,0,0)".to_string(),
+        "g" | "green" => "rgb(0,128,0)".to_string(),
+        "b" | "blue" => "rgb(0,0,255)".to_string(),
+        "c" | "cyan" => "rgb(0,191,191)".to_string(),
+        "m" | "magenta" => "rgb(191,0,191)".to_string(),
+        "y" | "yellow" => "rgb(191,191,0)".to_string(),
+        "k" | "black" => "rgb(0,0,0)".to_string(),
+        "w" | "white" => "rgb(255,255,255)".to_string(),
+        _ => t,
+    }
+}
+
+/// The ordered list of property names for an object of `kind` — the union of the
+/// modeled (scene-backed) properties and the catalogued defaults from the
+/// Task 2–4 tables, prefixed by the universal navigation properties. Used by the
+/// whole-object `get(h)` / `set(h)` listing forms (and `copyobj` introspection).
+fn property_names(kind: ObjKind) -> Vec<&'static str> {
+    // Common navigation properties present on every object.
+    let mut names: Vec<&'static str> = vec!["type", "parent", "children"];
+    match kind {
+        ObjKind::Root => {
+            names.extend(["currentfigure", "screensize", "monitorpositions"]);
+        }
+        ObjKind::Figure => {
+            names.extend([
+                "number",
+                "currentaxes",
+                "colormap",
+                "position",
+                "outerposition",
+                "figsize",
+                // catalogued figure defaults:
+                "color",
+                "name",
+                "visible",
+                "nextplot",
+                "numbertitle",
+                "menubar",
+                "units",
+                "renderer",
+                "paperposition",
+                "papersize",
+                "paperunits",
+                "windowstyle",
+                "doublebuffer",
+                "pointer",
+                "tag",
+            ]);
+        }
+        ObjKind::Axes => {
+            names.extend([
+                // modeled axes properties:
+                "title",
+                "xlabel",
+                "ylabel",
+                "zlabel",
+                "position",
+                "outerposition",
+                "xscale",
+                "yscale",
+                "zscale",
+                "grid",
+                "xlim",
+                "ylim",
+                "zlim",
+                "clim",
+                "xlimmode",
+                "ylimmode",
+                "zlimmode",
+                "climmode",
+                "view",
+                // catalogued axes defaults:
+                "box",
+                "nextplot",
+                "visible",
+                "tag",
+                "xdir",
+                "ydir",
+                "zdir",
+                "xgrid",
+                "ygrid",
+                "zgrid",
+                "xminorgrid",
+                "yminorgrid",
+                "zminorgrid",
+                "fontsize",
+                "fontname",
+                "fontweight",
+                "fontangle",
+                "fontunits",
+                "linewidth",
+                "gridlinestyle",
+                "minorgridlinestyle",
+                "linestyleorder",
+                "xcolor",
+                "ycolor",
+                "zcolor",
+                "color",
+                "ambientlightcolor",
+                "units",
+                "layer",
+                "tickdir",
+                "ticklength",
+                "xaxislocation",
+                "yaxislocation",
+                "projection",
+                "clipping",
+                "selected",
+                "selectionhighlight",
+                "handlevisibility",
+                "dataaspectratio",
+                "plotboxaspectratio",
+                "dataaspectratiomode",
+                "plotboxaspectratiomode",
+                "xtickmode",
+                "ytickmode",
+                "ztickmode",
+                "xticklabelmode",
+                "yticklabelmode",
+                "zticklabelmode",
+                "xtick",
+                "ytick",
+                "ztick",
+                "xticklabel",
+                "yticklabel",
+                "zticklabel",
+                "colororder",
+            ]);
+        }
+        ObjKind::Line => {
+            names.extend([
+                "color",
+                "linestyle",
+                "marker",
+                "displayname",
+                "xdata",
+                "ydata",
+                "linewidth",
+                "markersize",
+                "markeredgecolor",
+                "markerfacecolor",
+                "visible",
+                "zdata",
+                "tag",
+            ]);
+        }
+        ObjKind::Surface => {
+            names.extend([
+                "xdata",
+                "ydata",
+                "zdata",
+                "cdata",
+                "facecolor",
+                "edgecolor",
+                "facealpha",
+                "edgealpha",
+                "linestyle",
+                "linewidth",
+                "meshstyle",
+                "markersize",
+                "cdatamapping",
+                "visible",
+                "tag",
+            ]);
+        }
+        ObjKind::Image => {
+            names.extend(["cdata", "cdatamapping", "visible", "tag"]);
+        }
+        ObjKind::Contour => {
+            names.extend([
+                "levellist",
+                "fill",
+                "showtext",
+                "zdata",
+                "cdata",
+                "xdata",
+                "ydata",
+                "linewidth",
+                "linecolor",
+                "visible",
+                "tag",
+            ]);
+        }
+        ObjKind::Patch => {
+            names.extend([
+                "xdata",
+                "ydata",
+                "facecolor",
+                "edgecolor",
+                "color",
+                "displayname",
+                "facealpha",
+                "linewidth",
+                "linestyle",
+                "vertices",
+                "faces",
+                "facevertexcdata",
+                "visible",
+                "tag",
+                "zdata",
+            ]);
+        }
+        ObjKind::Text => {
+            names.extend([
+                "string",
+                "position",
+                "color",
+                "fontsize",
+                "fontname",
+                "fontweight",
+                "fontangle",
+                "fontunits",
+                "horizontalalignment",
+                "verticalalignment",
+                "rotation",
+                "units",
+                "visible",
+                "tag",
+            ]);
+        }
+    }
+    names
+}
+
+// ---- copyobj / newplot / figraise / figlower --------------------------------
+
+/// `h2 = copyobj(h, parent)` — deep-copy object(s) `h` into `parent`, returning
+/// the new handle(s). An axes is copied into a figure parent (recursively
+/// copying its series/text children); a series/text child is copied into an axes
+/// parent. The cloned object carries over the source's free-form property bag.
+/// A vector of source handles produces a vector of new handles.
+fn b_copyobj(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.len() < 2 {
+        return err("copyobj: expected copyobj(handle, parent)");
+    }
+    let parent = args[1].as_f64().unwrap_or(0.0) as u64;
+    if !i.graphics.is_handle(parent) {
+        return err(format!("copyobj: {parent} is not a valid parent handle"));
+    }
+    let parent_loc = i.graphics.resolve(parent);
+    let mut out: Vec<f64> = Vec::new();
+    for src in to_f64_vec(&args[0]).into_iter().map(|v| v as u64) {
+        if !i.graphics.is_handle(src) {
+            return err(format!("copyobj: {src} is not a valid handle"));
+        }
+        let new_h = match (i.graphics.kind_of(src), parent_loc) {
+            // An axes copied into a figure.
+            (Some(ObjKind::Axes), Some(ObjLocation::Figure { fig })) => {
+                i.graphics.copy_axes_into_figure(src, fig)
+            }
+            // A series/text child copied into an axes parent.
+            (Some(_), Some(ObjLocation::Axes { fig, axes })) => {
+                i.graphics.copy_child_into_axes(src, fig, axes)
+            }
+            _ => {
+                return err("copyobj: incompatible source/parent (axes→figure, series/text→axes)");
+            }
+        };
+        match new_h {
+            Some(h) => out.push(h as f64),
+            None => return err("copyobj: failed to copy object"),
+        }
+    }
+    i.graphics.dirty = true;
+    let n = out.len();
+    Ok(vec![build_real(DataClass::Double, &[n, 1], out)])
+}
+
+/// `h = newplot` — prepare a figure+axes for a new plot, honoring the figure and
+/// axes `nextplot` properties (FreeMat `newplot.m`). If the figure's `nextplot`
+/// is `'replace'` the figure is cleared; if the current axes' `nextplot` is
+/// `'replace'`/`'replacechildren'` the axes' series are cleared (like `cla`).
+/// Returns the current axes handle.
+fn b_newplot(i: &mut Interpreter, _a: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let fig = i.graphics.current_figure_handle();
+    let fig_mode = read_property(i, fig, "nextplot")
+        .as_string()
+        .unwrap_or_default();
+    if fig_mode.eq_ignore_ascii_case("replace") {
+        i.graphics.delete_children_of_figure(fig);
+    }
+    let ax = i.graphics.current_axes_handle();
+    let ax_mode = read_property(i, ax, "nextplot")
+        .as_string()
+        .unwrap_or_default();
+    if ax_mode.eq_ignore_ascii_case("replace") || ax_mode.eq_ignore_ascii_case("replacechildren") {
+        let a = i.graphics.current_figure_mut().current_axes_mut();
+        a.series.clear();
+        a.xscale = Scale::Linear;
+        a.yscale = Scale::Linear;
+        a.limits = None;
+    }
+    i.graphics.dirty = true;
+    let h = i.graphics.current_axes_handle();
+    Ok(vec![handle(h)])
+}
+
+/// `figraise` / `figraise(h)` — raise a figure to the front of the z-order
+/// (headless: move it to the end of the figures vector and make it current).
+fn b_figraise(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let fig = args
+        .first()
+        .and_then(Array::as_f64)
+        .map(|v| v as u64)
+        .unwrap_or_else(|| i.graphics.current_figure_handle());
+    i.graphics.raise_figure(fig);
+    Ok(vec![])
+}
+
+/// `figlower` / `figlower(h)` — lower a figure to the back of the z-order
+/// (headless: move it to the front of the figures vector).
+fn b_figlower(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let fig = args
+        .first()
+        .and_then(Array::as_f64)
+        .map(|v| v as u64)
+        .unwrap_or_else(|| i.graphics.current_figure_handle());
+    i.graphics.lower_figure(fig);
+    Ok(vec![])
 }
 
 // ---- plot / line ------------------------------------------------------------

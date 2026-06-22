@@ -905,6 +905,175 @@ fn root_object_and_hierarchy_navigation() {
     );
 }
 
+// ---- Task 5: object-management ops (findobj/copyobj/newplot/etc.) -----------
+
+#[test]
+fn findobj_filters_by_type_and_property() {
+    let mut i = interp();
+    i.run("plot(1:3,[1 2 3]); hold on; plot(1:3,[3 2 1]);")
+        .unwrap();
+    // Two line handles.
+    i.run("L = findobj('type','line');").unwrap();
+    let lines = fm_interp::value::to_f64_vec(i.context.lookup("L").unwrap());
+    assert_eq!(lines.len(), 2, "two lines: {lines:?}");
+    // dims are n×1 column.
+    assert_eq!(i.context.lookup("L").unwrap().dims(), vec![2, 1]);
+    // The axes.
+    i.run("A = findobj('type','axes');").unwrap();
+    let axs = fm_interp::value::to_f64_vec(i.context.lookup("A").unwrap());
+    assert_eq!(axs.len(), 1, "one axes: {axs:?}");
+
+    // Filter by color: a red line.
+    i.run("clf; plot(1:3,'r');").unwrap();
+    i.run("R = findobj('color','r');").unwrap();
+    let red = fm_interp::value::to_f64_vec(i.context.lookup("R").unwrap());
+    assert_eq!(red.len(), 1, "one red line: {red:?}");
+}
+
+#[test]
+fn findobj_scoped_to_a_handle() {
+    let mut i = interp();
+    i.run("plot(1:3,[1 2 3]);").unwrap(); // figure 1, one line
+    i.run("figure; plot(1:3,[3 2 1]);").unwrap(); // figure 2, one line
+    // Whole-tree: two lines.
+    i.run("all = findobj('type','line');").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("all").unwrap()).len(),
+        2
+    );
+    // Scoped to figure 1: one line.
+    i.run("f1 = 1; s = findobj(f1,'type','line');").unwrap();
+    let scoped = fm_interp::value::to_f64_vec(i.context.lookup("s").unwrap());
+    assert_eq!(scoped.len(), 1, "scoped to fig 1: {scoped:?}");
+
+    // findobj(gcf,'type','line') — gcf is figure 2.
+    i.run("g = findobj(gcf,'type','line');").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("g").unwrap()).len(),
+        1
+    );
+}
+
+#[test]
+fn copyobj_clones_a_line_into_an_axes() {
+    let mut i = interp();
+    i.run("h = plot(1:3,[10 20 30]); h2 = copyobj(h, gca);")
+        .unwrap();
+    i.run("ok = ishandle(h2); t = get(h2,'type');").unwrap();
+    assert!(
+        i.context
+            .lookup("ok")
+            .and_then(fm_core::Array::as_f64)
+            .unwrap()
+            != 0.0
+    );
+    assert_eq!(
+        i.context.lookup("t").and_then(fm_core::Array::as_string),
+        Some("line".to_string())
+    );
+    // ydata copied through.
+    i.run("y = get(h2,'ydata'); y0 = get(h,'ydata');").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("y").unwrap()),
+        fm_interp::value::to_f64_vec(i.context.lookup("y0").unwrap())
+    );
+    // gca now has two line children.
+    let ax = &i.graphics.scene.figure(1).unwrap().axes[0];
+    assert_eq!(ax.series.len(), 2, "two series after copyobj");
+}
+
+#[test]
+fn copyobj_clones_an_axes_with_children_into_a_figure() {
+    let mut i = interp();
+    i.run("plot(1:3,[1 2 3]); a = gca;").unwrap();
+    // Copy the whole axes into the same figure.
+    i.run("a2 = copyobj(a, gcf);").unwrap();
+    let fig = i.graphics.scene.figure(1).unwrap();
+    assert_eq!(fig.axes.len(), 2, "two axes after copyobj");
+    // The copied axes carries the line series.
+    assert_eq!(fig.axes[1].series.len(), 1);
+    // The new axes handle is a valid axes whose child is a line.
+    i.run("t = get(a2,'type'); c = get(a2,'children');")
+        .unwrap();
+    assert_eq!(
+        i.context.lookup("t").and_then(fm_core::Array::as_string),
+        Some("axes".to_string())
+    );
+    let kids = fm_interp::value::to_f64_vec(i.context.lookup("c").unwrap());
+    assert_eq!(kids.len(), 1, "copied axes has one child line");
+    i.run("lt = get(c(1),'type');").unwrap();
+    assert_eq!(
+        i.context.lookup("lt").and_then(fm_core::Array::as_string),
+        Some("line".to_string())
+    );
+}
+
+#[test]
+fn newplot_honors_nextplot() {
+    let mut i = interp();
+    // replace: newplot clears the axes' series.
+    i.run("set(gca,'nextplot','replace'); plot(1:3,[1 2 3]);")
+        .unwrap();
+    i.run("ax = newplot;").unwrap();
+    assert_eq!(
+        i.graphics.scene.figure(1).unwrap().axes[0].series.len(),
+        0,
+        "replace clears series"
+    );
+    // newplot returns the current axes handle.
+    i.run("g = gca;").unwrap();
+    assert_eq!(
+        i.context.lookup("ax").and_then(fm_core::Array::as_f64),
+        i.context.lookup("g").and_then(fm_core::Array::as_f64),
+    );
+    // add: newplot leaves series in place.
+    i.run("set(gca,'nextplot','add'); set(gcf,'nextplot','add'); plot(1:3,[3 2 1]);")
+        .unwrap();
+    i.run("newplot;").unwrap();
+    assert_eq!(
+        i.graphics.scene.figure(1).unwrap().axes[0].series.len(),
+        1,
+        "add keeps series"
+    );
+}
+
+#[test]
+fn figraise_and_figlower_run_clean() {
+    let mut i = interp();
+    i.run("plot(1:3,[1 2 3]); figure; plot(1:3,[3 2 1]);")
+        .unwrap();
+    // Two figures exist.
+    assert_eq!(i.graphics.scene.figures.len(), 2);
+    i.run("figraise(gcf); figlower(gcf); figraise(1); figlower(2);")
+        .unwrap();
+    // Still two figures, nothing errored.
+    assert_eq!(i.graphics.scene.figures.len(), 2);
+}
+
+#[test]
+fn get_and_set_whole_object_listing() {
+    let mut i = interp();
+    i.run("plot(1:3,[1 2 3]);").unwrap();
+    // get(gca) returns a struct with a type=='axes' field.
+    i.run("s = get(gca); t = s.type;").unwrap();
+    assert_eq!(
+        i.context.lookup("t").and_then(fm_core::Array::as_string),
+        Some("axes".to_string())
+    );
+    // get(gca) is a 1x1 struct.
+    assert_eq!(
+        i.context.lookup("s").unwrap().class(),
+        fm_core::DataClass::Struct
+    );
+    assert_eq!(i.context.lookup("s").unwrap().dims(), vec![1, 1]);
+    // set(gca) runs and returns a struct of names.
+    i.run("ss = set(gca);").unwrap();
+    assert_eq!(
+        i.context.lookup("ss").unwrap().class(),
+        fm_core::DataClass::Struct
+    );
+}
+
 #[test]
 fn contour_builds_a_contour_series() {
     use fm_graphics::Series;

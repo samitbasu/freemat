@@ -603,6 +603,188 @@ impl GraphicsState {
         v
     }
 
+    /// The free-form property bag of a handle (for `copyobj` extra-copy).
+    #[must_use]
+    pub fn extra_of(&self, handle: u64) -> Option<&BTreeMap<String, Array>> {
+        self.objects.get(&handle).map(|r| &r.extra)
+    }
+
+    /// Raise figure `fig` in the headless z-order: move it to the end of
+    /// `scene.figures` (the "front") and make it the current figure. Returns
+    /// `true` if the figure exists.
+    pub fn raise_figure(&mut self, fig: u64) -> bool {
+        if let Some(pos) = self.scene.figures.iter().position(|f| f.id == fig) {
+            let f = self.scene.figures.remove(pos);
+            self.scene.figures.push(f);
+            self.current_figure = fig;
+            self.dirty = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Lower figure `fig` in the headless z-order: move it to the front of the
+    /// `scene.figures` vector (the "back"). Returns `true` if it exists.
+    pub fn lower_figure(&mut self, fig: u64) -> bool {
+        if let Some(pos) = self.scene.figures.iter().position(|f| f.id == fig) {
+            let f = self.scene.figures.remove(pos);
+            self.scene.figures.insert(0, f);
+            self.dirty = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Deep-copy the series/text named by `src` into the axes `(fig, axes)`,
+    /// returning the new child handle (carrying the same kind and `extra` bag).
+    /// Returns `None` if `src` is not a series/text or the target axes is gone.
+    pub fn copy_child_into_axes(&mut self, src: u64, fig: u64, axes: usize) -> Option<u64> {
+        let kind = self.kind_of(src)?;
+        let loc = self.resolve(src)?;
+        let extra = self.objects.get(&src).map(|r| r.extra.clone())?;
+        match loc {
+            ObjLocation::Series { .. } => {
+                let cloned = self.series_at(loc)?.clone();
+                let target = self.scene.figures.iter_mut().find(|f| f.id == fig)?;
+                let ax = target.axes.get_mut(axes)?;
+                ax.series.push(cloned);
+                let h = self.register_series(fig, axes, kind);
+                if let Some(rec) = self.objects.get_mut(&h) {
+                    rec.extra = extra;
+                }
+                Some(h)
+            }
+            ObjLocation::Text { .. } => {
+                let cloned = self.text_at(loc)?.clone();
+                let target = self.scene.figures.iter_mut().find(|f| f.id == fig)?;
+                let ax = target.axes.get_mut(axes)?;
+                ax.texts.push(cloned);
+                let h = self.register_text(fig, axes);
+                if let Some(rec) = self.objects.get_mut(&h) {
+                    rec.extra = extra;
+                }
+                Some(h)
+            }
+            _ => None,
+        }
+    }
+
+    /// Deep-copy the axes named by `src` into figure `fig`, recursively copying
+    /// its series/text children. Returns the new axes handle, or `None`.
+    pub fn copy_axes_into_figure(&mut self, src: u64, fig: u64) -> Option<u64> {
+        let ObjLocation::Axes {
+            fig: sfig,
+            axes: saxes,
+        } = self.resolve(src)?
+        else {
+            return None;
+        };
+        let extra = self.objects.get(&src).map(|r| r.extra.clone())?;
+        let mut cloned = self
+            .scene
+            .figure(sfig)
+            .and_then(|f| f.axes.get(saxes))
+            .cloned()?;
+        // The clone gets a fresh handle (assigned below) and its child handles
+        // are re-registered, so clear any stale references first.
+        cloned.handle = 0;
+        let h = self.alloc_handle();
+        cloned.handle = h;
+        let target = self.scene.figure_mut_or_insert(fig);
+        target.axes.push(cloned);
+        let new_idx = target.axes.len() - 1;
+        target.current_axes = new_idx;
+        self.objects.insert(
+            h,
+            ObjectRecord {
+                kind: ObjKind::Axes,
+                location: ObjLocation::Axes { fig, axes: new_idx },
+                extra,
+            },
+        );
+        // Register handles for the copied series/text children (they came along
+        // inside the cloned Axes; their old handles do not transfer).
+        let (n_series, n_text) = self
+            .scene
+            .figure(fig)
+            .and_then(|f| f.axes.get(new_idx))
+            .map(|a| (a.series.len(), a.texts.len()))
+            .unwrap_or((0, 0));
+        // Map each copied child to the kind of the corresponding source child.
+        let src_series_kinds: Vec<ObjKind> = (0..n_series)
+            .map(|s| self.kind_of_series_at(sfig, saxes, s))
+            .collect();
+        for s in 0..n_series {
+            let kind = src_series_kinds.get(s).copied().unwrap_or(ObjKind::Line);
+            let ch = self.alloc_handle();
+            self.objects.insert(
+                ch,
+                ObjectRecord {
+                    kind,
+                    location: ObjLocation::Series {
+                        fig,
+                        axes: new_idx,
+                        series: s,
+                    },
+                    extra: BTreeMap::new(),
+                },
+            );
+        }
+        for t in 0..n_text {
+            let ch = self.alloc_handle();
+            self.objects.insert(
+                ch,
+                ObjectRecord {
+                    kind: ObjKind::Text,
+                    location: ObjLocation::Text {
+                        fig,
+                        axes: new_idx,
+                        idx: t,
+                    },
+                    extra: BTreeMap::new(),
+                },
+            );
+        }
+        self.current_object = h;
+        self.dirty = true;
+        Some(h)
+    }
+
+    /// The registered kind of the series at `(fig, axes, series)` by looking up
+    /// the handle whose location matches; defaults to `Line` if not registered.
+    fn kind_of_series_at(&self, fig: u64, axes: usize, series: usize) -> ObjKind {
+        self.objects
+            .values()
+            .find(|r| {
+                matches!(r.location, ObjLocation::Series { fig: f, axes: a, series: s }
+                    if f == fig && a == axes && s == series)
+            })
+            .map(|r| r.kind)
+            .unwrap_or(ObjKind::Line)
+    }
+
+    /// Immutable access to a series by location, if it still exists.
+    #[must_use]
+    pub fn series_at(&self, loc: ObjLocation) -> Option<&Series> {
+        if let ObjLocation::Series { fig, axes, series } = loc {
+            self.scene.figure(fig)?.axes.get(axes)?.series.get(series)
+        } else {
+            None
+        }
+    }
+
+    /// Immutable access to a text annotation by location, if it still exists.
+    #[must_use]
+    pub fn text_at(&self, loc: ObjLocation) -> Option<&fm_graphics::TextLabel> {
+        if let ObjLocation::Text { fig, axes, idx } = loc {
+            self.scene.figure(fig)?.axes.get(axes)?.texts.get(idx)
+        } else {
+            None
+        }
+    }
+
     /// Publish the current scene through the sink (if any) and clear `dirty`.
     /// This is what `drawnow` (and an implicit post-command draw) calls.
     pub fn flush(&mut self) {
