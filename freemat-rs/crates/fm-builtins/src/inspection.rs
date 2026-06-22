@@ -3,14 +3,16 @@
 //! `is*` predicates `isvector`/`isscalar`/`ismatrix`/`isrow`/`iscolumn`/
 //! `iscomplex`/`isfloat`/`isinteger`/`islogical`.
 
-use fm_core::{Array, C64, DataClass};
+use fm_core::{Array, C64, DataClass, FunctionHandle};
 use fm_interp::error::Flow;
 use fm_interp::value::{to_c64_vec, to_f64_vec};
 use fm_interp::{FunctionTable, Interpreter};
 
-use crate::util::need;
+use crate::util::{err, need};
 
 pub(crate) fn register(table: &mut FunctionTable) {
+    table.add_builtin("nargin", b_nargin);
+    table.add_builtin("nargout", b_nargout);
     table.add_builtin("typeof", b_typeof);
     table.add_builtin("version", |_i, _a, _n| Ok(vec![Array::char_string("4.2")]));
     table.add_builtin("verstring", |_i, _a, _n| {
@@ -69,6 +71,60 @@ pub(crate) fn register(table: &mut FunctionTable) {
 fn pred(args: &[Array], name: &str, f: impl Fn(&Array) -> bool) -> Flow<Vec<Array>> {
     need(args, 1, name)?;
     Ok(vec![Array::bool(f(&args[0]))])
+}
+
+/// `nargin(fun)` — the declared number of input arguments of the function named
+/// by `fun` (a name string or a function handle). FreeMat's `NarginFunction`
+/// introspection form. The *bare* `nargin` pseudo-variable (no argument) is
+/// resolved by the interpreter directly, so this builtin only runs when called
+/// with an argument.
+fn b_nargin(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "nargin")?;
+    func_arg_count(i, &args[0], true)
+}
+
+/// `nargout(fun)` — the declared number of output arguments of `fun`. See
+/// [`b_nargin`].
+fn b_nargout(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "nargout")?;
+    func_arg_count(i, &args[0], false)
+}
+
+/// Shared body for `nargin(fun)` / `nargout(fun)`: resolve `fun` (a name string
+/// or a function handle) to a function and return its declared input/output
+/// count (`inputs` selects which). Anonymous handles count their own params
+/// (and never have variadic outputs). Mirrors FreeMat's `inputArgCount` /
+/// `outputArgCount`.
+fn func_arg_count(i: &Interpreter, arg: &Array, inputs: bool) -> Flow<Vec<Array>> {
+    // A function handle: anonymous closures carry their own parameter list;
+    // named handles resolve like a name string.
+    if let Some(handle) = arg.as_function_handle() {
+        match handle {
+            FunctionHandle::Anonymous(c) => {
+                let count = if inputs { c.params.len() as i64 } else { 1 };
+                return Ok(vec![Array::double(count as f64)]);
+            }
+            FunctionHandle::Named(name) => return resolve_arg_count(i, name, inputs),
+        }
+    }
+    let name = arg.as_string().ok_or_else(|| {
+        crate::util::err_signal("nargin/nargout: argument must be a function name or handle")
+    })?;
+    resolve_arg_count(i, &name, inputs)
+}
+
+/// Look up `name` and return its declared input/output count, erroring (like
+/// FreeMat) if it does not resolve to a function.
+fn resolve_arg_count(i: &Interpreter, name: &str, inputs: bool) -> Flow<Vec<Array>> {
+    let count = if inputs {
+        i.function_input_count(name)
+    } else {
+        i.function_output_count(name)
+    };
+    match count {
+        Some(c) => Ok(vec![Array::double(c as f64)]),
+        None => err(format!("Unable to resolve {name} to a function call")),
+    }
 }
 
 /// FreeMat's `typeof` == `Array::className()`: the storage class name. FreeMat

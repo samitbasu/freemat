@@ -57,6 +57,20 @@ pub struct Interpreter {
     /// top frame's locals shadow the global function table, giving FreeMat's
     /// file-private subfunction scoping.
     local_funcs_stack: Vec<Arc<crate::function::FileLocals>>,
+    /// Registered `.m` **script** files keyed by base name. Unlike functions,
+    /// scripts have no own scope: invoking a script's name runs its statements in
+    /// the *caller's* workspace (assignments land in the current scope).
+    scripts: std::collections::HashMap<String, Arc<Script>>,
+}
+
+/// A `.m` script file: its parsed statements plus the source they were parsed
+/// from (for diagnostics). Scripts execute in the caller's workspace.
+#[derive(Debug)]
+struct Script {
+    /// The script's statements.
+    stmts: Vec<Stmt>,
+    /// The source text the statements were parsed from.
+    src: Arc<String>,
 }
 
 impl Default for Interpreter {
@@ -80,6 +94,7 @@ impl Interpreter {
             nargout_stack: vec![0],
             graphics: GraphicsState::default(),
             local_funcs_stack: Vec::new(),
+            scripts: std::collections::HashMap::new(),
         };
         crate::builtins::register_defaults(&mut interp.functions);
         interp
@@ -180,11 +195,23 @@ impl Interpreter {
             }
             funcs.funcs.entry(def.name.clone()).or_insert(def);
         }
+        // FreeMat invokes a function file by its *filename*, not by the name in
+        // the `function` declaration (the doc for `function` relies on this: a
+        // file `euclidlength.m` whose first function is `foo` is still called as
+        // `euclidlength`). Register the public function under the filename stem
+        // too when they differ, so both forms resolve.
+        let file_stem = locals_path_stem(&funcs.path);
         let locals = Arc::new(funcs);
 
         // Only the public function is registered globally; subfunctions stay
         // private to the file via `locals`.
         if let Some(main) = main {
+            if let Some(stem) = file_stem
+                && stem != main.name
+            {
+                self.functions
+                    .add_interpreted_as(&stem, main.clone(), locals.clone());
+            }
             self.functions.add_interpreted(main, locals);
         }
     }
@@ -841,6 +868,12 @@ impl Interpreter {
             }
             _ => {}
         }
+        // A registered script: run it in the current workspace (no own scope),
+        // so its assignments are visible here. Returns no value.
+        if self.is_script(name) {
+            self.run_script(name)?;
+            return Ok(Vec::new());
+        }
         // Not a variable → a zero-argument function call.
         if self.resolves_function(name) {
             return self.call_function(name, &[], nargout, src, span);
@@ -932,13 +965,27 @@ impl Interpreter {
             && !self.context.exists(name)
             && (!is_builtin_constant(name) || self.resolves_function(name))
         {
-            let arg_vals = self.eval_args(args, src)?;
             // Pass-by-reference (`function f(&x)`): copy the callee's final value
             // of each `&` parameter back into the caller's variable, when the
             // corresponding argument is a plain variable name.
             if let Some(def) = self.lookup_interpreted_def(name)
                 && def.inputs.iter().any(|p| p.by_ref)
             {
+                // A `&` parameter requires an l-value argument; a literal (e.g.
+                // `addtest3(3,4)`) cannot be passed by reference. FreeMat:
+                // "Must have lvalue in argument passed by reference".
+                for (i, param) in def.inputs.iter().enumerate() {
+                    if param.by_ref
+                        && let Some(arg) = args.get(i)
+                        && !is_lvalue(arg)
+                    {
+                        return Err(Signal::Error(
+                            InterpError::msg("Must have lvalue in argument passed by reference")
+                                .located(src, arg.span),
+                        ));
+                    }
+                }
+                let arg_vals = self.eval_args(args, src)?;
                 let locals = self.locals_for(name);
                 let (outputs, refs) =
                     self.call_interpreted_refs(&def, &arg_vals, nargout, locals)?;
@@ -951,6 +998,7 @@ impl Interpreter {
                 }
                 return Ok(outputs);
             }
+            let arg_vals = self.eval_args(args, src)?;
             return self.call_function(name, &arg_vals, nargout, src, span);
         }
         // Otherwise index a value — unless it is a function handle, in which case
@@ -1157,6 +1205,87 @@ impl Interpreter {
             }
         }
         Ok(Array::cell(&[nrows, ncols], data))
+    }
+
+    /// The declared number of **input** arguments of the function `name`
+    /// (FreeMat's `nargin(fun)`): for an interpreted function it is the count of
+    /// declared parameters, or `-1` if the last parameter is `varargin`; for a
+    /// builtin (whose arity is not declared in this port) it is `-1`. Returns
+    /// `None` if `name` does not resolve to any function.
+    #[must_use]
+    pub fn function_input_count(&self, name: &str) -> Option<i64> {
+        if let Some(def) = self.lookup_interpreted_def(name) {
+            return Some(arg_count(
+                &def.inputs
+                    .iter()
+                    .map(|p| p.name.clone())
+                    .collect::<Vec<_>>(),
+            ));
+        }
+        match self.functions.get(name) {
+            Some(Function::Builtin { .. }) => Some(-1),
+            _ => None,
+        }
+    }
+
+    /// The declared number of **output** arguments of the function `name`
+    /// (FreeMat's `nargout(fun)`): for an interpreted function it is the count of
+    /// declared return values, or `-1` if the last is `varargout`; for a builtin
+    /// it is `-1`. Returns `None` if `name` does not resolve to any function.
+    #[must_use]
+    pub fn function_output_count(&self, name: &str) -> Option<i64> {
+        if let Some(def) = self.lookup_interpreted_def(name) {
+            return Some(arg_count(&def.outputs));
+        }
+        match self.functions.get(name) {
+            Some(Function::Builtin { .. }) => Some(-1),
+            _ => None,
+        }
+    }
+
+    // ---- Scripts ------------------------------------------------------------
+
+    /// Register a `.m` **script** under `name` from its source `src`. The source
+    /// must parse as a script (statements, not a `function` file); a function
+    /// file is rejected. Invoking `name` later runs the statements in the
+    /// caller's workspace (see [`Self::run_script`]).
+    ///
+    /// # Errors
+    /// Returns an [`InterpError`] if `src` fails to parse or is a function file.
+    pub fn register_script(&mut self, name: &str, src: &str) -> Result<(), InterpError> {
+        let program = parse_program(src).map_err(|e| InterpError::msg(e.to_string()))?;
+        match program {
+            Program::Script(stmts) => {
+                self.scripts.insert(
+                    name.to_string(),
+                    Arc::new(Script {
+                        stmts,
+                        src: Arc::new(src.to_string()),
+                    }),
+                );
+                Ok(())
+            }
+            Program::Functions(_) => Err(InterpError::msg(format!(
+                "'{name}' is a function file, not a script"
+            ))),
+        }
+    }
+
+    /// Whether `name` is a registered script.
+    #[must_use]
+    pub fn is_script(&self, name: &str) -> bool {
+        self.scripts.contains_key(name)
+    }
+
+    /// Run the registered script `name` in the **current** workspace (its
+    /// assignments are visible to the caller, per FreeMat script semantics).
+    fn run_script(&mut self, name: &str) -> Flow<()> {
+        let script =
+            self.scripts.get(name).cloned().ok_or_else(|| {
+                Signal::Error(InterpError::msg(format!("undefined script '{name}'")))
+            })?;
+        let src = script.src.clone();
+        self.run_block(&script.stmts, &src)
     }
 
     // ---- Function calls -----------------------------------------------------
@@ -1480,6 +1609,26 @@ fn is_builtin_constant(name: &str) -> bool {
 
 fn has_varargin(def: &FunctionDef) -> bool {
     def.inputs.iter().any(|p| p.name == "varargin")
+}
+
+/// The file-name stem (without directory or `.m` extension) of an optional `.m`
+/// path, used to register a function under its filename as FreeMat does.
+fn locals_path_stem(path: &Option<String>) -> Option<String> {
+    let p = path.as_ref()?;
+    std::path::Path::new(p)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(str::to_string)
+}
+
+/// FreeMat's declared argument-count rule (`MFunctionDef::inputArgCount` /
+/// `outputArgCount`): the number of declared names, unless the last is the
+/// variadic keyword (`varargin`/`varargout`), in which case it is `-1`.
+fn arg_count(names: &[String]) -> i64 {
+    match names.last().map(String::as_str) {
+        Some("varargin" | "varargout") => -1,
+        _ => names.len() as i64,
+    }
 }
 
 /// The root variable name of a (possibly nested) l-value chain.

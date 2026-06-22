@@ -120,6 +120,21 @@ impl FunctionTable {
             .insert(def.name.clone(), Function::Interpreted { def, src, locals });
     }
 
+    /// Register an interpreted function under an *alias* name (e.g. the file
+    /// stem) distinct from the function's declared name, sharing the same
+    /// file-local table. Used so a function file is callable by its filename as
+    /// well as by its declared name (FreeMat's filename-based invocation).
+    pub fn add_interpreted_as(
+        &mut self,
+        name: &str,
+        def: Arc<FunctionDef>,
+        locals: Arc<FileLocals>,
+    ) {
+        let src = locals.src.clone();
+        self.funcs
+            .insert(name.to_string(), Function::Interpreted { def, src, locals });
+    }
+
     /// Look up a function by name.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&Function> {

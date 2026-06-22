@@ -210,7 +210,7 @@ function c = addtest(a,b)
      addtest.m
 ```
 
-```fm
+```fm-exec
 addtest(1,3)
 addtest(3,0)
 ```
@@ -228,7 +228,7 @@ function addtest2(a,b)
      addtest2.m
 ```
 
-```fm
+```fm-exec
 arg1 = 1
 arg2 = 3
 addtest2(arg1,arg2)
@@ -253,7 +253,8 @@ function addtest3(&a,b)
 Note that it is now illegal to pass a literal value for `a` when
 calling `addtest3`:
 
-```fm
+```fm-exec
+# errors: 1
 addtest3(3,4)
 addtest3(arg1,arg2)
 arg1
@@ -285,7 +286,7 @@ function square_me(&t)
      euclidlength.m
 ```
 
-```fm
+```fm-exec
 euclidlength(3,4)
 euclidlength(2,0)
 ```
@@ -420,7 +421,7 @@ function nargintest(a1,a2,a3,a4,a5)
      nargintest.m
 ```
 
-```fm
+```fm-exec
 nargintest(3);
 nargintest(3,'h');
 nargintest(3,'h',1.34);
@@ -474,7 +475,7 @@ function [a1,a2,a3,a4,a5] = nargouttest
      nargouttest.m
 ```
 
-```fm
+```fm-exec
 a1 = nargouttest
 [a1,a2] = nargouttest
 [a1,a2,a3] = nargouttest
@@ -519,7 +520,7 @@ b = a + 32
 
 If we execute the script and then look at the defined variables
 
-```fm
+```fm-exec
 tscript
 who
 ```

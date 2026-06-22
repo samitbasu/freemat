@@ -81,11 +81,21 @@ pub fn run_fragment(script: &FragmentScript) -> CapturedFragment {
     let mut transcript = String::new();
     let mut error_count = 0usize;
 
-    // Load any `.m` aux files so their functions are callable in the session.
+    // Load any `.m` aux files so their functions / scripts are callable in the
+    // session. A `.m` file is either a function file (registers its functions)
+    // or a script file (statements). `load_file` ignores script files, so we
+    // register those separately under their base name so invoking the name runs
+    // the script in the caller's workspace.
     if let Some(dir) = staging.as_ref() {
-        for (name, _) in &script.files {
+        for (name, body) in &script.files {
             if name.ends_with(".m") {
                 let _ = interp.load_file(dir.join(name));
+                let base = name.strip_suffix(".m").unwrap_or(name);
+                let base = std::path::Path::new(base)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(base);
+                let _ = interp.register_script(base, body);
             }
         }
     }
