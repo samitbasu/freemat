@@ -50,5 +50,5 @@ pub use context::Context;
 pub use error::{Flow, InterpError, Signal};
 pub use function::{BuiltinFn, Function, FunctionTable};
 pub use graphics::{GraphicsState, ObjKind, ObjLocation, ObjectRecord};
-pub use interp::Interpreter;
+pub use interp::{Interpreter, collect_free_vars};
 pub use scope::Scope;

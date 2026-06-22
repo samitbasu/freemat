@@ -40,6 +40,8 @@ pub struct Interpreter {
     pub functions: FunctionTable,
     /// The display format mode (`format short` / `long`).
     pub format: FormatMode,
+    /// The most recent caught error message (FreeMat's `lasterr` state).
+    pub last_error: String,
     /// Buffered output (so tests can assert on `disp`/echo output).
     output: String,
     /// `nargin` for the executing function frame (parallel to the scope stack).
@@ -68,6 +70,7 @@ impl Interpreter {
             context: Context::new(),
             functions: FunctionTable::new(),
             format: FormatMode::Short,
+            last_error: String::new(),
             output: String::new(),
             nargin_stack: vec![0],
             nargout_stack: vec![0],
@@ -439,10 +442,9 @@ impl Interpreter {
         match self.exec_block(body, src) {
             Ok(()) => Ok(()),
             Err(Signal::Error(e)) => {
-                // Bind the error message to `lasterr`-style; FreeMat binds the
-                // catch identifier to an MException. We expose the message.
-                self.context
-                    .assign("lasterr", Array::char_string(&e.message));
+                // Record the message for `lasterr` (FreeMat also binds the catch
+                // identifier to an MException; we expose just the message string).
+                self.last_error = e.message.clone();
                 if let Some(handler) = catch {
                     self.exec_block(handler, src)
                 } else {
@@ -1188,7 +1190,14 @@ impl Interpreter {
             )
         })?;
         match func {
-            Function::Builtin { func, .. } => func(self, args, nargout.max(1)),
+            // Pass `nargout` through unchanged so a command-syntax call (which
+            // requests 0 outputs) is distinguishable from an expression that
+            // wants one value. Builtins like `load` rely on `nargout == 0` to
+            // know they were invoked as a command (`load file` injects into the
+            // workspace; `s = load(file)` returns a struct). The command path is
+            // the only 0-output caller and it discards the return, so builtins
+            // that always produce a value are unaffected.
+            Function::Builtin { func, .. } => func(self, args, nargout),
             Function::Interpreted { def, locals, .. } => {
                 self.call_interpreted(&def, args, nargout, locals)
             }
@@ -1470,7 +1479,7 @@ fn is_lvalue(e: &Expr) -> bool {
 /// variables of an anonymous-function body). Over-approximates: it includes
 /// function names too, but the capture step only snapshots names actually bound
 /// as variables, so extra names are harmless.
-fn collect_free_vars(e: &Expr, out: &mut Vec<String>) {
+pub fn collect_free_vars(e: &Expr, out: &mut Vec<String>) {
     match &e.kind {
         ExprKind::Ident(n) => {
             if !out.contains(n) {

@@ -1803,7 +1803,7 @@ and
 ## Example
 Here is an example in row mode
 
-```fm
+```fm-exec
 A = randi(1,3*ones(15,3))
 unique(A,'rows')
 [b,m,n] = unique(A,'rows');
@@ -1814,7 +1814,7 @@ b(n,:)
 
 Here is an example in vector mode
 
-```fm
+```fm-exec
 A = randi(1,5*ones(10,1))
 unique(A)
 [b,m,n] = unique(A,'rows');
@@ -1825,7 +1825,7 @@ b(n)
 
 For cell arrays of strings.
 
-```fm
+```fm-exec
 A = {'hi','bye','good','tell','hi','bye'}
 unique(A)
 ```

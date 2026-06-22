@@ -96,7 +96,10 @@ fn b_save(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     if ascii {
         return save_ascii(i, &filename, &names);
     }
-    if !filename.to_lowercase().ends_with(".mat") {
+    // Append `.mat` only for a bare name with no extension (FreeMat keeps an
+    // explicit extension like `.dat` as-is and writes its native format there,
+    // which `load` reads back through the same MAT codec).
+    if !filename.contains('.') {
         filename.push_str(".mat");
     }
     let mut vars = Vec::with_capacity(names.len());

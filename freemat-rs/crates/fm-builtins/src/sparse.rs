@@ -13,7 +13,7 @@ use fm_interp::{FunctionTable, Interpreter};
 use rand::Rng;
 use rand_distr::{Distribution, StandardNormal};
 
-use crate::util::{err, need, scalar_arg};
+use crate::util::{need, scalar_arg};
 
 pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("sparse", b_sparse);
@@ -196,35 +196,35 @@ fn b_sprand(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>>
 
 fn sprand_impl(args: &[Array], normal: bool) -> Flow<Vec<Array>> {
     need(args, 1, "sprand")?;
-    // sprand(S): match the sparsity pattern of S with new random values.
-    if args.len() == 1 {
-        if let Some(s) = args[0].as_sparse() {
-            let (i, j, _v, _im) = s.find_triplets();
-            let mut rng = rand::rng();
-            let vals: Vec<f64> = (0..i.len())
-                .map(|_| {
-                    if normal {
-                        StandardNormal.sample(&mut rng)
-                    } else {
-                        rng.random::<f64>()
-                    }
-                })
-                .collect();
-            let iu: Vec<usize> = i.iter().map(|&x| x as usize).collect();
-            let ju: Vec<usize> = j.iter().map(|&x| x as usize).collect();
-            let out = SparseMatrix::from_triplets(
-                &iu,
-                &ju,
-                &vals,
-                None,
-                Some(s.rows()),
-                Some(s.cols()),
-                DataClass::Double,
-            )
-            .map_err(|e| fm_interp::error::Signal::Error(fm_interp::error::InterpError::msg(e)))?;
-            return Ok(vec![Array::sparse(out)]);
+    let one = |rng: &mut dyn rand::RngCore| -> f64 {
+        if normal {
+            StandardNormal.sample(rng)
+        } else {
+            rng.random::<f64>()
         }
-        return err("sprand: single-argument form requires a sparse matrix");
+    };
+    // sprand(X): match the sparsity pattern of X with new random values. `X` may
+    // be sparse or full — in the full case we take its nonzero structure (this is
+    // FreeMat's documented first form).
+    if args.len() == 1 {
+        let s = sparsify(&args[0]);
+        let sm = s.as_sparse().expect("sparsify yields sparse");
+        let (i, j, _v, _im) = sm.find_triplets();
+        let vals: Vec<f64> =
+            crate::random::with_rng(|rng| (0..i.len()).map(|_| one(rng)).collect());
+        let iu: Vec<usize> = i.iter().map(|&x| x as usize).collect();
+        let ju: Vec<usize> = j.iter().map(|&x| x as usize).collect();
+        let out = SparseMatrix::from_triplets(
+            &iu,
+            &ju,
+            &vals,
+            None,
+            Some(sm.rows()),
+            Some(sm.cols()),
+            DataClass::Double,
+        )
+        .map_err(|e| fm_interp::error::Signal::Error(fm_interp::error::InterpError::msg(e)))?;
+        return Ok(vec![Array::sparse(out)]);
     }
     let m = scalar_arg(args, 0, "sprand")? as usize;
     let n = scalar_arg(args, 1, "sprand")? as usize;
@@ -234,34 +234,30 @@ fn sprand_impl(args: &[Array], normal: bool) -> Flow<Vec<Array>> {
         .unwrap_or(0.1)
         .clamp(0.0, 1.0);
     let target = ((m * n) as f64 * density).round() as usize;
-    let mut rng = rand::rng();
-    // Sample `target` distinct linear positions, set random values.
-    let mut iv = Vec::with_capacity(target);
-    let mut jv = Vec::with_capacity(target);
-    let mut sv = Vec::with_capacity(target);
     let total = m * n;
     if total == 0 {
         return Ok(vec![Array::sparse(SparseMatrix::zeros(m, n))]);
     }
-    let mut seen = std::collections::HashSet::new();
-    let mut attempts = 0;
-    while seen.len() < target && attempts < target * 20 + 100 {
-        attempts += 1;
-        let lin = rng.random_range(0..total);
-        if !seen.insert(lin) {
-            continue;
+    // Sample `target` distinct linear positions, set random values — all from the
+    // shared (possibly seeded) generator so the result is reproducible.
+    let (iv, jv, sv) = crate::random::with_rng(|rng| {
+        let mut iv = Vec::with_capacity(target);
+        let mut jv = Vec::with_capacity(target);
+        let mut sv = Vec::with_capacity(target);
+        let mut seen = std::collections::HashSet::new();
+        let mut attempts = 0;
+        while seen.len() < target && attempts < target * 20 + 100 {
+            attempts += 1;
+            let lin = rng.random_range(0..total);
+            if !seen.insert(lin) {
+                continue;
+            }
+            iv.push(lin % m + 1);
+            jv.push(lin / m + 1);
+            sv.push(one(rng));
         }
-        let row = lin % m;
-        let col = lin / m;
-        let val: f64 = if normal {
-            StandardNormal.sample(&mut rng)
-        } else {
-            rng.random::<f64>()
-        };
-        iv.push(row + 1);
-        jv.push(col + 1);
-        sv.push(val);
-    }
+        (iv, jv, sv)
+    });
     let out = SparseMatrix::from_triplets(&iv, &jv, &sv, None, Some(m), Some(n), DataClass::Double)
         .map_err(|e| fm_interp::error::Signal::Error(fm_interp::error::InterpError::msg(e)))?;
     Ok(vec![Array::sparse(out)])

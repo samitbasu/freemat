@@ -622,7 +622,7 @@ Here is an example of using `clim` to change the effective window and
 level onto an image.  First, the image with default
 limits
 
-```fm
+```fm-exec:figure
 x = repmat(linspace(-1,1),[100,1]); y = x';
 z = exp(-x.^2-y.^2);
 image(z);
@@ -634,7 +634,7 @@ which results in
 Next, we change the colorscale of the image using the
  `clim` function
 
-```fm
+```fm-exec:figure
 image(z);
 clim([0,0.2]);
 ```
@@ -954,7 +954,7 @@ see its help for details.
 ## Example
 Here is a simple example of a 3D contour plot.
 
-```fm
+```fm-exec:figure
 [x,y] = meshgrid([-2:.25:2]);
 z=x.*exp(-x.^2-y.^2);
 contour3(x,y,z,30);
@@ -2166,7 +2166,7 @@ for the current fig is applied).
 ## Example
 Here we generate a surface specifying all four components.
 
-```fm
+```fm-exec:figure
 x = [ 0 1 0 1]';
 y = [ 0 0 1 1]';
 c = [ 1 1 1 ];
@@ -3553,7 +3553,7 @@ automatic value for the maximum.
 
 ## Example
 
-```fm
+```fm-exec:figure
 x = linspace(-1,1);
 y = sin(2*pi*x);
 plot(x,y,'r-');
@@ -3563,7 +3563,7 @@ xlim  % what are the current limits?
 which results in
 Next, we zoom in on the plot using the `xlim` function
 
-```fm
+```fm-exec:figure
 plot(x,y,'r-')
 xlim([-0.2,0.2])
 ```
@@ -3571,7 +3571,7 @@ xlim([-0.2,0.2])
 which results in
 To demonstrate the infinite limits feature.  Consider the following
 
-```fm
+```fm-exec:figure
 plot(x,y,'r-');
 xlim([0,inf])
 ```
@@ -3656,7 +3656,7 @@ automatic value for the maximum.
 
 ## Example
 
-```fm
+```fm-exec:figure
 x = linspace(-1,1);
 y = sin(2*pi*x);
 plot(x,y,'r-');
@@ -3666,7 +3666,7 @@ ylim  % what are the current limits?
 which results in
 Next, we zoom in on the plot using the `ylim` function
 
-```fm
+```fm-exec:figure
 plot(x,y,'r-')
 ylim([-0.2,0.2])
 ```
@@ -3674,7 +3674,7 @@ ylim([-0.2,0.2])
 which results in
 To demonstrate the infinite limits feature.  Consider the following
 
-```fm
+```fm-exec:figure
 plot(x,y,'r-');
 ylim([0,inf])
 ```
@@ -3792,7 +3792,7 @@ To demonstrate the use of the `zoom` function, we create a rectangular image
 of a Gaussian pulse.  We start with a display of the image using the `image`
 command, and a zoom of 1.
 
-```fm
+```fm-exec:figure
 x = linspace(-1,1,300)'*ones(1,600);
 y = ones(300,1)*linspace(-1,1,600);
 Z = exp(-(x.^2+y.^2)/0.3);
@@ -3807,14 +3807,14 @@ If we change the zoom to another factor larger than 1, we enlarge the image by
 the specified factor (or shrink it, for zoom factors `0 < x < 1`.  Here is the
 same image zoomed out to 60%
 
-```fm
+```fm-exec:figure
 image(Z);
 zoom(0.6);
 ```
 
 Similarly, we can enlarge it to 130%
 
-```fm
+```fm-exec:figure
 image(Z)
 zoom(1.3);
 ```
@@ -3823,7 +3823,7 @@ The ``free'' zoom of `x = 0` results in the image being zoomed to fit the window
 without changing the aspect ratio.  The image is zoomed as much as possible in
 one direction.
 
-```fm
+```fm-exec:figure
 image(Z);
 zoom(0);
 sizefig(200,400);
@@ -3832,7 +3832,7 @@ sizefig(200,400);
 The case of a negative zoom `x < 0` results in the image being scaled arbitrarily.
 This allows the image aspect ratio to be changed, as in the following example.
 
-```fm
+```fm-exec:figure
 image(Z);
 zoom(-1);
 sizefig(200,400);

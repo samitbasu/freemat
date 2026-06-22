@@ -180,7 +180,7 @@ The following creates a 5000 by 5000 identity matrix, which would be
 difficult to do using `sparse(eye(5000))` because of the large amount
 of intermediate storage required.
 
-```fm
+```fm-exec
 I = speye(5000);
 who I
 full(I(1:10,1:10))
@@ -249,7 +249,7 @@ entries you do not need.
 Here we seed `sprand` with a full matrix (to demonstrate how the structure
 of the output is determined by the input matrix when using the first form).
 
-```fm
+```fm-exec
 x = [1,0,0;0,0,1;1,0,0]
 y = sprand(x)
 full(y)
@@ -258,7 +258,7 @@ full(y)
 The more generic version with a density of `0.001`.  On many systems the
 following is impossible using full matrices
 
-```fm
+```fm-exec
 y = sprand(10000,10000,.001);
 nnz(y)/10000^2
 ```
@@ -298,7 +298,7 @@ entries you do not need.
 Here we seed `sprandn` with a full matrix (to demonstrate how the structure
 of the output is determined by the input matrix when using the first form).
 
-```fm
+```fm-exec
 x = [1,0,0;0,0,1;1,0,0]
 y = sprandn(x)
 full(y)
@@ -307,7 +307,7 @@ full(y)
 The more generic version with a density of `0.001`.  On many systems the
 following is impossible using full matrices
 
-```fm
+```fm-exec
 y = sprandn(10000,10000,.001);
 nnz(y)/10000^2
 ```

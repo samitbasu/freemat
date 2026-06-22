@@ -217,32 +217,135 @@ fn sort_pairs(v: &mut [(usize, f64)], descend: bool) {
 
 /// `unique` — the sorted set of distinct values, as a column vector (or a row
 /// vector for a row-vector input). Cell-of-strings input returns a sorted cell.
-fn b_unique(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+/// Given `nitems` keys (addressed only through `cmp`/`eq`), return
+/// `(m, n)` where `m[g]` is the first-occurrence original index of the `g`-th
+/// distinct value (sorted ascending) and `n[i]` is the distinct-group index of
+/// item `i`. By construction `value[m]` is sorted-unique and `value[m[n[i]]] ==
+/// value[i]`, which is what gives `y = x(m)` / `x = y(n)`.
+fn unique_with_indices(
+    nitems: usize,
+    cmp: impl Fn(usize, usize) -> std::cmp::Ordering,
+    eq: impl Fn(usize, usize) -> bool,
+) -> (Vec<usize>, Vec<usize>) {
+    // Sort indices by key, breaking ties by original index so each group's first
+    // element is its lowest original index (first occurrence).
+    let mut order: Vec<usize> = (0..nitems).collect();
+    order.sort_by(|&i, &j| cmp(i, j).then(i.cmp(&j)));
+    let mut m: Vec<usize> = Vec::new();
+    let mut n = vec![0usize; nitems];
+    for &orig in &order {
+        match m.last() {
+            Some(&rep) if eq(orig, rep) => n[orig] = m.len() - 1,
+            _ => {
+                m.push(orig);
+                n[orig] = m.len() - 1;
+            }
+        }
+    }
+    (m, n)
+}
+
+/// Build the `[y, m, n]` output triple, trimmed to `nargout` (at least 1). `m`
+/// and `n` are returned as 1-based double index vectors shaped like `idx_dims`.
+fn unique_outputs(
+    y: Array,
+    m: &[usize],
+    n: &[usize],
+    nargout: usize,
+    m_dims: [usize; 2],
+    n_dims: [usize; 2],
+) -> Vec<Array> {
+    let mut out = vec![y];
+    if nargout >= 2 {
+        let md: Vec<f64> = m.iter().map(|&i| (i + 1) as f64).collect();
+        out.push(build_real(DataClass::Double, &m_dims, md));
+    }
+    if nargout >= 3 {
+        let nd: Vec<f64> = n.iter().map(|&i| (i + 1) as f64).collect();
+        out.push(build_real(DataClass::Double, &n_dims, nd));
+    }
+    out
+}
+
+fn b_unique(_i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
     need(args, 1, "unique")?;
     let a = &args[0];
-    if let Some(cells) = a.as_cell() {
-        // Unique strings.
-        let mut strs: Vec<String> = cells
-            .iter()
-            .filter_map(Array::as_string)
-            .collect::<Vec<_>>();
-        strs.sort();
-        strs.dedup();
-        let n = strs.len();
-        let data: Vec<Array> = strs.into_iter().map(|s| Array::char_string(&s)).collect();
-        return Ok(vec![Array::cell(&[n, 1], data)]);
-    }
-    let mut v = to_f64_vec(a);
-    v.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
-    v.dedup_by(|x, y| x == y);
-    let dims = a.dims();
-    let n = v.len();
-    let out_dims = if dims.len() == 2 && dims[0] == 1 {
-        vec![1, n]
-    } else {
-        vec![n, 1]
+    let nout = nargout.max(1);
+    // Optional 'rows' flag.
+    let rows = match args.get(1) {
+        None => false,
+        Some(opt) => {
+            if !opt
+                .as_string()
+                .is_some_and(|s| s.eq_ignore_ascii_case("rows"))
+            {
+                return err("unique: second argument must be 'rows'");
+            }
+            true
+        }
     };
-    Ok(vec![build_real(a.class(), &out_dims, v)])
+    let dims = a.dims();
+    let is_row = dims.len() == 2 && dims[0] == 1;
+
+    // Cell array of strings: unique strings (FreeMat ignores 'rows' for these).
+    if let Some(cells) = a.as_cell() {
+        let strs: Vec<String> = cells.iter().filter_map(Array::as_string).collect();
+        let (m, n) = unique_with_indices(
+            strs.len(),
+            |i, j| strs[i].cmp(&strs[j]),
+            |i, j| strs[i] == strs[j],
+        );
+        let k = m.len();
+        let data: Vec<Array> = m.iter().map(|&i| Array::char_string(&strs[i])).collect();
+        let y_dims = if is_row { [1, k] } else { [k, 1] };
+        let y = Array::cell(&y_dims, data);
+        let m_dims = if is_row { [1, k] } else { [k, 1] };
+        let n_dims = if is_row { [1, n.len()] } else { [n.len(), 1] };
+        return Ok(unique_outputs(y, &m, &n, nout, m_dims, n_dims));
+    }
+
+    if rows && dims.len() == 2 && dims[0] > 1 {
+        // Unique rows: compare whole rows lexicographically (column-major store).
+        let (nrows, ncols) = (dims[0], dims[1]);
+        let v = to_f64_vec(a);
+        let row_val = |r: usize, c: usize| v[c * nrows + r];
+        let cmp = |i: usize, j: usize| {
+            for c in 0..ncols {
+                let o = row_val(i, c).total_cmp(&row_val(j, c));
+                if o != std::cmp::Ordering::Equal {
+                    return o;
+                }
+            }
+            std::cmp::Ordering::Equal
+        };
+        let eq = |i: usize, j: usize| cmp(i, j) == std::cmp::Ordering::Equal;
+        let (m, n) = unique_with_indices(nrows, cmp, eq);
+        let k = m.len();
+        // Assemble the k-by-ncols result, column-major.
+        let mut data = vec![0.0; k * ncols];
+        for (g, &orig) in m.iter().enumerate() {
+            for c in 0..ncols {
+                data[c * k + g] = row_val(orig, c);
+            }
+        }
+        let y = build_real(a.class(), &[k, ncols], data);
+        return Ok(unique_outputs(y, &m, &n, nout, [k, 1], [nrows, 1]));
+    }
+
+    // Vector mode: flatten, unique sorted values.
+    let v = to_f64_vec(a);
+    let (m, n) = unique_with_indices(
+        v.len(),
+        |i, j| v[i].total_cmp(&v[j]),
+        |i, j| v[i].total_cmp(&v[j]) == std::cmp::Ordering::Equal,
+    );
+    let k = m.len();
+    let yv: Vec<f64> = m.iter().map(|&i| v[i]).collect();
+    let y_dims = if is_row { [1, k] } else { [k, 1] };
+    let y = build_real(a.class(), &y_dims, yv);
+    let m_dims = if is_row { [1, k] } else { [k, 1] };
+    let n_dims = if is_row { [1, n.len()] } else { [n.len(), 1] };
+    Ok(unique_outputs(y, &m, &n, nout, m_dims, n_dims))
 }
 
 /// `permute(A, order)` — rearrange dimensions; `ipermute` inverts `order`.

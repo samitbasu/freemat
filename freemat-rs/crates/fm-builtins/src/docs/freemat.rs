@@ -603,13 +603,13 @@ of the class.
 Here is an example of using `feval` to call the `cos`
 function indirectly.
 
-```fm
+```fm-exec
 feval('cos',pi/4)
 ```
 
 Now, we call it through a function handle
 
-```fm
+```fm-exec
 c = @cos
 feval(c,pi/4)
 ```
@@ -617,7 +617,7 @@ feval(c,pi/4)
 Here we construct an inline object (which is a user-defined class)
 and use `feval` to call it
 
-```fm
+```fm-exec
 afunc = inline('cos(t)+sin(t)','t')
 feval(afunc,pi)
 afunc(pi)

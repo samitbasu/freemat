@@ -35,7 +35,7 @@ feature request at the FreeMat website.
 Here we construct an inline expression using the autodetection
 of `symvar`
 
-```fm
+```fm-exec
 a = inline('x^2')
 a(3)
 a(i)
@@ -43,7 +43,7 @@ a(i)
 
 In this case, we have multiple arguments (again, autodetected)
 
-```fm
+```fm-exec
 a = inline('x+y-cos(x+y)')
 a(pi,-pi)
 ```
@@ -51,14 +51,14 @@ a(pi,-pi)
 In this form, we specify which arguments we want to use (thereby
 also specifying the order of the arguments
 
-```fm
+```fm-exec
 a = inline('x+t-sin(x)','x','t')
 a(0.5,1)
 ```
 
 Inline objects can also be used with `feval`
 
-```fm
+```fm-exec
 a = inline('cos(t)')
 feval(a,pi/2)
 ```
@@ -87,7 +87,7 @@ they are usually not used as identifiers in expressions, the strings
 ## Example
 Here are some simple examples:
 
-```fm
+```fm-exec
 symvar('x^2+sqrt(x)')  % sqrt is eliminated as a function
 symvar('pi+3')         % No identifiers here
 symvar('x + t*alpha')  % x, t and alpha

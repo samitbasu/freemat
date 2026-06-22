@@ -15,15 +15,27 @@ output if its fragment **runs cleanly**. `cargo xtask migrate-place` probes ever
 auto-promotes any fragment that now runs as declared. (`migrate-place` prints the live /
 downgraded counts and per-topic downgrade reasons.)
 
-## Status (2026-06-21)
+## Status (2026-06-21, session 2)
 
-- Fragments kept **live: 250** · **downgraded: 79** (of 329 with fragments).
-- Of the 79: **10 are non-deterministic (correct — leave as-is)**, **69 are fixable**.
-- 0 crashes (all fixed — see "Done" below).
+- Fragments kept **live: 282** · **downgraded: 47** (probe counts); **289 captured**.
+- Of the downgrades: **10 are non-deterministic (correct — leave as-is)**, **6 are threads
+  (out of scope)**, the rest fixable.
 
-This session's progress: live fragments 224 → 259 (then 250 after a re-probe normalized counts);
-8 interpreter crashes fixed; ~16 builtins added. History in git (`a7df1e6c1`, `bb843a36d`,
-`a2b16b7cb`, graphics `7019d175e`/`3eea8febe`/`f8dcefab7`/`2f007d705`).
+Session 2 progress: live 250 → 273. Implemented the **11 `rand*` distributions**
+(`randbeta`/`randbin`/`randchi`/`randexp`/`randf`/`randgamma`/`randmulti`/`randnbin`/
+`randnchi`/`randnf`/`randp`, all on the shared seeded RNG); routed **`sprand`/`sprandn`**
+through the seeded RNG + accept a full matrix (single-arg form); added **`who`/`whos`/`where`**
+and a proper **`lasterr`** (interpreter `last_error` state); extended **`unique`** with `'rows'`
+and the multi-output `[y,m,n]` forms; fixed **`load`/`save`** (don't force-append `.mat` when an
+extension is given; **command-syntax `nargout` passthrough** so `load file` injects into the
+workspace instead of returning a struct — `crates/fm-interp/src/interp.rs` `call_function`).
+Then the **axes-property graphics set**: `xlim`/`ylim`/`clim`/`patch`/`contour3`/`zoom` (+ the
+supporting `sizefig`), with new `Axes.clim` and `Figure.size` scene fields. Then **`inline`** +
+**`symvar`** (anonymous-handle-backed inline functions; symbolic-var extraction), which also
+unblocked **`feval`**.
+
+Prior session: live 224 → 250; 8 interpreter crashes fixed; ~16 builtins added. History in git
+(`a7df1e6c1`, `bb843a36d`, `a2b16b7cb`, graphics `7019d175e`/`3eea8febe`/`f8dcefab7`/`2f007d705`).
 
 ---
 
@@ -31,27 +43,22 @@ This session's progress: live fragments 224 → 259 (then 250 after a re-probe n
 
 Effort: **S** small (a few hrs) · **M** medium · **L** large.
 
-### 1. Graphics — axes / handle properties (~10) · effort M
-Need handle-graphics property plumbing (axes limits, color limits, view controls) and a few
-extra plot types. Ties into the graphics track.
+### 1. Graphics — axes / handle properties · mostly ✅ DONE (session 2)
+- `xlim`/`ylim`: ✅ get/set, with `[lo,inf]`→auto and `'auto'`/`'manual'` strings. The no-arg
+  query computes data bounds via `auto_xy_bounds`/`series_xy_bounds` (`graphics.rs`).
+- `clim`: ✅ get/set color-axis limits (new `Axes.clim` field).
+- `patch`: ✅ `patch(x,y,c)`/`patch(x,y,z,c)` rendered as a filled polygon (reuses `FillSeries`).
+- `contour3`: ✅ `contour` + default 3-D view + grid.
+- `zoom`: ✅ FreeMat semantics (`>0` resize via `sizefig`, `==0` `axis image`, `<0` `axis
+  normal`); **`sizefig`** also added (new `Figure.size` field).
+- **Still TODO (niche):** `clabel` · `tubeplot` · `winlev` · `pvalid`. `subplot`'s fragment is
+  blocked only by `tubeplot` (its 3rd example block); `subplot` itself works.
 
-`xlim` · `ylim` · `zoom` · `clim` · `clabel` · `contour3` · `patch` · `tubeplot` · `winlev` ·
-`pvalid`
-
-- `xlim`/`ylim`/`clim`/`zoom`: read/set axes limit properties (the scene `Axes` already has a
-  `limits` field — wire get/set builtins to it).
-- `patch`: filled polygons from face/vertex data → a new series kind (close to `fill`).
-- `contour3`: 3-D contour (contour lines lifted to z) → scene bound like `surf`.
-- `clabel`/`tubeplot`/`winlev`/`pvalid`: niche; lower priority.
-
-### 2. FreeMat `rand*` distributions (11) · effort M
-FreeMat-specific RNG distribution generators (seeded via the shared RNG).
-
-`randbeta` · `randbin` · `randchi` · `randexp` · `randf` · `randgamma` · `randmulti` ·
-`randnbin` · `randnchi` · `randnf` · `randp`
-
-- Implement on top of `rand_distr` where a distribution exists; otherwise the standard
-  transforms. Must honor the seeded RNG (`rand('state',s)`) for deterministic fragments.
+### 2. FreeMat `rand*` distributions (11) · ✅ DONE (session 2)
+All implemented in `crates/fm-builtins/src/random.rs` on top of `rand_distr`, drawing from the
+shared seeded generator (`with_rng`/`draw_try`) so the fragments are reproducible. `randmulti`
+uses sequential conditional-binomials; `randnbin` a Gamma–Poisson mixture; `randnchi`/`randnf`
+the documented chi-square decompositions.
 
 ### 3. I/O & session (~16) · effort M–L
 File I/O, persistence, and workspace/session introspection.
@@ -59,10 +66,12 @@ File I/O, persistence, and workspace/session introspection.
 `load` · `save` · `fread` · `fseek` · `ftell` · `feof` · `format` · `getprintlimit` ·
 `setprintlimit` · `exist` · `import` · `type` · `who` · `where` · `system` · `isset`
 
-- `who`/`where`/`exist`/`isset`: workspace/scope introspection (query the current scope).
+- `who`/`where`/`exist`/`isset`: ✅ DONE — `who`/`whos`/`where` added (`interp_ops.rs`);
+  `exist`/`isset` already existed and their fragments promoted once `who` worked.
 - `format`/`get/setprintlimit`: display-format state (the interpreter has a `format` field).
-- `load`/`save`: MAT round-trip already exists in `fm-io`; the doc examples may need fixtures
-  or write/read in the fragment's temp CWD.
+  Still TODO — needs print-limit/format plumbing into the value formatter.
+- `load`/`save`: ✅ DONE — fixed the `.mat` auto-extension clobber and made command-syntax
+  `load file` inject into the workspace (the `call_function` nargout passthrough fix).
 - `fread`/`fseek`/`ftell`/`feof`: low-level file handles (need a file-handle table).
 - `type`: print a function/file's source. `system`: shell-out (non-deterministic output —
   may stay display-only). `import`: FFI-adjacent — likely defer.
@@ -77,8 +86,11 @@ introspection that a top-level fragment can't exercise.
 - `nargin`/`nargout`/`return`/`keywords`/`function`/`script`: these document language
   constructs; their examples need multi-fragment helper `.m` definitions (the ` ```fm-file `
   mechanism exists — the converter may need to thread helper files into these fragments).
-- `feval`: should already work — re-check why its example errors.
-- `inline`/`symvar`: inline-function objects + symbolic-var extraction (parser-level work).
+- `feval`/`inline`/`symvar`: ✅ DONE (session 2). `inline` builds an anonymous function handle
+  from the expression string (explicit args, or auto-detected symbolic vars); `symvar` returns
+  the sorted symbolic variables (free identifiers that aren't functions/constants); both share
+  `symbolic_vars`/`collect_free_vars` (now exported from `fm-interp`). `feval` promoted once
+  `inline` worked (its doc shares a fragment with the `inline` example).
 - `lasterr`: last-error state. `keyboard`: interactive debug entry (Stage 10; display-only
   is acceptable).
 
@@ -89,13 +101,14 @@ introspection that a top-level fragment can't exercise.
   `legendre`, `betainc` (incomplete beta), `cov` (covariance), `interplin1` (linear interp).
   Each is a real numeric feature; size individually.
 
-### 6. Sparse constructors (3) · effort S–M
-`speye` · `sprand` · `sprandn` — sparse identity / random sparse (the sparse core exists in
-`fm-core`/`fm-linalg`; add the constructors).
+### 6. Sparse constructors (3) · ✅ DONE (session 2)
+`speye` (its fragment was blocked only by `who`, now implemented); `sprand`/`sprandn` now draw
+from the shared seeded RNG and accept a full matrix in the single-argument form.
 
-### 7. Misc (~3) · effort S
-- `unique` — the `'rows'` option and multi-output `[u,i,j]` forms (base `unique` works).
-- `lu` — float `[l,u,p] = lu(A)` factor-returning form (see also `REMAINING.md`).
+### 7. Misc (~3)
+- `unique` — ✅ DONE: `'rows'` + multi-output `[y,m,n]` (`array_manip.rs`).
+- `lu` — still blocked: its fragment also exercises the **sparse** `[l,u,p,q,r] = lu(A)` form
+  (UMFPACK-style), so the dense `[l,u,p]` alone won't promote it. Needs sparse LU (effort L).
 - `bind` — deprecated standalone-exe builder (toolbox); likely leave display-only.
 
 ### 8. Threads (6) · **out of scope** (see `REMAINING.md` §C)
@@ -118,9 +131,11 @@ Plotting commands added this session (live view `web/index.html` + help-page fig
   named-map generators (`jet`/`hot`/…), `colorbar`, `pcolor`, `contourf`, `scatter`/`scatter3`;
   `area`, `fill`, `pie`, `polar`, `quiver`, `text` annotations. (Already present before:
   `plot`, `surf`/`mesh`, `contour`, `image`/`imagesc`, `loglog`/`semilogx`/`semilogy`.)
-- **Remaining graphics builtins:** the axes-property set in §1 above (`xlim`/`ylim`/`clim`/
-  `patch`/`contour3`/…), plus 3-D extras not yet started: `surfl`/`surfc`/`meshc`,
-  `waterfall`, `sphere`/`cylinder`/`ellipsoid`.
+- **Axes-property set (session 2):** `xlim`/`ylim`/`clim`/`patch`/`contour3`/`zoom`/`sizefig`
+  done (see §1). Renderer note: `Axes.clim` and `Figure.size` are serialized but `web/index.html`
+  does not yet consume them (no effect on the captured fragments, which are text-only here).
+- **Remaining graphics builtins:** niche `clabel`/`tubeplot`/`winlev`/`pvalid`, plus 3-D extras
+  not yet started: `surfl`/`surfc`/`meshc`, `waterfall`, `sphere`/`cylinder`/`ellipsoid`.
 - **Known simplification:** `quiver` draws shaft lines + tip markers, not rotated arrowheads.
 
 ---

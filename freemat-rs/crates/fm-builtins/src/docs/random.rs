@@ -126,7 +126,7 @@ that the integral of `f(x)` is 1.
 Here is a plot of the PDF of a beta random variable with `a=3`,
 `b=7`.
 
-```fm
+```fm-exec:figure
 a = 3; b = 7;
 x = (0:100)/100; t = x.^(a-1).*(1-x).^(b-1); 
 t = t/(sum(t)*.01);
@@ -138,7 +138,7 @@ If we generate a few random deviates with these values,
 we see they are distributed around the peak of roughly
 `0.25`.
 
-```fm
+```fm-exec
 randbeta(3*ones(1,5),7*ones(1,5))
 ```
 "#,
@@ -176,7 +176,7 @@ Here we generate `10` binomial random variables, corresponding
 to `N=100` trials, each with probability `p=0.1`, using
 both `randbin` and then again using `rand` (to simulate the trials):
 
-```fm
+```fm-exec
 randbin(100,.1*ones(1,10))
 sum(rand(100,10)<0.1)
 ```
@@ -214,7 +214,7 @@ $$
 ## Example
 First, a plot of the PDF for a family of chi-square random variables
 
-```fm
+```fm-exec:figure
 f = zeros(7,100);
 x = (1:100)/10;
 for n=1:7;t=x.^(n/2-1).*exp(-x/2);f(n,:)=10*t/sum(t);end
@@ -225,7 +225,7 @@ The PDF is below:
 Here is an example of using `randchi` and `randn` to compute
 some chi-square random variables with four degrees of freedom.
 
-```fm
+```fm-exec
 randchi(4*ones(1,6))
 sum(randn(4,6).^2)
 ```
@@ -261,7 +261,7 @@ $$
 Here is an example of using the `randexp` function to generate
 some exponentially distributed random variables
 
-```fm
+```fm-exec
 randexp(ones(1,6))
 ```
 "#,
@@ -302,7 +302,7 @@ where `B(a,b)` is the beta function.
 Here we use `randf` to generate some F-distributed random variables,
 and then again using the `randchi` function:
 
-```fm
+```fm-exec
 randf(5*ones(1,9),7)
 randchi(5*ones(1,9))./randchi(7*ones(1,9))
 ```
@@ -346,7 +346,7 @@ Here we use the `randgamma` function to generate Gamma-distributed
 random variables, and then generate them again using the `randexp`
 function.
 
-```fm
+```fm-exec
 randgamma(1,15*ones(1,9))
 sum(randexp(ones(15,9)))
 ```
@@ -421,7 +421,7 @@ tails and edge, with probabilities `0.4999`, `0.4999` and
 `0.0002`, respectively.  Then if we perform ten thousand coin
 flips we get
 
-```fm
+```fm-exec
 randmulti(10000,[0.4999,0.4999,0.0002])
 ```
 "#,
@@ -549,7 +549,7 @@ $$
 ## Example
 Here we generate some negative binomial random variables:
 
-```fm
+```fm-exec
 randnbin(3*ones(1,4),.01)
 randnbin(6*ones(1,4),.01)
 ```
@@ -582,7 +582,7 @@ deviate with mean `mu` and standard deviation 1.
 ## Examples
 Here is an example of a non-central chi-square random variable:
 
-```fm
+```fm-exec
 randnchi(5*ones(1,9),0.3)
 ```
 "#,
@@ -618,7 +618,7 @@ $$
 Here we use the `randf` to generate some non-central F-distributed
 random variables:
 
-```fm
+```fm-exec
 randnf(5*ones(1,9),7,1.34)
 ```
 "#,
@@ -656,7 +656,7 @@ Here is an exmaple of using `randp` to generate some Poisson
 random variables, and also using `randbin` to do the same
 using `N=1000` trials to approximate the Poisson result.
 
-```fm
+```fm-exec
 randp(33*ones(1,10))
 randbin(1000*ones(1,10),33/1000*ones(1,10))
 ```

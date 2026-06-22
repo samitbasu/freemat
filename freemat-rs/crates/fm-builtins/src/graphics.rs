@@ -35,6 +35,13 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("legend", b_legend);
     table.add_builtin("hold", b_hold);
     table.add_builtin("axis", b_axis);
+    table.add_builtin("xlim", |i, a, _n| axis_limit(i, a, LimAxis::X));
+    table.add_builtin("ylim", |i, a, _n| axis_limit(i, a, LimAxis::Y));
+    table.add_builtin("clim", b_clim);
+    table.add_builtin("patch", b_patch);
+    table.add_builtin("contour3", b_contour3);
+    table.add_builtin("zoom", b_zoom);
+    table.add_builtin("sizefig", b_sizefig);
     table.add_builtin("grid", b_grid);
     table.add_builtin("cla", b_cla);
     table.add_builtin("clf", b_clf);
@@ -865,6 +872,257 @@ fn b_axis(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
         }
     }
     i.graphics.dirty = true;
+    Ok(vec![])
+}
+
+/// Finite min/max of a slice, or `None` if there are no finite values.
+fn finite_minmax(v: &[f64]) -> Option<(f64, f64)> {
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    for &x in v {
+        if x.is_finite() {
+            lo = lo.min(x);
+            hi = hi.max(x);
+        }
+    }
+    (lo <= hi).then_some((lo, hi))
+}
+
+/// The `(xmin, xmax, ymin, ymax)` data extent of one series, if it has 2-D
+/// positional data. Grid series (`image`/`surf`/`contour`) use their explicit
+/// x/y vectors when present, else 1-based row/column indices.
+fn series_xy_bounds(s: &Series) -> Option<(f64, f64, f64, f64)> {
+    let from_xy = |x: &[f64], y: &[f64]| {
+        let (x0, x1) = finite_minmax(x)?;
+        let (y0, y1) = finite_minmax(y)?;
+        Some((x0, x1, y0, y1))
+    };
+    // Bounds for a grid: explicit coordinate vectors, or 1..len indices.
+    let grid = |x: &[f64], y: &[f64], rows: usize, cols: usize| {
+        let (x0, x1) = finite_minmax(x).unwrap_or((1.0, cols.max(1) as f64));
+        let (y0, y1) = finite_minmax(y).unwrap_or((1.0, rows.max(1) as f64));
+        Some((x0, x1, y0, y1))
+    };
+    match s {
+        Series::Line(l) => from_xy(&l.x, &l.y),
+        Series::Bar(b) => from_xy(&b.x, &b.y),
+        Series::Stem(b) => from_xy(&b.x, &b.y),
+        Series::Stairs(b) => from_xy(&b.x, &b.y),
+        Series::Area(a) => from_xy(&a.x, &a.y),
+        Series::Fill(f) => from_xy(&f.x, &f.y),
+        Series::Errorbar(e) => from_xy(&e.x, &e.y),
+        Series::Line3d(l) => from_xy(&l.x, &l.y),
+        Series::Quiver(q) => from_xy(&q.x, &q.y),
+        Series::Image(im) => {
+            let rows = im.data.len();
+            let cols = im.data.first().map_or(0, Vec::len);
+            grid(&[], &[], rows, cols)
+        }
+        Series::Surface(sf) => grid(&sf.x, &sf.y, sf.z.len(), sf.z.first().map_or(0, Vec::len)),
+        Series::Contour(c) => grid(&c.x, &c.y, c.z.len(), c.z.first().map_or(0, Vec::len)),
+        _ => None,
+    }
+}
+
+/// The auto `[xmin, xmax, ymin, ymax]` extent over every series in `series`,
+/// falling back to a unit box on degenerate/empty data.
+fn auto_xy_bounds(series: &[Series]) -> [f64; 4] {
+    let mut b = [
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+    ];
+    for s in series {
+        if let Some((x0, x1, y0, y1)) = series_xy_bounds(s) {
+            b[0] = b[0].min(x0);
+            b[1] = b[1].max(x1);
+            b[2] = b[2].min(y0);
+            b[3] = b[3].max(y1);
+        }
+    }
+    // No finite data leaves the sentinels inverted (INF > -INF); reset to a unit
+    // box in that case.
+    if b[0] > b[1] {
+        (b[0], b[1]) = (0.0, 1.0);
+    }
+    if b[2] > b[3] {
+        (b[2], b[3]) = (0.0, 1.0);
+    }
+    b
+}
+
+/// Which coordinate `xlim`/`ylim` operate on.
+enum LimAxis {
+    X,
+    Y,
+}
+
+/// `xlim`/`ylim` — get or set the axis limits. No argument returns the current
+/// `[lo, hi]`; a 2-vector `[lo, hi]` sets them (a non-finite bound means "auto"
+/// for that side, taken from the data). The string forms `'auto'`/`'manual'` are
+/// accepted (`'auto'` clears the limits).
+fn axis_limit(i: &mut Interpreter, args: &[Array], which: LimAxis) -> Flow<Vec<Array>> {
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    let auto = auto_xy_bounds(&ax.series);
+    let (auto_lo, auto_hi) = match which {
+        LimAxis::X => (auto[0], auto[1]),
+        LimAxis::Y => (auto[2], auto[3]),
+    };
+    // Query form: report the current (explicit or auto) limits.
+    if args.is_empty() {
+        let (lo, hi) = match (&ax.limits, &which) {
+            (Some(l), LimAxis::X) => (l.xmin, l.xmax),
+            (Some(l), LimAxis::Y) => (l.ymin, l.ymax),
+            (None, _) => (auto_lo, auto_hi),
+        };
+        return Ok(vec![build_real(DataClass::Double, &[1, 2], vec![lo, hi])]);
+    }
+    if let Some(s) = args[0].as_string() {
+        if s.eq_ignore_ascii_case("auto") {
+            ax.limits = None;
+        }
+        // 'manual'/'mode' carry no extra state here — treat as no-ops.
+        i.graphics.dirty = true;
+        return Ok(vec![]);
+    }
+    let v = to_f64_vec(&args[0]);
+    if v.len() < 2 {
+        return err("xlim/ylim: limit argument must be a 2-element vector");
+    }
+    // A non-finite bound (e.g. `xlim([0,inf])`) means "auto" for that side.
+    let lo = if v[0].is_finite() { v[0] } else { auto_lo };
+    let hi = if v[1].is_finite() { v[1] } else { auto_hi };
+    // Start from the existing limits, or the auto box, then override this axis.
+    let mut lim = ax.limits.unwrap_or(AxisLimits {
+        xmin: auto[0],
+        xmax: auto[1],
+        ymin: auto[2],
+        ymax: auto[3],
+    });
+    match which {
+        LimAxis::X => {
+            lim.xmin = lo;
+            lim.xmax = hi;
+        }
+        LimAxis::Y => {
+            lim.ymin = lo;
+            lim.ymax = hi;
+        }
+    }
+    ax.limits = Some(lim);
+    i.graphics.dirty = true;
+    Ok(vec![])
+}
+
+/// `clim` — get or set the color-axis limits `[cmin, cmax]` of the current axes.
+fn b_clim(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    if args.is_empty() {
+        let [lo, hi] = ax.clim.unwrap_or([0.0, 1.0]);
+        return Ok(vec![build_real(DataClass::Double, &[1, 2], vec![lo, hi])]);
+    }
+    if let Some(s) = args[0].as_string() {
+        if s.eq_ignore_ascii_case("auto") {
+            ax.clim = None;
+        }
+        i.graphics.dirty = true;
+        return Ok(vec![]);
+    }
+    let v = to_f64_vec(&args[0]);
+    if v.len() < 2 {
+        return err("clim: limit argument must be a 2-element vector");
+    }
+    ax.clim = Some([v[0], v[1]]);
+    i.graphics.dirty = true;
+    Ok(vec![])
+}
+
+/// `patch(x, y, c)` / `patch(x, y, z, c)` — a filled polygon from vertex data.
+/// We render it as a 2-D filled polygon (the `z` coordinate of the 4-arg form is
+/// accepted but not used by the 2-D renderer); `c` is a colorspec or RGB triple.
+fn b_patch(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.len() < 3 {
+        return err("patch: expected patch(x, y, c) or patch(x, y, z, c)");
+    }
+    let x = to_f64_vec(&args[0]);
+    let y = to_f64_vec(&args[1]);
+    // 4-arg form is patch(x, y, z, c); 3-arg form is patch(x, y, c).
+    let color_arg = if args.len() >= 4 { &args[3] } else { &args[2] };
+    clear_current_series_unless_hold(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    let color = fill_color(Some(color_arg), default_color(ax.series.len()));
+    ax.series.push(Series::Fill(FillSeries {
+        x,
+        y,
+        color,
+        name: String::new(),
+    }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Line);
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+/// `contour3(...)` — a 3-D contour plot: the same data as `contour`, displayed
+/// with a default 3-D view and a grid (FreeMat's `contour3` toolbox routine).
+fn b_contour3(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let out = contour(i, args, false)?;
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    if ax.view.is_none() {
+        ax.view = Some([-37.5, 30.0]);
+    }
+    ax.grid = true;
+    i.graphics.dirty = true;
+    Ok(out)
+}
+
+/// `sizefig(width, height)` — set the current figure's pixel size.
+fn b_sizefig(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.len() < 2 {
+        return err("sizefig: expected sizefig(width, height)");
+    }
+    let w = args[0].as_f64().unwrap_or(0.0);
+    let h = args[1].as_f64().unwrap_or(0.0);
+    i.graphics.current_figure_mut().size = Some([w, h]);
+    i.graphics.dirty = true;
+    Ok(vec![])
+}
+
+/// `zoom(factor)` — zoom the current axes' image (FreeMat semantics):
+/// `factor > 0` resizes the figure to `factor ×` the image's pixel dimensions;
+/// `factor == 0` is `axis image` (equal, data-tight); `factor < 0` is
+/// `axis normal` (auto limits).
+fn b_zoom(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let factor = args.first().and_then(Array::as_f64).unwrap_or(1.0);
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    if factor == 0.0 {
+        // `axis image`: equal aspect, limits tight to the data.
+        ax.equal = true;
+        ax.limits = None;
+        i.graphics.dirty = true;
+        return Ok(vec![]);
+    }
+    if factor < 0.0 {
+        // `axis normal`: release the equal-aspect / manual-limit constraints.
+        ax.equal = false;
+        ax.limits = None;
+        i.graphics.dirty = true;
+        return Ok(vec![]);
+    }
+    // factor > 0: size the figure to `factor ×` the current image's dimensions.
+    let img_size = ax.series.iter().find_map(|s| match s {
+        Series::Image(im) => {
+            let rows = im.data.len();
+            let cols = im.data.first().map_or(0, Vec::len);
+            (rows > 0 && cols > 0).then_some((rows as f64, cols as f64))
+        }
+        _ => None,
+    });
+    if let Some((rows, cols)) = img_size {
+        i.graphics.current_figure_mut().size = Some([cols * factor, rows * factor]);
+        i.graphics.dirty = true;
+    }
     Ok(vec![])
 }
 

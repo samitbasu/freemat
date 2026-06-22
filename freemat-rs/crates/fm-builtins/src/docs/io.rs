@@ -650,7 +650,7 @@ of `'double => float'` should be used.
 ## Example
 First, we create an array of `512 x 512` Gaussian-distributed `float` random variables, and then writing them to a file called `test.dat`.
 
-```fm
+```fm-exec
 A = float(randn(512));
 fp = fopen('test.dat','w');
 fwrite(fp,A);
@@ -659,7 +659,7 @@ fclose(fp);
 
 Read as many floats as possible into a row vector
 
-```fm
+```fm-exec
 fp = fopen('test.dat','r');
 x = fread(fp,[1,inf],'float');
 fclose(fp);
@@ -669,7 +669,7 @@ who x
 Note that `x` is a `double` array.  This behavior is new to FreeMat 4.
 Read the same floats into a 2-D float array.
 
-```fm
+```fm-exec
 fp = fopen('test.dat','r');
 x = fread(fp,[512,inf],'float');
 fclose(fp);
@@ -679,7 +679,7 @@ who x
 To read them as a single precision float array, we can use the
 following form:
 
-```fm
+```fm-exec
 fp = fopen('test.dat','r');
 x = fread(fp,[512,inf],'*float');
 fclose(fp);
@@ -1125,7 +1125,7 @@ matrix.
 ## Example
 Here is a simple example of `save`/`load`.  First, we save some variables to a file.
 
-```fm
+```fm-exec
 D = {1,5,'hello'};
 s = 'test string';
 x = randn(512,1);
@@ -1136,7 +1136,7 @@ save loadsave.dat
 
 Next, we clear the variables, and then load them back from the file.
 
-```fm
+```fm-exec
 clear D s x z
 who
 load loadsave.dat
@@ -1465,7 +1465,7 @@ in which case variables that match any of the patterns will be saved.
 Here is a simple example of `save`/`load`.  First, we save some
 variables to a file.
 
-```fm
+```fm-exec
 D = {1,5,'hello'};
 s = 'test string';
 x = randn(512,1);
@@ -1476,7 +1476,7 @@ save loadsave.dat
 
 Next, we clear the variables, and then load them back from the file.
 
-```fm
+```fm-exec
 clear D s x z
 who
 load loadsave.dat

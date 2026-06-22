@@ -386,14 +386,14 @@ Here is an example of using the `error` function to
 set the last error, and then retrieving it using
 lasterr.
 
-```fm
+```fm-exec
 try; error('Test error message'); catch; end;
 lasterr
 ```
 
 Or equivalently, using the second form:
 
-```fm
+```fm-exec
 lasterr('Test message');
 lasterr
 ```

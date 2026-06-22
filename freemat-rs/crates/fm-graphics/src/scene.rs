@@ -82,6 +82,10 @@ pub struct Figure {
     /// onto themselves so the renderer uses it. `None` = renderer default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colormap: Option<String>,
+    /// The figure's pixel size `[width, height]` (`sizefig`); `None` = renderer
+    /// default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<[f64; 2]>,
 }
 
 impl Figure {
@@ -93,6 +97,7 @@ impl Figure {
             axes: vec![Axes::new()],
             current_axes: 0,
             colormap: None,
+            size: None,
         }
     }
 
@@ -139,6 +144,10 @@ pub struct Axes {
     /// Explicit `[xmin, xmax, ymin, ymax]` limits (`axis([...])`); `None` = auto.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<AxisLimits>,
+    /// Explicit color-axis limits `[cmin, cmax]` (`clim([...])`); `None` = auto.
+    /// Renderers map this to `zmin`/`zmax` on the color-mapped trace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clim: Option<[f64; 2]>,
     /// X-axis scale.
     #[serde(default, skip_serializing_if = "Scale::is_linear")]
     pub xscale: Scale,
@@ -184,6 +193,7 @@ impl Default for Axes {
             ylabel: String::new(),
             zlabel: String::new(),
             limits: None,
+            clim: None,
             xscale: Scale::Linear,
             yscale: Scale::Linear,
             grid: false,

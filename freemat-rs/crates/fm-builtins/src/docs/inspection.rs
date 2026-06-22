@@ -151,7 +151,7 @@ is used in functions to test for keywords.  For example,
 ```
 An example of `exist` in action.
 
-```fm
+```fm-exec
 a = randn(3,5,2)
 b = []
 who
@@ -664,7 +664,7 @@ a 0 otherwise.
 ## Example
 Some simple examples of using `isset`
 
-```fm
+```fm-exec
 who
 isset('a')
 a = [];
@@ -1105,7 +1105,7 @@ function chain3
 
 The execution of the `where` command shows the stack trace.
 
-```fm
+```fm-exec
 chain1
 where
 ```
@@ -1188,7 +1188,7 @@ and
 ## Example
 Here is an example of the general use of `who`, which lists all of the variables defined.
 
-```fm
+```fm-exec
 c = [1,2,3];
 f = 'hello';
 p = randn(1,256);
@@ -1197,7 +1197,7 @@ who
 
 In the second case, we examine only a specific variable:
 
-```fm
+```fm-exec
 who c
 who('c')
 ```

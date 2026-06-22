@@ -1,9 +1,12 @@
 //! Interpreter-aware builtins: `eval`, `evalin`, `feval`, `builtin`, `exist`,
 //! `clear`, `isset`, `assignin`, plus a handful of type predicates.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use fm_core::{Array, FunctionHandle};
 use fm_interp::error::{Flow, InterpError, Signal};
-use fm_interp::{FunctionTable, Interpreter};
+use fm_interp::{FunctionTable, Interpreter, collect_free_vars};
 use fm_parser::{Span, parse_expression, parse_statements};
 
 use crate::util::need;
@@ -16,8 +19,14 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("builtin", b_builtin);
     table.add_builtin("exist", b_exist);
     table.add_builtin("isset", b_isset);
+    table.add_builtin("who", b_who);
+    table.add_builtin("whos", b_whos);
+    table.add_builtin("where", b_where);
+    table.add_builtin("lasterr", b_lasterr);
     table.add_builtin("clear", b_clear);
     table.add_builtin("assignin", b_assignin);
+    table.add_builtin("inline", b_inline);
+    table.add_builtin("symvar", b_symvar);
     table.add_builtin("func2str", b_func2str);
     table.add_builtin("str2func", b_str2func);
     table.add_builtin("is_function_handle", b_is_function_handle);
@@ -234,6 +243,227 @@ fn b_isset(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
     // non-empty (`isDefed && !d->isEmpty()`).
     let set = i.context.lookup(&name).is_some_and(|v| v.numel() > 0);
     Ok(vec![Array::bool(set)])
+}
+
+/// Right-justify `s` in a field of `width` (pad on the left; never truncate),
+/// matching FreeMat's `QString::rightJustified(width, ' ', false)`.
+fn right_just(s: &str, width: usize) -> String {
+    if s.len() >= width {
+        s.to_string()
+    } else {
+        format!("{}{}", " ".repeat(width - s.len()), s)
+    }
+}
+
+/// Render a dimension vector the way FreeMat's `Dimensions::toString` does:
+/// `AxBxC`, trailing singleton dimensions trimmed (a scalar prints as `1`).
+fn dims_to_string(dims: &[usize]) -> String {
+    // Index one past the last dimension that isn't 1 (FreeMat's `lastNotOne`).
+    let mut last_not_one = 0;
+    for (idx, &d) in dims.iter().enumerate() {
+        if d != 1 {
+            last_not_one = idx + 1;
+        }
+    }
+    let mut s = format!("{}", dims.first().copied().unwrap_or(0));
+    for &d in &dims[1..last_not_one.max(1).min(dims.len())] {
+        s.push_str(&format!("x{d}"));
+    }
+    s
+}
+
+/// The names to report for `who`/`whos`: the explicit argument list, or — when
+/// none is given — every variable in the active scope, sorted (FreeMat sorts so
+/// the listing is stable).
+fn who_names(i: &Interpreter, args: &[Array]) -> Vec<String> {
+    let mut names: Vec<String> = if args.is_empty() {
+        i.context
+            .active()
+            .local_names()
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    } else {
+        args.iter().filter_map(Array::as_string).collect()
+    };
+    names.sort();
+    names
+}
+
+/// Append the per-variable flag/size columns shared by `who` and `whos`.
+fn who_describe(i: &Interpreter, name: &str, out: &mut String) {
+    out.push_str(&right_just(name, 15));
+    match i.context.lookup(name) {
+        None => out.push_str("   <undefined>"),
+        Some(v) => {
+            out.push_str(&right_just(v.class_name(), 10));
+            out.push_str(if v.as_sparse().is_some() {
+                "   sparse"
+            } else {
+                "         "
+            });
+            // Global/persistent flags are not surfaced through the public scope
+            // API here; locals are the common case for the help corpus.
+            out.push_str("         ");
+            out.push_str(&format!("  [{}]", dims_to_string(&v.dims())));
+        }
+    }
+}
+
+/// Per-element byte size of a data class (for `whos`).
+fn class_byte_size(c: fm_core::DataClass) -> usize {
+    use fm_core::DataClass::*;
+    match c {
+        Bool | Int8 | UInt8 | Char => 1,
+        Int16 | UInt16 => 2,
+        Int32 | UInt32 | Float => 4,
+        Int64 | UInt64 | Double => 8,
+        Cell | Struct | FunctionHandle => std::mem::size_of::<usize>(),
+    }
+}
+
+/// `who` — list the variables in the current scope (name, type, flags, size).
+/// `who a b ...` / `who('a','b',...)` restrict the listing to named variables.
+fn b_who(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let names = who_names(i, args);
+    let mut out = String::from("  Variable Name       Type   Flags             Size\n");
+    for name in &names {
+        who_describe(i, name, &mut out);
+        out.push('\n');
+    }
+    i.emit(&out);
+    Ok(vec![])
+}
+
+/// `whos` — like `who`, but with a trailing byte-count column.
+fn b_whos(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let names = who_names(i, args);
+    let mut out = String::from("  Variable Name       Type   Flags             Size       Bytes\n");
+    for name in &names {
+        who_describe(i, name, &mut out);
+        if let Some(v) = i.context.lookup(name) {
+            let elt = if v.is_complex() { 2 } else { 1 };
+            let bytes = v.numel() * elt * class_byte_size(v.class());
+            // Pad the size column to width 15 so the byte count lines up, as in
+            // FreeMat's `whos` (`txt.leftJustified(15)`); `who_describe` already
+            // appended the `[size]`, so just append the bytes.
+            out.push_str(&format!("   {bytes}"));
+        }
+        out.push('\n');
+    }
+    i.emit(&out);
+    Ok(vec![])
+}
+
+/// `lasterr` — get or set the last caught error message. `lasterr` returns the
+/// stored message; `lasterr('msg')` replaces it (and returns nothing).
+fn b_lasterr(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if let Some(a) = args.first() {
+        i.last_error = a.as_string().unwrap_or_default();
+        return Ok(vec![]);
+    }
+    Ok(vec![Array::char_string(&i.last_error)])
+}
+
+/// Whether `name` denotes a function or built-in constant (and thus is *not* a
+/// free symbolic variable, for `inline`/`symvar`). FreeMat eliminates anything
+/// that resolves to a function; we also exclude the interpreter's constant
+/// pseudo-variables (`pi`, `eps`, `i`, …), which are not in the function table.
+fn is_function_or_const(i: &Interpreter, name: &str) -> bool {
+    i.functions.contains(name)
+        || matches!(
+            name,
+            "pi" | "e"
+                | "eps"
+                | "i"
+                | "j"
+                | "I"
+                | "J"
+                | "Inf"
+                | "inf"
+                | "NaN"
+                | "nan"
+                | "nargin"
+                | "nargout"
+                | "true"
+                | "false"
+        )
+}
+
+/// The symbolic variables of an expression string: free identifiers that are not
+/// functions or constants, sorted (FreeMat's `symvar` ordering).
+fn symbolic_vars(i: &Interpreter, expr: &fm_parser::ast::Expr) -> Vec<String> {
+    let mut free = Vec::new();
+    collect_free_vars(expr, &mut free);
+    free.retain(|n| !is_function_or_const(i, n));
+    free.sort();
+    free
+}
+
+/// `inline(expr)` / `inline(expr, 'a', 'b', ...)` — build a callable function
+/// object from an expression string. With explicit argument names they become
+/// the parameters in order; otherwise the parameters are the expression's
+/// symbolic variables (sorted). Implemented as an anonymous function handle, so
+/// it is callable as `f(...)` and via `feval`.
+fn b_inline(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "inline")?;
+    let expr_str = args[0].as_string().ok_or_else(|| {
+        Signal::Error(InterpError::msg("inline: first argument must be a string"))
+    })?;
+    let expr = parse_expression(&expr_str)
+        .map_err(|e| Signal::Error(InterpError::msg(format!("inline: {e}"))))?;
+    // Parameters: explicit names, or the auto-detected symbolic variables.
+    let params: Vec<String> = if args.len() > 1 {
+        args[1..].iter().filter_map(Array::as_string).collect()
+    } else {
+        symbolic_vars(i, &expr)
+    };
+    // Capture any remaining free variables (not parameters) by value, like an
+    // anonymous function (`inline('a*x','x')` with `a` in scope closes over `a`).
+    let mut captures = HashMap::new();
+    let mut free = Vec::new();
+    collect_free_vars(&expr, &mut free);
+    for n in free {
+        if params.contains(&n) {
+            continue;
+        }
+        if let Some(v) = i.context.lookup(&n) {
+            captures.insert(n, v.clone());
+        }
+    }
+    let text = format!("@({}) {expr_str}", params.join(","));
+    let handle =
+        FunctionHandle::anonymous(params, expr, captures, text, Arc::new(expr_str.clone()));
+    Ok(vec![Array::function_handle(handle)])
+}
+
+/// `symvar(expr)` — the symbolic variables in the expression string, returned as
+/// a cell array of names (sorted; functions and constants are excluded).
+fn b_symvar(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "symvar")?;
+    let expr_str = args[0]
+        .as_string()
+        .ok_or_else(|| Signal::Error(InterpError::msg("symvar: argument must be a string")))?;
+    let expr = parse_expression(&expr_str)
+        .map_err(|e| Signal::Error(InterpError::msg(format!("symvar: {e}"))))?;
+    let vars = symbolic_vars(i, &expr);
+    let n = vars.len();
+    let data: Vec<Array> = vars.into_iter().map(|s| Array::char_string(&s)).collect();
+    Ok(vec![Array::cell(&[n, 1], data)])
+}
+
+/// `where` — print a stack trace of the current call stack (base → top).
+fn b_where(i: &mut Interpreter, _args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let mut out = String::new();
+    for (name, line) in i.context.stack_trace() {
+        let label = if name.is_empty() { "base" } else { &name };
+        match line {
+            Some(l) => out.push_str(&format!("   {label} (line {l})\n")),
+            None => out.push_str(&format!("   {label}\n")),
+        }
+    }
+    i.emit(&out);
+    Ok(vec![])
 }
 
 /// `clear(name, ...)` / `clear('all')` — remove variables from the scope.
