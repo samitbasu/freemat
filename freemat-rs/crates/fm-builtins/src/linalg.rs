@@ -31,6 +31,12 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("orth", b_orth);
     table.add_builtin("tril", b_tril);
     table.add_builtin("triu", b_triu);
+    table.add_builtin("expm", b_expm);
+}
+
+fn b_expm(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    need(args, 1, "expm")?;
+    Ok(vec![fm_linalg::expm(&args[0]).map_err(wrap)?])
 }
 
 fn b_cond(_i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {

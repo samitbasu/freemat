@@ -613,20 +613,20 @@ $$
 ## Examples
 We first define a simple `2 x 2` symmetric matrix
 
-```fm
+```fm-exec
 A = 1.5
 B = [1,.2;.2,1]
 ```
 
 First, we raise `B` to the (scalar power) `A`:
 
-```fm
+```fm-exec
 C = B^A
 ```
 
 Next, we raise `A` to the matrix power `B`:
 
-```fm
+```fm-exec
 C = A^B
 ```
 "#,

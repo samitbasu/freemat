@@ -496,12 +496,22 @@ fn pow(lhs: &Array, rhs: &Array) -> Flow<Array> {
     if lhs.is_scalar() && rhs.is_scalar() {
         return elementwise_pow(lhs, rhs);
     }
-    // `A ^ p` with `A` a matrix and `p` a scalar.
+    // `A ^ p` with `A` a matrix and `p` a (real) scalar. A non-integer exponent
+    // goes through the eigendecomposition path (which may produce a complex
+    // result); an integer exponent is exact via repeated multiply.
     if rhs.is_scalar() {
         let p = rhs.as_f64().ok_or_else(|| {
             Signal::Error(InterpError::msg("matrix power exponent must be a scalar"))
         })?;
         return fm_linalg::mpower(lhs, p).map_err(linalg_err);
+    }
+    // `s ^ B` with `s` a scalar and `B` a square matrix: `s^B = V diag(s.^d) V^-1`.
+    if lhs.is_scalar() {
+        let s = match lhs {
+            Array::Scalar(v) => scalar_c64(*v),
+            _ => unreachable!("is_scalar but not Array::Scalar"),
+        };
+        return fm_linalg::mpower_scalar_base(s, rhs).map_err(linalg_err);
     }
     Err(Signal::Error(InterpError::msg(
         "matrix power with a non-scalar exponent is not supported",

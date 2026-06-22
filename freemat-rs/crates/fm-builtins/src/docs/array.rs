@@ -419,7 +419,7 @@ exponential).
 ## Example
 An example of `expm`
 
-```fm
+```fm-exec
 A = [1 1 0; 0 0 2; 0 0 -1]
 expm(A)
 ```

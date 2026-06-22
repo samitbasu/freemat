@@ -285,12 +285,11 @@ pub fn mpower(a: &Array, p: f64) -> Result<Array> {
     if am.rows != am.cols {
         return Err(LinalgError::new("matrix for ^ must be square"));
     }
-    if p.fract() != 0.0 {
-        return Err(LinalgError::new(
-            "non-integer matrix powers are not yet supported",
-        ));
-    }
     let n = am.rows;
+    // Non-integer exponent: A^p = V diag(d.^p) V^-1 via the eigendecomposition.
+    if p.fract() != 0.0 {
+        return matrix_function(&am, |d| complex_pow(d, c64::new(p, 0.0)));
+    }
     let pi = p as i64;
     let mut acc = Mat::<c64>::identity(n, n);
     let base = if pi < 0 {
@@ -306,6 +305,85 @@ pub fn mpower(a: &Array, p: f64) -> Result<Array> {
     }
     let data = mat_to_vec(acc.as_ref());
     Ok(finish(n, n, data, am.complex || base.complex))
+}
+
+/// Scalar raised to a (square) matrix power: `a ^ B = V diag(a.^d) V^-1`, where
+/// `(V, d)` is the eigendecomposition of `B`. This is FreeMat's `scalar ^ matrix`
+/// case (and the basis for `expm`, which is `e ^ A`).
+///
+/// # Errors
+/// Returns [`LinalgError`] if `B` is not square or the decomposition fails.
+pub fn mpower_scalar_base(a: c64, b: &Array) -> Result<Array> {
+    let bm = MatData::from_array(b)?;
+    if bm.rows != bm.cols {
+        return Err(LinalgError::new("matrix for ^ must be square"));
+    }
+    matrix_function(&bm, |d| complex_pow(a, d))
+}
+
+/// Matrix exponential `expm(A) = e ^ A`, computed via the eigendecomposition
+/// `A = V diag(d) V^-1` so that `expm(A) = V diag(exp(d)) V^-1`. This mirrors
+/// FreeMat's toolbox `expm.m`, which is simply `y = e^A`.
+///
+/// # Errors
+/// Returns [`LinalgError`] if `A` is not square or the decomposition fails.
+pub fn expm(a: &Array) -> Result<Array> {
+    let am = MatData::from_array(a)?;
+    if am.rows != am.cols {
+        return Err(LinalgError::new("matrix for expm must be square"));
+    }
+    matrix_function(&am, c64::exp)
+}
+
+/// `c64::powc`-equivalent: raise complex `base` to complex `exp` via the
+/// principal branch (`exp(exp * log(base))`), with `0^0 = 1`.
+fn complex_pow(base: c64, exp: c64) -> c64 {
+    if base == c64::new(0.0, 0.0) {
+        return if exp == c64::new(0.0, 0.0) {
+            c64::new(1.0, 0.0)
+        } else {
+            c64::new(0.0, 0.0)
+        };
+    }
+    (exp * base.ln()).exp()
+}
+
+/// Apply a scalar function to the eigenvalues of a square matrix:
+/// `f(M) = V diag(f(d)) V^-1`. Used by the non-integer matrix power, the
+/// `scalar ^ matrix` power, and `expm`.
+fn matrix_function(m: &MatData, f: impl Fn(c64) -> c64) -> Result<Array> {
+    let n = m.rows;
+    if n == 0 {
+        return Ok(Array::empty());
+    }
+    let decomp: Eigen<f64> = if m.complex {
+        Eigen::new(m.view()).map_err(|_| LinalgError::new("eig failed"))?
+    } else {
+        let real: Vec<f64> = m.data.iter().map(|c| c.re).collect();
+        let view = MatRef::<f64>::from_column_major_slice(&real, n, n);
+        Eigen::new_from_real(view).map_err(|_| LinalgError::new("eig failed"))?
+    };
+    let s = decomp.S();
+    let u = decomp.U();
+    // V = eigenvectors, FD = diag(f(d)).
+    let v = Mat::<c64>::from_fn(n, n, |i, j| u[(i, j)]);
+    let fd = Mat::<c64>::from_fn(
+        n,
+        n,
+        |i, j| {
+            if i == j { f(s[i]) } else { c64::new(0.0, 0.0) }
+        },
+    );
+    // Compute V * FD * V^-1 by solving V^T X^T = (V * FD)^T, i.e. X = (V*FD) V^-1.
+    let vfd = &v * &fd;
+    // Solve X * V = V*FD  =>  V^T X^T = (V*FD)^T.
+    let vt = v.transpose().to_owned();
+    let lu = vt.partial_piv_lu();
+    let mut rhs = vfd.transpose().to_owned();
+    lu.solve_in_place(rhs.as_mut());
+    let result = rhs.transpose().to_owned();
+    let data = mat_to_vec(result.as_ref());
+    Ok(build_from_c64(n, n, data))
 }
 
 /// Matrix inverse `inv(A)` — solve `A X = I`.
