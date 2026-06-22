@@ -460,11 +460,42 @@ fn apply_property(i: &mut Interpreter, h: u64, prop: &str, value: &Array) -> Flo
                 lim.zmax = Some(v[1]);
                 ax.limits = Some(lim);
             }
+            "clim" if v.len() >= 2 => ax.clim = Some([v[0], v[1]]),
+            "clim" => {
+                if value
+                    .as_string()
+                    .is_some_and(|s| s.eq_ignore_ascii_case("auto"))
+                {
+                    ax.clim = None;
+                }
+            }
             "xscale" => ax.xscale = scale_of(&value.as_string().unwrap_or_default()),
             "yscale" => ax.yscale = scale_of(&value.as_string().unwrap_or_default()),
-            "grid" => ax.grid = on_off(&value.as_string().unwrap_or_default()),
+            "grid" | "xgrid" | "ygrid" | "zgrid" => {
+                ax.grid = on_off(&value.as_string().unwrap_or_default());
+            }
+            "view" if v.len() >= 2 => ax.view = Some([v[0], v[1]]),
             "position" | "outerposition" if v.len() >= 4 => {
                 ax.position = [v[0], v[1], v[2], v[3]];
+            }
+            // Limit-mode properties: `'auto'` clears the corresponding limit (so
+            // the mode derives back to 'auto'); `'manual'` is a no-op (the limit
+            // is already whatever it is). climmode likewise clears `clim`.
+            "xlimmode" | "ylimmode" | "zlimmode" => {
+                if value
+                    .as_string()
+                    .is_some_and(|s| s.eq_ignore_ascii_case("auto"))
+                {
+                    clear_limit_axis(ax, &prop);
+                }
+            }
+            "climmode" => {
+                if value
+                    .as_string()
+                    .is_some_and(|s| s.eq_ignore_ascii_case("auto"))
+                {
+                    ax.clim = None;
+                }
             }
             _ => {
                 i.graphics.set_extra(h, &prop, value.clone());
@@ -488,7 +519,44 @@ fn apply_property(i: &mut Interpreter, h: u64, prop: &str, value: &Array) -> Flo
         }
         return Ok(());
     }
-    // Figure-level / fallback: store in the bag.
+    // Figure-level properties.
+    if let Some(ObjLocation::Figure { fig }) = loc {
+        match prop.as_str() {
+            // Selecting the current axes of the figure.
+            "currentaxes" => {
+                if let Some(ah) = value.as_f64() {
+                    i.graphics.select_axes(ah as u64);
+                }
+                return Ok(());
+            }
+            "colormap" => {
+                // A string names a built-in colorscale; a matrix is rendered as
+                // an explicit RGB scale by the colormap path. We store the name
+                // when given a string, else fall back to the colormap builtin.
+                if let Some(name) = value.as_string() {
+                    i.graphics.scene.figure_mut_or_insert(fig).colormap = Some(name);
+                    return Ok(());
+                }
+            }
+            "position" | "outerposition" | "figsize" => {
+                let v = to_f64_vec(value);
+                // [x y w h] (position) or [w h] (figsize) → figure pixel size.
+                let size = if v.len() >= 4 {
+                    Some([v[2], v[3]])
+                } else if v.len() >= 2 {
+                    Some([v[0], v[1]])
+                } else {
+                    None
+                };
+                if let Some(s) = size {
+                    i.graphics.scene.figure_mut_or_insert(fig).size = Some(s);
+                }
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+    // Fallback: store in the bag.
     i.graphics.set_extra(h, &prop, value.clone());
     Ok(())
 }
@@ -543,11 +611,43 @@ fn read_property(i: &Interpreter, h: u64, prop: &str) -> Array {
     if let Some(loc) = i.graphics.resolve(h) {
         match loc {
             ObjLocation::Figure { fig } => {
-                if prop_l == "type" {
-                    return Array::char_string("figure");
+                let figure = i.graphics.scene.figure(fig);
+                match prop_l.as_str() {
+                    "type" => return Array::char_string("figure"),
+                    "number" => return scalar(fig as f64),
+                    "currentaxes" => {
+                        // The handle of the figure's current axes (`gca` target).
+                        let h = figure
+                            .and_then(|f| f.axes.get(f.current_axes))
+                            .map(|a| a.handle)
+                            .unwrap_or(0);
+                        return scalar(h as f64);
+                    }
+                    "colormap" => {
+                        if let Some(name) = figure.and_then(|f| f.colormap.clone()) {
+                            return Array::char_string(&name);
+                        }
+                        // No explicit colormap: return the (empty) bag value, or [].
+                        return i.graphics.get_extra(h, prop).unwrap_or_else(empty);
+                    }
+                    // Position is derived from the figure pixel size [x y w h];
+                    // figsize is just [w h]. Default size is 560x420 (MATLAB).
+                    "position" | "outerposition" => {
+                        let [w, hh] = figure.and_then(|f| f.size).unwrap_or([560.0, 420.0]);
+                        return row(vec![1.0, 1.0, w, hh]);
+                    }
+                    "figsize" => {
+                        let [w, hh] = figure.and_then(|f| f.size).unwrap_or([560.0, 420.0]);
+                        return row(vec![w, hh]);
+                    }
+                    _ => {}
                 }
-                if prop_l == "number" {
-                    return scalar(fig as f64);
+                // Bag (user-set) value, else the documented default, else [].
+                if let Some(v) = i.graphics.get_extra(h, prop) {
+                    return v;
+                }
+                if let Some(d) = figure_default(&prop_l) {
+                    return d;
                 }
             }
             ObjLocation::Axes { fig, axes } => {
@@ -559,31 +659,65 @@ fn read_property(i: &Interpreter, h: u64, prop: &str) -> Array {
                         "ylabel" => return Array::char_string(&ax.ylabel),
                         "zlabel" => return Array::char_string(&ax.zlabel),
                         "position" | "outerposition" => {
-                            return build_real(DataClass::Double, &[1, 4], ax.position.to_vec());
+                            return row(ax.position.to_vec());
                         }
                         "xscale" => return Array::char_string(scale_name(ax.xscale)),
                         "yscale" => return Array::char_string(scale_name(ax.yscale)),
-                        "grid" => return Array::char_string(if ax.grid { "on" } else { "off" }),
+                        "grid" | "xgrid" | "ygrid" | "zgrid" => return on_off_str(ax.grid),
+                        // Limits: explicit when set, else the auto data bounds.
                         "xlim" => {
-                            if let Some(l) = ax.limits {
-                                return build_real(
-                                    DataClass::Double,
-                                    &[1, 2],
-                                    vec![l.xmin, l.xmax],
-                                );
-                            }
+                            return row(match ax.limits {
+                                Some(l) => vec![l.xmin, l.xmax],
+                                None => {
+                                    let b = auto_xy_bounds(&ax.series);
+                                    vec![b[0], b[1]]
+                                }
+                            });
                         }
                         "ylim" => {
-                            if let Some(l) = ax.limits {
-                                return build_real(
-                                    DataClass::Double,
-                                    &[1, 2],
-                                    vec![l.ymin, l.ymax],
-                                );
-                            }
+                            return row(match ax.limits {
+                                Some(l) => vec![l.ymin, l.ymax],
+                                None => {
+                                    let b = auto_xy_bounds(&ax.series);
+                                    vec![b[2], b[3]]
+                                }
+                            });
+                        }
+                        "zlim" => {
+                            return row(match ax.limits.and_then(|l| l.zmin.zip(l.zmax)) {
+                                Some((lo, hi)) => vec![lo, hi],
+                                None => {
+                                    let (lo, hi) = auto_z_bounds(&ax.series);
+                                    vec![lo, hi]
+                                }
+                            });
+                        }
+                        "clim" => {
+                            let [lo, hi] = ax.clim.unwrap_or([0.0, 1.0]);
+                            return row(vec![lo, hi]);
+                        }
+                        // Limit modes derive from whether the limit is set.
+                        "xlimmode" | "ylimmode" => return auto_manual(ax.limits.is_some()),
+                        "zlimmode" => {
+                            return auto_manual(
+                                ax.limits
+                                    .is_some_and(|l| l.zmin.is_some() && l.zmax.is_some()),
+                            );
+                        }
+                        "climmode" => return auto_manual(ax.clim.is_some()),
+                        "view" => {
+                            let [az, el] = ax.view.unwrap_or([0.0, 90.0]);
+                            return row(vec![az, el]);
                         }
                         _ => {}
                     }
+                }
+                // Bag (user-set) value, else the documented default, else [].
+                if let Some(v) = i.graphics.get_extra(h, prop) {
+                    return v;
+                }
+                if let Some(d) = axes_default(&prop_l) {
+                    return d;
                 }
             }
             ObjLocation::Series { fig, axes, series } => {
@@ -637,6 +771,12 @@ fn read_property(i: &Interpreter, h: u64, prop: &str) -> Array {
     i.graphics.get_extra(h, prop).unwrap_or_else(empty)
 }
 
+/// The `'manual'`/`'auto'` string for a limit-mode property: `'manual'` when the
+/// corresponding limit has been set explicitly, `'auto'` otherwise.
+fn auto_manual(is_manual: bool) -> Array {
+    Array::char_string(if is_manual { "manual" } else { "auto" })
+}
+
 fn scale_of(s: &str) -> Scale {
     if s.eq_ignore_ascii_case("log") {
         Scale::Log
@@ -654,6 +794,111 @@ fn scale_name(s: Scale) -> &'static str {
 
 fn on_off(s: &str) -> bool {
     s.eq_ignore_ascii_case("on")
+}
+
+/// Map a `bool` grid/box/etc. flag to the `'on'`/`'off'` string MATLAB returns.
+fn on_off_str(b: bool) -> Array {
+    Array::char_string(if b { "on" } else { "off" })
+}
+
+/// A `1×n` row of doubles (used for color triples, position vectors, limits…).
+fn row(v: Vec<f64>) -> Array {
+    let n = v.len();
+    build_real(DataClass::Double, &[1, n], v)
+}
+
+/// The documented default value of FIGURE property `prop` (already lowercased),
+/// returned by `get` when neither a modeled scene field nor the per-handle bag
+/// holds a value. Returns `None` for properties with no catalogued default
+/// (those fall through to the bag / `[]`). Defaults mirror FreeMat
+/// `HandleFigure::ConstructProperties`.
+fn figure_default(prop: &str) -> Option<Array> {
+    Some(match prop {
+        "color" => row(vec![1.0, 1.0, 1.0]),
+        "name" => Array::char_string(""),
+        "visible" => Array::char_string("on"),
+        "nextplot" => Array::char_string("replace"),
+        "numbertitle" => Array::char_string("on"),
+        "menubar" => Array::char_string("figure"),
+        "units" => Array::char_string("pixels"),
+        "renderer" => Array::char_string("painters"),
+        "paperposition" => row(vec![0.25, 2.5, 8.0, 6.0]),
+        "papersize" => row(vec![8.5, 11.0]),
+        "paperunits" => Array::char_string("inches"),
+        "windowstyle" => Array::char_string("normal"),
+        "doublebuffer" => Array::char_string("on"),
+        "pointer" => Array::char_string("arrow"),
+        "tag" => Array::char_string(""),
+        _ => return None,
+    })
+}
+
+/// The documented default value of AXES property `prop` (already lowercased).
+/// Defaults mirror FreeMat `HandleAxis::ConstructProperties`. Limit/scale/mode
+/// and other modeled properties are handled before this is consulted.
+fn axes_default(prop: &str) -> Option<Array> {
+    Some(match prop {
+        "box" => Array::char_string("off"),
+        "nextplot" => Array::char_string("replace"),
+        "visible" => Array::char_string("on"),
+        "tag" => Array::char_string(""),
+        "xdir" | "ydir" | "zdir" => Array::char_string("normal"),
+        "zscale" => Array::char_string("linear"),
+        "xgrid" | "ygrid" | "zgrid" => Array::char_string("off"),
+        "xminorgrid" | "yminorgrid" | "zminorgrid" => Array::char_string("off"),
+        "fontsize" => scalar(10.0),
+        "fontname" => Array::char_string("helvetica"),
+        "fontweight" => Array::char_string("normal"),
+        "fontangle" => Array::char_string("normal"),
+        "fontunits" => Array::char_string("points"),
+        "linewidth" => scalar(1.0),
+        "gridlinestyle" => Array::char_string(":"),
+        "minorgridlinestyle" => Array::char_string(":"),
+        "linestyleorder" => Array::char_string("-"),
+        "xcolor" | "ycolor" | "zcolor" => row(vec![0.0, 0.0, 0.0]),
+        "color" | "ambientlightcolor" => row(vec![1.0, 1.0, 1.0]),
+        "units" => Array::char_string("normalized"),
+        "layer" => Array::char_string("bottom"),
+        "tickdir" => Array::char_string("in"),
+        "ticklength" => row(vec![0.01, 0.025]),
+        "xaxislocation" => Array::char_string("bottom"),
+        "yaxislocation" => Array::char_string("left"),
+        "projection" => Array::char_string("orthographic"),
+        "clipping" => Array::char_string("on"),
+        "selected" => Array::char_string("off"),
+        "selectionhighlight" => Array::char_string("on"),
+        "handlevisibility" => Array::char_string("on"),
+        "dataaspectratio" | "plotboxaspectratio" => row(vec![1.0, 1.0, 1.0]),
+        "dataaspectratiomode" | "plotboxaspectratiomode" => Array::char_string("auto"),
+        "xtickmode" | "ytickmode" | "ztickmode" => Array::char_string("auto"),
+        "xticklabelmode" | "yticklabelmode" | "zticklabelmode" => Array::char_string("auto"),
+        "xtick" | "ytick" | "ztick" => empty(),
+        "xticklabel" | "yticklabel" | "zticklabel" => empty(),
+        // The default MATLAB axes ColorOrder (the 7-color plot palette), as an
+        // n×3 RGB matrix (column-major for `build_real`).
+        "colororder" => default_color_order(),
+        _ => return None,
+    })
+}
+
+/// The default axes `ColorOrder` as a `7×3` RGB matrix (column-major storage).
+fn default_color_order() -> Array {
+    let rows: [[f64; 3]; 7] = [
+        [0.0, 0.447, 0.741],
+        [0.850, 0.325, 0.098],
+        [0.929, 0.694, 0.125],
+        [0.494, 0.184, 0.556],
+        [0.466, 0.674, 0.188],
+        [0.301, 0.745, 0.933],
+        [0.635, 0.078, 0.184],
+    ];
+    let mut col_major = Vec::with_capacity(21);
+    for c in 0..3 {
+        for r in &rows {
+            col_major.push(r[c]);
+        }
+    }
+    build_real(DataClass::Double, &[7, 3], col_major)
 }
 
 // ---- plot / line ------------------------------------------------------------
@@ -1037,6 +1282,22 @@ fn auto_xy_bounds(series: &[Series]) -> [f64; 4] {
         (b[2], b[3]) = (0.0, 1.0);
     }
     b
+}
+
+/// Clear the limit for one axis when its `*limmode` is set to `'auto'`. For x/y
+/// the shared [`AxisLimits`] is dropped entirely (matching `xlim('auto')`); for
+/// z only the z-bounds are cleared.
+fn clear_limit_axis(ax: &mut fm_graphics::Axes, mode_prop: &str) {
+    match mode_prop {
+        "xlimmode" | "ylimmode" => ax.limits = None,
+        "zlimmode" => {
+            if let Some(l) = ax.limits.as_mut() {
+                l.zmin = None;
+                l.zmax = None;
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Which coordinate `xlim`/`ylim`/`zlim` operate on.

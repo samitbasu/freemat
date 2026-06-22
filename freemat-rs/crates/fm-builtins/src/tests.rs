@@ -693,6 +693,72 @@ fn set_get_roundtrip_on_axes() {
 }
 
 #[test]
+fn figure_axes_property_defaults_and_roundtrip() {
+    let mut i = interp();
+    i.run("plot(1:3);").unwrap();
+    let s = |i: &mut Interpreter, src: &str| {
+        i.run(src).unwrap();
+        i.context
+            .lookup("v")
+            .and_then(fm_core::Array::as_string)
+            .unwrap()
+    };
+    let f = |i: &mut Interpreter, src: &str| {
+        i.run(src).unwrap();
+        fm_interp::value::to_f64_vec(i.context.lookup("v").unwrap())
+    };
+
+    // ---- axes defaults ----
+    assert_eq!(s(&mut i, "v = get(gca,'xdir');"), "normal");
+    assert_eq!(s(&mut i, "v = get(gca,'box');"), "off");
+    assert_eq!(s(&mut i, "v = get(gca,'nextplot');"), "replace");
+    assert_eq!(s(&mut i, "v = get(gca,'xlimmode');"), "auto");
+    assert_eq!(s(&mut i, "v = get(gca,'climmode');"), "auto");
+    assert_eq!(f(&mut i, "v = get(gca,'fontsize');"), vec![10.0]);
+    assert_eq!(f(&mut i, "v = get(gca,'linewidth');"), vec![1.0]);
+    assert_eq!(f(&mut i, "v = get(gca,'xcolor');"), vec![0.0, 0.0, 0.0]);
+    assert_eq!(f(&mut i, "v = get(gca,'color');"), vec![1.0, 1.0, 1.0]);
+
+    // ---- figure defaults ----
+    assert_eq!(f(&mut i, "v = get(gcf,'color');"), vec![1.0, 1.0, 1.0]);
+    assert_eq!(s(&mut i, "v = get(gcf,'visible');"), "on");
+    assert_eq!(s(&mut i, "v = get(gcf,'numbertitle');"), "on");
+
+    // currentaxes == gca.
+    i.run("ca = get(gcf,'currentaxes'); g = gca;").unwrap();
+    assert_eq!(
+        i.context.lookup("ca").and_then(fm_core::Array::as_f64),
+        i.context.lookup("g").and_then(fm_core::Array::as_f64),
+    );
+
+    // ---- round-trips ----
+    assert_eq!(s(&mut i, "set(gca,'box','on'); v = get(gca,'box');"), "on");
+    assert_eq!(
+        s(&mut i, "set(gca,'xdir','reverse'); v = get(gca,'xdir');"),
+        "reverse"
+    );
+    assert_eq!(
+        f(&mut i, "set(gca,'fontsize',14); v = get(gca,'fontsize');"),
+        vec![14.0]
+    );
+
+    // xlim sets the value and flips the mode to manual.
+    assert_eq!(
+        f(&mut i, "set(gca,'xlim',[0 5]); v = get(gca,'xlim');"),
+        vec![0.0, 5.0]
+    );
+    assert_eq!(s(&mut i, "v = get(gca,'xlimmode');"), "manual");
+    // Setting the mode back to auto clears the limit (mode derives to auto).
+    assert_eq!(
+        s(
+            &mut i,
+            "set(gca,'xlimmode','auto'); v = get(gca,'xlimmode');"
+        ),
+        "auto"
+    );
+}
+
+#[test]
 fn set_get_unknown_property_echoes() {
     let mut i = interp();
     i.run("h = gca; set(h, 'MyTag', 42); v = get(h, 'MyTag');")
