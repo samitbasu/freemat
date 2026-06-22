@@ -34,6 +34,7 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("zlabel", |i, a, _n| label(i, a, Axis::Z));
     table.add_builtin("legend", b_legend);
     table.add_builtin("hold", b_hold);
+    table.add_builtin("ishold", b_ishold);
     table.add_builtin("axis", b_axis);
     table.add_builtin("xlim", |i, a, _n| axis_limit(i, a, LimAxis::X));
     table.add_builtin("ylim", |i, a, _n| axis_limit(i, a, LimAxis::Y));
@@ -871,6 +872,12 @@ fn b_hold(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
         _ => ax.hold = !ax.hold,
     }
     Ok(vec![])
+}
+
+/// `ishold` — true iff the current axes is in `hold on` mode.
+fn b_ishold(i: &mut Interpreter, _args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let held = i.graphics.current_figure_mut().current_axes_mut().hold;
+    Ok(vec![Array::bool(held)])
 }
 
 fn b_grid(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
