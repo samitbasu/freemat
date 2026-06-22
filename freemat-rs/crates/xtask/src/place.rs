@@ -503,6 +503,8 @@ const NONDETERMINISTIC_BUILTINS: &[&str] = &[
     "tic", "toc", "clock", "now", "time", "date", "cputime", "etime", "datestr", "datenum",
     // Working-directory / filesystem-listing (path or listing is environment-specific).
     "pwd", "cd", "dir", "ls", "tempdir", "tempname", "getpath", "what",
+    // Shell-out: output depends on the host environment/filesystem.
+    "system",
 ];
 
 /// If any `fm-exec` input in `script` calls a non-deterministic builtin (as a
