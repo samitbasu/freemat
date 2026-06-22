@@ -1,169 +1,148 @@
 # FreeMat-rs builtin coverage
 
-> **Generated snapshot** regenerated after the Tier-1 + generalized-eig pass
-> (rust-port branch; `--list-builtins` now reports
-> **348** — added function-handle builtins `func2str`/`str2func`/
-> `is_function_handle`, `arrayfun`, `conv2`, filesystem/delimited I/O
-> `dlmread`/`dlmwrite`/`csvread`/`csvwrite`/`pwd`/`cd`/`dir`/`ls`/`which`, plus
-> `fileparts` and `xnrm2`; `eig(A,B)` generalized eigenproblem wired into the
-> `eig` builtin). This is a
-> point-in-time diff of the **real freemat-rs registration table** against the
-> FreeMat 4.2 builtin surface — *not* a grep of the source tree. A prior
-> grep-based inventory was wrong (it falsely reported `pi`/`eps` as missing);
-> this one is built from what is actually registered.
+> **Generated snapshot (2026-06-22)** — regenerated after the help-completeness
+> backlog was finished (sessions 2–3). This is a point-in-time diff of the
+> **real freemat-rs registration table** against the FreeMat 4.2 name universe
+> (C++ builtins + toolbox `.m`), *not* a grep of the source tree.
 >
 > **How to regenerate the freemat-rs side:**
 > ```
-> cargo run -q -p fm-cli -- --list-builtins
+> cargo run -q -p fm-cli -- --list-builtins | sort -u
 > ```
 > That constructs an `Interpreter`, registers the full standard library
 > (`fm_builtins::register_standard_library`, which pulls in `fm-io` and the
-> graphics + time builtins), and prints every registered function name, sorted,
-> one per line. That output is the **authoritative** freemat-rs builtin set used
-> below.
+> graphics + time builtins), and prints every registered function name. That
+> output is the **authoritative** freemat-rs builtin set used below.
+>
+> **How to regenerate the FreeMat side:**
+> ```
+> # C++ builtins (all @@Signature directive types):
+> grep -rhoE '^//(s?g?function|sgfunction) +[A-Za-z_][A-Za-z0-9_]*' ../FreeMat/libs | awk '{print $2}' | sort -u
+> # toolbox .m basenames (excl. help/ doc stubs and tests/ harness):
+> find ../FreeMat/toolbox -name '*.m' | grep -vE '/help/|/tests/' | xargs -n1 basename | sed 's/\.m$//' | sort -u
+> ```
+> The ITK/VTK/GL image-processing primitives (e.g. `cannyedgedetector`,
+> `glshow`) are **dropped** from the scored universe (deliberately out of scope).
 
 ## What counts as a "builtin"
 
-Two subtleties make a naive count wrong, both handled here:
-
 1. **Evaluator constants are not in the function table.** `pi`, `e`, `eps`,
-   `Inf`/`inf`, `NaN`/`nan`, `i`/`j`/`I`/`J`, `true`, `false` are resolved
-   directly in `fm-interp`'s `eval_ident` (interp.rs ~L624), so they do **not**
-   appear in `--list-builtins`. **They ARE implemented** — the prior report's
-   claim that `pi`/`eps` were missing was a false negative from grepping the
-   registration table. This snapshot adds those 13 constants to the
-   freemat-rs implemented set.
+   `Inf`/`inf`, `NaN`/`nan`, `i`/`j`/`I`/`J`, `true`, `false` are resolved in
+   `fm-interp`'s `eval_ident`, so they are not in `--list-builtins` but ARE
+   implemented (added to the freemat-rs set below).
 2. **freemat-rs implements many FreeMat toolbox `.m` functions as native Rust
-   builtins** (e.g. `plot`, `linspace`, `repmat`, `all`, `any`). So the fair
-   comparison is the **whole FreeMat name universe** (C++ builtins + toolbox
-   `.m`) vs the freemat-rs registration table + constants.
-
-The FreeMat 4.2 side is taken from:
-- **C++ builtins** — the `//function` / `//sfunction` / `//sgfunction` /
-  `//gfunction` `@@Signature` directives across
-  `/home/samitbasu/Devel/freemat/FreeMat/libs/` (libCore, libGraphics, libFN,
-  libFreeMat). **330 names** (of which **44** are the dropped ITK/VTK/GL image
-  primitives, e.g. `cannyedgedetector`, `glshow`).
-- **toolbox** — the `.m` basenames under
-  `/home/samitbasu/Devel/freemat/FreeMat/toolbox/`. **249 names** (the 94
-  `toolbox/help/*.m` doc stubs and the `tests/` harness stubs are excluded from
-  the coverage tables).
+   builtins** (`plot`, `linspace`, `repmat`, `all`, …). So the fair comparison
+   is the **whole FreeMat name universe** (C++ core + toolbox) vs the freemat-rs
+   registration table + constants.
 
 ## Summary
 
 | metric | count |
 |---|---:|
-| freemat-rs registered builtins (`--list-builtins`) | **348** |
+| freemat-rs registered builtins (`--list-builtins`) | **452** |
 | freemat-rs evaluator constants (`pi`/`eps`/`i`/`true`/…) | 13 |
-| **freemat-rs total implemented** | **~361** |
-| FreeMat C++ builtins (all directive types) | 330 |
-|  — of which dropped (ITK/VTK/GL image primitives) | 44 |
-| FreeMat toolbox `.m` (excl. help/test stubs) | ~219 |
-| **FreeMat name universe scored below** (C++ core + toolbox) | **505** |
-| **FreeMat names implemented in freemat-rs** | **~266** |
-| **headline coverage** | **~52%** |
+| **freemat-rs total implemented (names)** | **465** |
+| FreeMat name universe scored (C++ core + toolbox, ITK/VTK/GL & help/test stubs excluded) | **503** |
+| **FreeMat names covered by freemat-rs** | **374** |
+| **headline name coverage** | **74.4%** |
+| missing names | 129 |
+|  — of which out-of-scope / FreeMat-internal / debugger | 60 |
+|  — **genuinely actionable** | **69** |
 
-> The builtin gap-fill pass added: **bit ops** (`bitand`/`bitor`/`bitxor`/
-> `bitcmp`/`bitshift`), **base conversion** (`dec2hex`/`hex2dec`/`dec2bin`/
-> `bin2dec`/`num2hex`/`hex2num`/`int2bin`/`bin2int`), **polynomial**
-> (`polyval`/`polyfit`/`roots`/`poly`/`polyder`/`polyint`/`conv`/`deconv`),
-> **linalg extras** (`cond`/`rcond`/`rref`/`kron`/`null`/`orth`/`tril`/`triu`),
-> **trig gaps** (degree variants `sind`…`acscd`, hyperbolic reciprocals
-> `sech`/`csch`/`coth`/`asech`/`acsch`/`acoth`, inverse reciprocals
-> `acot`/`asec`/`acsc`), **special functions** (`erf`/`erfc`/`gamma`/`gammaln`),
-> **misc numeric** (`vec`/`diff`/`dot`/`cross`/`meshgrid`/`ndgrid`/`deal`), and
-> `eps` (as a callable function) + `seed` (deterministic RNG reseeding).
+> Up from the prior snapshot (348 registered / ~52% coverage). Sessions 2–3 added
+> the `rand*` distributions, `cov`/`betainc`/`legendre`/`expm`/`matrixpower`/
+> `ode45`/`interplin1`/`teps`, sparse `lu`, `who`/`whos`/`where`/`lasterr`/`type`/
+> `inline`/`symvar`/`nargin`/`nargout`, `format`/`get`/`setprintlimit`/`fseek`/
+> `ftell`/`feof`, the axes-property + niche graphics set
+> (`xlim`/`ylim`/`clim`/`patch`/`contour3`/`zoom`/`sizefig`/`tubeplot`/`clabel`/
+> `winlev`/`pvalid`/`subplot`), and keyword-argument call syntax.
 
-`pi`/`eps` status: **implemented** (evaluator constants).
-`subplot` status: **NOT implemented** — it is a FreeMat *toolbox* function that
-depends on the graphics handle / `set`/`get` property system and multiple axes
-per figure, which are gated on **Stage 7.5** (not yet built). Same for
-`contour`, `axes`, `cla`, `colorbar`, `colormap`, `set`/`get`.
+## Runnability is the stronger signal
 
-## Coverage by category
+This table is the **API-surface** number ("how many names exist"). The
+**runnability** number ("how much actually works end to end") is the conformance
+suite, which executes FreeMat's own `test_*.m` cases: **672/677 ≈ 99.3%** (the 5
+red are all out of scope — a buggy corpus test, C-FFI, threads; see
+`REMAINING.md`). A name absent below may still run via an equivalent (e.g.
+`mpower`↔`^`, `isstr`↔`ischar`); conversely a present name is useless until its
+dependency builtins exist. Treat this as a *capability inventory*.
 
-Categorized by the originating FreeMat source (libCore file / libGraphics /
-toolbox subdir) rather than by keyword, so the buckets are accurate. "FM" =
-FreeMat names in that category (excluding dropped ITK/GL and help/test stubs);
-"rs" = how many of those freemat-rs implements; "cov%" = rs/FM.
+---
 
-| category | FM | rs | cov% | notable missing |
-|---|---:|---:|---:|---|
-| math (elementary) | 29 | 25 | 86% | `betainc` `erfinv` `legendre` (`erf`/`erfc`/`gamma`/`gammaln` ✓) |
-| trig | 33 | 33 | 100% | — (degree variants, hyperbolic + inverse reciprocals all added) |
-| reductions / stat | 6 | 5 | 83% | `cov` |
-| linear algebra | 18 | 16 | 89% | `eigs` `expm` (`cond`/`rcond`/`rref`/`tril`/`triu`/`kron`/`null`/`orth`/`eig(A,B)` ✓) |
-| array construct / manip | 67 | 50 | 75% | `shiftdim` `nonzeros` (`arrayfun`/`meshgrid`/`ndgrid`/`deal`/`vec` ✓) |
-| logical / relational | 8 | 8 | 100% | — (`bitand`/`bitor`/`bitxor`/`bitcmp`/`bitshift`/`dec2bin`/`bin2dec`/`int2bin`/`bin2int` ✓) |
-| strings | 23 | 20 | 87% | `cellstr` `strstr` |
-| cell / struct | 7 | 1 | 14% | the `ctype*` C-struct interop (`ctypedefine`/`ctypesize`/…) — native-FFI, deprioritized |
-| type / inspection | 44 | 29 | 66% | `computer` `version` `who`/`whos` `issparse` (`which`/`dec2hex`/`hex2dec`/`num2hex` ✓) |
-| file I/O | 25 | 13 | 52% | `fseek`/`ftell` `format` `input` `fflush` (`dlmread`/`dlmwrite`/`csvread`/`csvwrite` ✓) |
-| FFT / signal | 8 | 2 | 25% | `conv` `fftn`/`ifftn` `fftshift`/`ifftshift` `hilbert` |
-| random | 16 | 4 | 25% | `randperm`, and the distribution draws (`randbeta`/`randchi`/`randp`/…) (`seed` ✓) |
-| graphics | 83 | 21 | 25% | `subplot` `axes` `set`/`get` `contour` `colorbar`/`colormap` `xlim`/`ylim` `patch` `plot3` (Stage 7.5) |
-| time | 5 | 4 | 80% | `clocktotime` (`tic`/`toc`/`clock`/`etime` ✓; rs adds `cputime`/`pause`/`now`) |
-| debug | 11 | 1 | 9% | `dbstop`/`dbstep`/`dblist`/`dbstack` `lasterr` `warning` (Stage 10) |
-| sparse | 7 | 7 | 100% | — (`sparse`/`full`/`speye`/`spones`/`sprand`/`sprandn`/`spy` ✓; rs adds `spdiags`/`spzeros`/`nnz`/`nonzeros`/`nzmax`/`issparse`) |
-| polynomial | 6 | 6 | 100% | — (`polyval`/`polyfit`/`roots`/`poly`/`polyder`/`polyint`/`conv`/`deconv` ✓) |
-| ODE | 13 | 5 | 38% | `ode45` `odeset` `deval` `trapz`/`cumtrapz` |
-| system / OS | 26 | 6 | 23% | `getenv` `system` `mkdir` `path` `help` (`cd`/`pwd`/`dir`/`ls`/`fileparts` ✓) |
-| misc | 70 | 30 | 43% | `interp2` `fullfile` `getenv` (`conv2`/`func2str`/`str2func`/`diff`/`dot`/`cross`/`conv`/`rcond` ✓) |
-| **TOTAL** | **505** | **~278** | **~55%** | |
+## The 60 out-of-scope / internal missing names
 
-Notes on the table:
-- **math/trig** is high-value but partial: the elementary functions are all
-  there; the degree-valued trig (`sind` etc.), inverse reciprocals
-  (`acot`/`asec`/`acsc`), and special functions (`erf`/`gamma`) are the gap.
-- **graphics 25%** reflects the Stage 7 single-axes-per-figure model with no
-  property system: `plot`/`surf`/`mesh`/`image`/`title`/`axis`/`grid`/`hold`/
-  `legend`/`semilog*`/`loglog` work, but everything that needs real handles +
-  `set`/`get` (`subplot`, `axes`, `contour`, `colorbar`, limits) is **Stage 7.5**.
-- **system/OS 0%** is the cleanest large win still open (OS/filesystem builtins).
-  bit ops, the sparse type (Stage 9), and polynomial functions are now done.
-- freemat-rs also ships ~50 MATLAB-standard names FreeMat lacks under the same
-  spelling (e.g. `chol`, `gcd`/`lcm`, `mesh`, `union`/`intersect`/`setdiff`/
-  `ismember`, `flip`, `mat2str`, `cputime`/`pause`/`now`) — these are net
-  additions, not double-counted in the FM column above.
+These are not planned (or are FreeMat-internal and never user-facing):
 
-## Appendix — not-yet-implemented builtins (actionable backlog)
+- **Native C-FFI (13)** — `import`, `loadlib`, `bind`, `cenum`, `ctypecast`,
+  `ctypedefine`, `ctypefreeze`, `ctypenew`, `ctypeprint`, `ctyperead`,
+  `ctypesize`, `ctypethaw`, `ctypewrite`. (libffi/imported-C dropped from scope.)
+- **Threads (1)** — `threadcall` (parallel/threads out of scope).
+- **JIT / perf internals (5)** — `jitcontrol`, `jitstat`, `blaslib`, `pcode`,
+  `wrap_jit_test`.
+- **Debugger — Stage 10 (7)** — `dbstop`, `dbauto`, `dbdelete`, `dblist`,
+  `errorcount`, `fdump`, `warning` (the planned-but-unbuilt interactive debugger).
+- **FreeMat test / benchmark / GUI / installer internals (13)** — `test`,
+  `testtube`, `wb_test`, `wbgentests`, `wbtestcompare`, `wbtest_exact`,
+  `wbtestinputs`, `wbtest_near`, `wbtest_near_permute`, `wrap_test`, `simkeys`,
+  `docli`, `quiet`, `qtnew`, `install`.
+- **Graphics / parser internal helpers (21)** — `completeprops`, `parseit`,
+  `matchit`, `stcmp`, `styleset`, `markerset`, `makehandleclass`, `hrawplot`,
+  `htextbitmap`, `p_end`, `is2dview`, `islinespec`, `newplot`, `colorset`,
+  `datacursormanager`, `datacursormode`, `inline_evaluate`, `mkdir_core`,
+  `regexprepdriver` (toolbox-internal helpers, not called directly by users).
 
-Every scored FreeMat name freemat-rs does not yet implement, grouped by
-category. (Dropped ITK/VTK/GL primitives and help/test stubs are omitted.)
+---
 
-- **math** (3): `betainc`, `erfinv`, `legendre` (`erf`/`erfc`/`gamma`/`gammaln` now ✓)
-- **trig** (0): all degree variants, hyperbolic reciprocals, and inverse reciprocals are now implemented
-- **reductions / stat** (1): `cov`
-- **linear algebra** (2): `eigs`, `expm` (`cond`/`rcond`/`rref`/`tril`/`triu`/`kron`/`null`/`orth` now ✓)
-- **array construct / manip** (16): `cast`, `flipdim`, `isalpha`, `isdigit`, `ishandle`, `ishold`, `isinttype`, `isspace`, `issquare`, `isstr`, `maxdim`, `nnz`, `nonzeros`, `shiftdim`, `subsref`, `test` (`arrayfun`/`deal`/`meshgrid`/`ndgrid`/`vec` now ✓)
-- **logical / relational** (0): `bitand`/`bitor`/`bitxor`/`bitcmp`/`bitshift`/`dec2bin`/`bin2dec`/`int2bin`/`bin2int` now ✓
-- **strings** (3): `cellstr`, `regexprepdriver`, `strstr`
-- **cell / struct** (6): `cenum`, `ctypedefine`, `ctypefreeze`, `ctypeprint`, `ctypesize`, `ctypethaw`
-- **type / inspection** (16): `IsInf`, `IsNaN`, `computer`, `isequalwithequalnans`, `issparse`, `makehandleclass`, `mfilename`, `nargin`, `nargout`, `p_end`, `string`, `version`, `verstring`, `where`, `who`, `whos` (`which`/`dec2hex`/`hex2dec`/`num2hex`/`hex2num` now ✓)
-- **file I/O** (12): `fflush`, `format`, `fseek`, `ftell`, `getline`, `getprintlimit`, `input`, `rawread`, `rawwrite`, `setprintlimit`, `type`, `wavread`, `wavwrite` (`dlmread`/`dlmwrite`/`csvread`/`csvwrite` now ✓)
-- **FFT / signal** (6): `conv`, `fftn`, `fftshift`, `hilbert`, `ifftn`, `ifftshift`
-- **random** (12): `randbeta`, `randbin`, `randchi`, `randexp`, `randf`, `randgamma`, `randmulti`, `randnbin`, `randnchi`, `randnf`, `randp`, `randperm` (`seed` now ✓)
-- **graphics** (62): `axes`, `cla`, `clabel`, `clim`, `close`, `colorbar`, `colormap`, `colorset`, `completeprops`, `contour`, `contour3`, `copper`, `copy`, `datacursormanager`, `datacursormode`, `figlower`, `figraise`, `get`, `gray`, `hcontour`, `himage`, `hist`, `hline`, `hpatch`, `hpoint`, `hrawplot`, `htext`, `htextbitmap`, `imread`, `imwrite`, `is2dview`, `islinespec`, `markerset`, `matchit`, `newplot`, `parseit`, `patch`, `pcolor`, `plot3`, `point`, `print`, `pvalid`, `quiver`, `set`, `sizefig`, `stcmp`, `styleset`, `subplot`, `surface`, `testtube`, `text`, `tubeplot`, `uicontrol`, `view`, `volrender`, `vtkfigure`, `winlev`, `xlim`, `ylim`, `zlim`, `zoom`, `zplane`
-- **time** (1): `clocktotime`
-- **debug** (10): `dbauto`, `dbdelete`, `dblist`, `dbstop`, `errorcount`, `fdump`, `jitcontrol`, `jitstat`, `lasterr`, `warning`
-- **sparse** (0): `full`/`sparse`/`speye`/`spones`/`sprand`/`sprandn`/`spy` now ✓ (+ `spdiags`/`spzeros`/`nnz`/`nonzeros`/`nzmax`/`issparse`)
-- **polynomial** (0): `poly`/`polyder`/`polyfit`/`polyint`/`polyval`/`roots` (+ `conv`/`deconv`) now ✓
-- **ODE** (8): `cumtrapz`, `deval`, `idiv`, `mpower`, `ode45`, `odeset`, `teps`, `trapz`
-- **system / OS** (21): `blaslib`, `copyfile`, `delete`, `dirsep`, `fileattrib`, `getpath`, `help`, `helpwin`, `htmlread`, `import`, `loadlib`, `mkdir`, `mkdir_core`, `pathtool`, `rmdir`, `setpath`, `urlwrite`, `wavplay`, `wavrecord`, `what`, `xmlread` (`cd`/`pwd`/`dir`/`ls`/`which`/`fileparts` now ✓)
-- **misc** (41): `addpath`, `bind`, `ctypecast`, `ctypenew`, `ctyperead`, `ctypewrite`, `diary`, `docli`, `exit`, `filesep`, `fitfun`, `fullfile`, `gausfit`, `getenv`, `gfitfun`, `inline`, `inline_evaluate`, `install`, `interp2`, `interplin1`, `license`, `path`, `pathsep`, `pcode`, `qtnew`, `quiet`, `rehash`, `rescan`, `simkeys`, `source`, `symvar`, `system`, `threadcall`, `wb_test`, `wbgentests`, `wbtest_exact`, `wbtest_near`, `wbtest_near_permute`, `wbtestcompare`, `wbtestinputs`, `wrap_jit_test`, `wrap_test` (`conv2`/`func2str`/`str2func`/`diff`/`dot`/`cross`/`rcond` now ✓)
+## The 69 actionable missing names, by category
 
-## Toolbox caveat — runnability is the real signal
+### Graphics — handle system / 3-D / interactive (Stage 7.5) (15)
+`copy` · `print` · `surface` · `uicontrol` · `zlim` · `zplane` · `figlower` ·
+`figraise` · `hcontour` · `himage` · `hline` · `hpatch` · `htext` · `point` ·
+`hpoint`
+> Need the full handle/`set`/`get` property system, text-object handles, and —
+> for `point`/`hpoint` — frontend mouse-event plumbing. `zlim` is the 3-D analog
+> of the already-done `xlim`/`ylim`. Not-yet-started 3-D plot types
+> (`surfl`/`surfc`/`meshc`/`waterfall`/`sphere`/`cylinder`/`ellipsoid`) have no
+> failing help fragment so aren't in this name diff.
 
-FreeMat ships **317 `.m` toolbox files** (the same files are present verbatim in
-`freemat-rs/toolbox/`). They run **unchanged** on the interpreter — *but only
-when the builtins they call exist*. A toolbox `.m` whose name is "not
-implemented as a native builtin" above may still be **runnable** if freemat-rs
-provides the same behavior natively, and conversely a toolbox `.m` that is
-"present" is useless until its dependency builtins land. So this name-level diff
-is a *capability inventory*, not a runnability score.
+### OS / filesystem (22)
+`addpath` · `path` · `pathsep` · `pathtool` · `rehash` · `rescan` · `mkdir` ·
+`rmdir` · `copyfile` · `fileattrib` · `dirsep` · `filesep` · `diary` · `exit` ·
+`license` · `urlwrite` · `xmlread` · `htmlread` · `system` · `getpath` ·
+`setpath` · `what`
+> `getpath`/`setpath`/`what` are environment-dependent (non-deterministic);
+> `system` is shell-out. The rest are straightforward filesystem/path builtins —
+> the cleanest large win still open.
 
-The authoritative runnability signal is the **conformance suite** (`cargo run
---release -q -p fm-conformance`), which actually executes the FreeMat `test_*.m`
-cases. After Stage 9 (sparse matrices) it stands at **402 / 677 ≈ 59.4%** — that is the honest
-"how much actually works end to end" number; the table above is the "how much of
-the API surface exists" number.
+### File I/O & audio (9)
+`input` · `fflush` · `getline` · `rawread` · `rawwrite` · `wavread` ·
+`wavwrite` · `wavplay` · `wavrecord`
+
+### Signal / FFT (5)
+`fftn` · `ifftn` · `fftshift` · `ifftshift` · `hilbert`
+
+### Numerics (6)
+`trapz` · `cumtrapz` · `interp2` · `odeset` · `deval` · `mpower`
+> `mpower` already works as the `^` operator; only the named-builtin form is
+> absent. `odeset`/`deval` would round out the now-implemented `ode45`.
+
+### Type / inspection (12)
+`computer` · `mfilename` · `isinttype` · `issquare` · `isstr` · `ishold` ·
+`isequalwithequalnans` · `maxdim` · `subsref` · `IsInf` · `IsNaN` ·
+`clocktotime`
+> Several are aliases of existing functionality: `isstr`↔`ischar`,
+> `IsInf`/`IsNaN`↔`isinf`/`isnan` (capitalized internal spellings). `clocktotime`
+> is time-based (non-deterministic). `subsref` ties into the class/handle system.
+
+---
+
+## Quick map: where things live
+- Interpreter / eval / indexing / scopes: `crates/fm-interp/`
+- Values / `Array` (dense + sparse + function-handle), formatting: `crates/fm-core/`
+- Lexer / parser / AST: `crates/fm-parser/`
+- Dense + sparse linear algebra (faer): `crates/fm-linalg/`
+- Builtins (math/strings/array/poly/bitops/baseconv/handles/graphics/random/…): `crates/fm-builtins/`
+- MAT / file I/O / FFT / regex / image: `crates/fm-io/`
+- REPL + graphics webserver: `crates/fm-cli/`; browser frontend: `web/index.html`
+- Conformance harness + corpus: `crates/fm-conformance/` (`-- --failures` lists red)
+- Overall backlog: `docs/REMAINING.md`; help-example backlog: `docs/HELP_BACKLOG.md`
