@@ -2293,6 +2293,146 @@ fn text_is_a_handle_object() {
     );
 }
 
+// ---- low-level handle constructors (hline/hpatch/himage/...) -----------------
+
+#[test]
+fn hline_constructor() {
+    let mut i = interp();
+    i.run("h = hline('xdata',[1 2 3],'ydata',[4 5 6],'color','r');")
+        .unwrap();
+    // It is a valid line handle.
+    i.run("ih = ishandle(h); ty = get(h,'type');").unwrap();
+    assert_eq!(
+        i.context.lookup("ih").and_then(fm_core::Array::as_f64),
+        Some(1.0)
+    );
+    assert_eq!(
+        i.context.lookup("ty").and_then(fm_core::Array::as_string),
+        Some("line".into())
+    );
+    // Data and color round-trip.
+    i.run("x = get(h,'xdata'); c = get(h,'color');").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("x").unwrap()),
+        vec![1.0, 2.0, 3.0]
+    );
+    assert_eq!(
+        i.context.lookup("c").and_then(fm_core::Array::as_string),
+        Some("r".into())
+    );
+    // It is a child of gca.
+    i.run("ch = get(gca,'children'); g = gca;").unwrap();
+    let children = fm_interp::value::to_f64_vec(i.context.lookup("ch").unwrap());
+    let hh = i
+        .context
+        .lookup("h")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+    assert!(children.contains(&hh));
+}
+
+#[test]
+fn himage_constructor() {
+    let mut i = interp();
+    i.run("h = himage('cdata',[1 2;3 4]); ty = get(h,'type');")
+        .unwrap();
+    assert_eq!(
+        i.context.lookup("ty").and_then(fm_core::Array::as_string),
+        Some("image".into())
+    );
+    i.run("c = get(h,'cdata');").unwrap();
+    let c = i.context.lookup("c").unwrap();
+    assert_eq!(c.dims(), vec![2, 2]);
+    assert_eq!(
+        fm_interp::value::to_f64_vec(c),
+        vec![1.0, 3.0, 2.0, 4.0] // column-major [1 2;3 4]
+    );
+}
+
+#[test]
+fn hpatch_constructor() {
+    let mut i = interp();
+    i.run("h = hpatch('xdata',[0 1 1],'ydata',[0 0 1],'facecolor','g'); ty = get(h,'type');")
+        .unwrap();
+    assert_eq!(
+        i.context.lookup("ty").and_then(fm_core::Array::as_string),
+        Some("patch".into())
+    );
+    i.run("fc = get(h,'facecolor');").unwrap();
+    assert_eq!(
+        i.context.lookup("fc").and_then(fm_core::Array::as_string),
+        Some("g".into())
+    );
+}
+
+#[test]
+fn hcontour_constructor() {
+    let mut i = interp();
+    i.run("h = hcontour('zdata',[1 2 3;4 5 6;7 8 9]); ty = get(h,'type');")
+        .unwrap();
+    assert_eq!(
+        i.context.lookup("ty").and_then(fm_core::Array::as_string),
+        Some("contour".into())
+    );
+    i.run("z = get(h,'zdata');").unwrap();
+    assert_eq!(i.context.lookup("z").unwrap().dims(), vec![3, 3]);
+}
+
+#[test]
+fn surface_constructor_positional_and_pairs() {
+    let mut i = interp();
+    // Positional form.
+    i.run("h = surface([1 2;3 4]); ty = get(h,'type');")
+        .unwrap();
+    assert_eq!(
+        i.context.lookup("ty").and_then(fm_core::Array::as_string),
+        Some("surface".into())
+    );
+    i.run("z = get(h,'zdata');").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(i.context.lookup("z").unwrap()),
+        vec![1.0, 3.0, 2.0, 4.0]
+    );
+    // Property-pair form.
+    let mut j = interp();
+    j.run("h = surface('zdata',[5 6;7 8]); ty = get(h,'type');")
+        .unwrap();
+    assert_eq!(
+        j.context.lookup("ty").and_then(fm_core::Array::as_string),
+        Some("surface".into())
+    );
+    j.run("z = get(h,'zdata');").unwrap();
+    assert_eq!(
+        fm_interp::value::to_f64_vec(j.context.lookup("z").unwrap()),
+        vec![5.0, 7.0, 6.0, 8.0]
+    );
+}
+
+#[test]
+fn htext_constructor() {
+    let mut i = interp();
+    i.run("plot(1:3); h = htext('position',[1 1],'string','hi');")
+        .unwrap();
+    i.run("ty = get(h,'type'); st = get(h,'string');").unwrap();
+    assert_eq!(
+        i.context.lookup("ty").and_then(fm_core::Array::as_string),
+        Some("text".into())
+    );
+    assert_eq!(
+        i.context.lookup("st").and_then(fm_core::Array::as_string),
+        Some("hi".into())
+    );
+    // child of gca.
+    i.run("ch = get(gca,'children');").unwrap();
+    let children = fm_interp::value::to_f64_vec(i.context.lookup("ch").unwrap());
+    let hh = i
+        .context
+        .lookup("h")
+        .and_then(fm_core::Array::as_f64)
+        .unwrap();
+    assert!(children.contains(&hh));
+}
+
 #[test]
 fn text_property_defaults_and_position() {
     let mut i = interp();

@@ -82,6 +82,14 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("polar", b_polar);
     table.add_builtin("quiver", b_quiver);
     table.add_builtin("text", b_text);
+    // Low-level handle constructors: create one child object in the current axes
+    // from property name/value pairs and return its handle.
+    table.add_builtin("hline", b_hline);
+    table.add_builtin("hpatch", b_hpatch);
+    table.add_builtin("himage", b_himage);
+    table.add_builtin("hcontour", b_hcontour);
+    table.add_builtin("surface", b_surface);
+    table.add_builtin("htext", b_htext);
     table.add_builtin("tubeplot", b_tubeplot);
     table.add_builtin("clabel", b_clabel);
     table.add_builtin("winlev", b_winlev);
@@ -522,6 +530,9 @@ fn apply_property(i: &mut Interpreter, h: u64, prop: &str, value: &Array) -> Flo
                 "levellist" => c.levels = to_f64_vec(value),
                 "fill" => c.filled = on_off(&value.as_string().unwrap_or_default()),
                 "showtext" => c.labels = on_off(&value.as_string().unwrap_or_default()),
+                "zdata" | "cdata" => c.z = array_to_grid(value),
+                "xdata" => c.x = to_f64_vec(value),
+                "ydata" => c.y = to_f64_vec(value),
                 _ => i.graphics.set_extra(h, &prop, value.clone()),
             },
             Some(Series::Surface(s)) => match prop.as_str() {
@@ -790,6 +801,9 @@ fn read_property(i: &Interpreter, h: u64, prop: &str) -> Array {
                         "levellist" => return row(c.levels.clone()),
                         "fill" => return on_off_str(c.filled),
                         "showtext" => return on_off_str(c.labels),
+                        "zdata" | "cdata" => return grid_to_array(&c.z),
+                        "xdata" => return row(c.x.clone()),
+                        "ydata" => return row(c.y.clone()),
                         _ => {}
                     }
                     if let Some(v) = i.graphics.get_extra(h, prop) {
@@ -2773,6 +2787,169 @@ fn b_text(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array
     }
     let m = handles.len();
     Ok(vec![build_real(DataClass::Double, &[m, 1], handles)])
+}
+
+// ---- low-level handle constructors (hline/hpatch/himage/...) -----------------
+//
+// These mirror FreeMat's `HandleCommands.cpp` constructors: each creates one
+// child object of a fixed kind in the *current* axes from property name/value
+// pairs and returns its handle. Unlike the high-level plotting commands they do
+// NOT clear the current axes — they ADD a child (matching FreeMat, which appends
+// the new object to the current axes' children). The object is created empty and
+// the property pairs (including data such as `xdata`/`ydata`/`zdata`/`cdata`/
+// `string`) fill it in via `apply_property`.
+
+/// Apply every `name, value` property pair in `args` (starting at `start`) to
+/// the handle's object. Returns an error if a name is missing/non-string.
+fn apply_property_pairs(i: &mut Interpreter, h: u64, args: &[Array], start: usize) -> Flow<()> {
+    let mut k = start;
+    while k < args.len() {
+        let Some(prop) = str_arg(args, k) else {
+            return err("expected a property name string");
+        };
+        let Some(value) = args.get(k + 1) else {
+            return err(format!("no value given for property '{prop}'"));
+        };
+        apply_property(i, h, &prop, value)?;
+        k += 2;
+    }
+    Ok(())
+}
+
+/// `hline('xdata',X,'ydata',Y,'color','r',...)` — a line object.
+fn b_hline(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let (fig, axes_idx) = current_axes_loc(i);
+    i.graphics
+        .current_figure_mut()
+        .current_axes_mut()
+        .series
+        .push(Series::Line(LineSeries::default()));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Line);
+    apply_property_pairs(i, h, args, 0)?;
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+/// `hpatch('xdata',X,'ydata',Y,'facecolor','g',...)` — a patch (filled polygon).
+fn b_hpatch(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let (fig, axes_idx) = current_axes_loc(i);
+    i.graphics
+        .current_figure_mut()
+        .current_axes_mut()
+        .series
+        .push(Series::Fill(FillSeries::default()));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Patch);
+    apply_property_pairs(i, h, args, 0)?;
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+/// `himage('cdata',C,...)` — an image object.
+fn b_himage(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let cmap = current_colormap(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    i.graphics
+        .current_figure_mut()
+        .current_axes_mut()
+        .series
+        .push(Series::Image(ImageSeries {
+            data: Vec::new(),
+            colormap: cmap,
+        }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Image);
+    apply_property_pairs(i, h, args, 0)?;
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+/// `hcontour('zdata',Z,'levellist',L,...)` — a contour object.
+fn b_hcontour(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let cmap = current_colormap(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    i.graphics
+        .current_figure_mut()
+        .current_axes_mut()
+        .series
+        .push(Series::Contour(ContourSeries {
+            colormap: cmap,
+            ..ContourSeries::default()
+        }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Contour);
+    apply_property_pairs(i, h, args, 0)?;
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+/// `surface(...)` — a low-level surface constructor with two forms:
+/// positional `surface(Z)` / `surface(X,Y,Z)`, and the property-pair form
+/// `surface('xdata',X,'zdata',Z,...)`. The first argument's type disambiguates:
+/// a leading char string starts the property-pair form; a leading numeric array
+/// is the positional form.
+fn b_surface(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let cmap = current_colormap(i);
+    let (fig, axes_idx) = current_axes_loc(i);
+    // Positional form: first arg is numeric (not a property-name string).
+    let positional = matches!(args.first(), Some(a) if !a.is_char());
+    let (z, x, y) = if positional {
+        let (z_arg, x, y) = if args.len() >= 3 {
+            (&args[2], to_f64_vec(&args[0]), to_f64_vec(&args[1]))
+        } else {
+            (&args[0], Vec::new(), Vec::new())
+        };
+        let (z, _r, _c) = grid_of(z_arg);
+        (z, x, y)
+    } else {
+        (Vec::new(), Vec::new(), Vec::new())
+    };
+    i.graphics
+        .current_figure_mut()
+        .current_axes_mut()
+        .series
+        .push(Series::Surface(SurfaceSeries {
+            z,
+            x,
+            y,
+            xmat: Vec::new(),
+            ymat: Vec::new(),
+            colormap: cmap,
+            wireframe: false,
+        }));
+    let h = i.graphics.register_series(fig, axes_idx, ObjKind::Surface);
+    // The property-pair form fills the object from the name/value pairs; the
+    // positional form already filled it above (no trailing pairs).
+    if !positional {
+        apply_property_pairs(i, h, args, 0)?;
+    }
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
+}
+
+/// `htext('position',[x y z],'string',s,...)` — a text object. Also accepts the
+/// positional `htext(x, y, str)` form (like `text`).
+fn b_htext(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let (fig, axes_idx) = current_axes_loc(i);
+    // Positional form: `htext(x, y, str)` — first two args numeric, third a string.
+    let positional = args.len() >= 3
+        && !args[0].is_char()
+        && !args[1].is_char()
+        && (args[2].is_char() || args[2].as_cell().is_some());
+    let mut label = TextLabel::default();
+    let mut pairs_start = 0;
+    if positional {
+        label.x = args[0].as_f64().unwrap_or(0.0);
+        label.y = args[1].as_f64().unwrap_or(0.0);
+        label.str = args[2].as_string().unwrap_or_default();
+        pairs_start = 3;
+    }
+    i.graphics
+        .current_figure_mut()
+        .current_axes_mut()
+        .texts
+        .push(label);
+    let h = i.graphics.register_text(fig, axes_idx);
+    apply_property_pairs(i, h, args, pairs_start)?;
+    i.graphics.dirty = true;
+    Ok(vec![handle(h)])
 }
 
 // `semilogx`/`semilogy`/`loglog` set the scale then delegate to plot.
