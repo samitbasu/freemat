@@ -171,19 +171,46 @@ fn encode_for_write(data: &Array, precision: Option<&str>) -> Vec<u8> {
 }
 
 fn class_of_precision(p: &str) -> Option<DataClass> {
-    Some(match p {
-        "int8" | "char" | "schar" => DataClass::Int8,
-        "uint8" | "uchar" => DataClass::UInt8,
-        "int16" | "short" => DataClass::Int16,
-        "uint16" | "ushort" => DataClass::UInt16,
-        "int32" | "int" => DataClass::Int32,
+    Some(match p.trim() {
+        "int8" | "char" | "schar" | "integer*1" => DataClass::Int8,
+        "uint8" | "uchar" | "unsigned char" => DataClass::UInt8,
+        "int16" | "short" | "integer*2" => DataClass::Int16,
+        "uint16" | "ushort" | "unsigned short" => DataClass::UInt16,
+        "int32" | "int" | "integer*4" | "unsigned int" => DataClass::Int32,
         "uint32" | "uint" => DataClass::UInt32,
         "int64" | "long" => DataClass::Int64,
         "uint64" | "ulong" => DataClass::UInt64,
-        "single" | "float" | "float32" => DataClass::Float,
-        "double" | "float64" => DataClass::Double,
+        "single" | "float" | "float32" | "real*4" => DataClass::Float,
+        "double" | "float64" | "real*8" => DataClass::Double,
         _ => return None,
     })
+}
+
+/// Parse a `fread`/`fwrite` precision string into `(input_class, output_class)`.
+///
+/// Matches FreeMat 4 semantics: a bare type (e.g. `'float'`) reads in that type
+/// but returns `double`; a `'*'` prefix keeps the input type; and a
+/// `'type1 => type2'` spec sets input and output independently.
+fn parse_precision(p: &str) -> (DataClass, DataClass) {
+    let p = p.trim();
+    if let Some((lhs, rhs)) = p.split_once("=>") {
+        let din = class_of_precision(lhs.trim()).unwrap_or(DataClass::Double);
+        let dout = class_of_precision(rhs.trim()).unwrap_or(din);
+        return (din, dout);
+    }
+    if let Some(rest) = p.strip_prefix('*') {
+        let din = class_of_precision(rest.trim()).unwrap_or(DataClass::Double);
+        return (din, din);
+    }
+    let din = class_of_precision(p).unwrap_or(DataClass::Double);
+    // Bare integer types preserve their class; float/double become double.
+    let dout = match din {
+        DataClass::Char => DataClass::Char,
+        DataClass::Bool => DataClass::Bool,
+        c if c.is_integer() => c,
+        _ => DataClass::Double,
+    };
+    (din, dout)
 }
 
 fn byte_size(class: DataClass) -> usize {
@@ -195,26 +222,78 @@ fn byte_size(class: DataClass) -> usize {
     }
 }
 
-/// `fread(fid [, count [, precision]])` → a column vector of the read values.
-pub fn fread(args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+/// `fread(fid [, size [, precision]])` → an array of the read values, shaped per
+/// the `size` argument (a scalar count, or a dimension vector that may contain a
+/// single `inf`). A second output (when requested) is the element count.
+///
+/// Like FreeMat, reading from an invalid/closed handle yields an empty result
+/// rather than an error, so end-of-data probes don't raise.
+pub fn fread(args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
     let fid = fid_of(args, 0, "fread")?;
     let precision = args
         .get(2)
         .map(str_of)
         .unwrap_or_else(|| "uchar".to_string());
-    let class = class_of_precision(&precision).unwrap_or(DataClass::Double);
-    let elem_size = byte_size(class);
-    let count = args.get(1).and_then(Array::as_f64);
+    let (class_in, class_out) = parse_precision(&precision);
+    let elem_size = byte_size(class_in);
+
+    // Parse the size argument: scalar count, or a dimension vector (possibly
+    // with one `inf` meaning "as many as remain").
+    let size_spec = args.get(1).map(fm_interp::value::to_f64_vec);
 
     FILES.with(|f| -> Flow<Vec<Array>> {
         let mut map = f.borrow_mut();
-        let of = map
-            .get_mut(&fid)
-            .ok_or_else(|| Signal::Error(InterpError::msg("fread: invalid file id")))?;
+        let Some(of) = map.get_mut(&fid) else {
+            // Invalid handle (e.g. fopen of a missing file returned -1): match
+            // FreeMat's tolerant behavior and return an empty array.
+            return Ok(read_result(class_out, &[0, 0], Vec::new(), nargout));
+        };
+
+        // How many bytes remain, used to resolve an `inf` dimension or an
+        // unbounded read.
+        let bytes_left = {
+            let pos = of_pos(of);
+            let end = of.file.metadata().map(|m| m.len()).unwrap_or(0);
+            end.saturating_sub(pos)
+        };
+
+        // Determine the requested element count and the output dimensions.
+        let (want_count, dims): (Option<usize>, Option<Vec<usize>>) = match &size_spec {
+            None => (None, None),
+            Some(v) if v.len() <= 1 => {
+                match v.first().copied() {
+                    Some(c) if c.is_finite() => (Some(c.max(0.0) as usize), None),
+                    _ => (None, None), // inf or empty → read all
+                }
+            }
+            Some(v) => {
+                let inf_pos = v.iter().position(|x| x.is_infinite());
+                if let Some(ip) = inf_pos {
+                    let known: usize = v
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| *i != ip)
+                        .map(|(_, x)| (*x).max(0.0) as usize)
+                        .product::<usize>()
+                        .max(1);
+                    let rem = (bytes_left as usize) / elem_size;
+                    let inf_dim = rem.div_ceil(known);
+                    let mut dims: Vec<usize> = v.iter().map(|x| (*x).max(0.0) as usize).collect();
+                    dims[ip] = inf_dim;
+                    let total: usize = dims.iter().product();
+                    (Some(total), Some(dims))
+                } else {
+                    let dims: Vec<usize> = v.iter().map(|x| (*x).max(0.0) as usize).collect();
+                    let total: usize = dims.iter().product();
+                    (Some(total), Some(dims))
+                }
+            }
+        };
+
         let mut buf = Vec::new();
-        match count {
-            Some(c) if c.is_finite() => {
-                let want = (c as usize) * elem_size;
+        match want_count {
+            Some(c) => {
+                let want = c * elem_size;
                 let mut chunk = vec![0u8; want];
                 let got = read_fill(&mut of.file, &mut chunk);
                 if got < want {
@@ -222,15 +301,42 @@ pub fn fread(args: &[Array], _n: usize) -> Flow<Vec<Array>> {
                 }
                 buf.extend_from_slice(&chunk[..got]);
             }
-            _ => {
+            None => {
                 of.file.read_to_end(&mut buf).ok();
                 of.eof = true;
             }
         }
-        let vals = decode_read(&buf, class);
-        let dims = [vals.len(), 1];
-        Ok(vec![build_read_result(class, &dims, vals)])
+        let mut vals = decode_read(&buf, class_in);
+
+        // Resolve the output shape. If a dimension vector was given, honor it
+        // (padding with zeros if the file was short); otherwise a column vector.
+        let out_dims = match dims {
+            Some(d) => {
+                let total: usize = d.iter().product();
+                vals.resize(total, 0.0);
+                d
+            }
+            None => vec![vals.len(), 1],
+        };
+        Ok(read_result(class_out, &out_dims, vals, nargout))
     })
+}
+
+/// Current stream position of an open file (0 on error).
+fn of_pos(of: &mut OpenFile) -> u64 {
+    of.file.stream_position().unwrap_or(0)
+}
+
+/// Build the `fread` return vector: the data array plus, when a second output is
+/// requested, the element count.
+fn read_result(class: DataClass, dims: &[usize], vals: Vec<f64>, nargout: usize) -> Vec<Array> {
+    let count = vals.len();
+    let a = build_read_result(class, dims, vals);
+    if nargout >= 2 {
+        vec![a, Array::double(count as f64)]
+    } else {
+        vec![a]
+    }
 }
 
 fn read_fill(file: &mut File, buf: &mut [u8]) -> usize {
@@ -272,15 +378,7 @@ fn decode_read(bytes: &[u8], class: DataClass) -> Vec<f64> {
     out
 }
 
-fn build_read_result(class: DataClass, dims: &[usize], vals: Vec<f64>) -> Array {
-    // `fread` returns the values in the requested class (double for double/float
-    // precisions; the integer classes preserve their type).
-    let out_class = match class {
-        DataClass::Char => DataClass::Char,
-        DataClass::Bool => DataClass::Bool,
-        c if c.is_integer() => c,
-        _ => DataClass::Double,
-    };
+fn build_read_result(out_class: DataClass, dims: &[usize], vals: Vec<f64>) -> Array {
     build_real(out_class, dims, vals)
 }
 
@@ -296,6 +394,58 @@ pub fn frewind(args: &[Array], _n: usize) -> Flow<Vec<Array>> {
         Ok(())
     })?;
     Ok(vec![])
+}
+
+/// `fseek(fid, offset, style)` — move the file pointer. `style` is `'bof'`/-1
+/// (from start), `'cof'`/0 (from current), or `'eof'`/1 (from end). Returns 0 on
+/// success, -1 on failure (matching MATLAB/FreeMat).
+pub fn fseek(args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let fid = fid_of(args, 0, "fseek")?;
+    if args.len() < 3 {
+        return ferr("fseek requires three arguments, the file handle, the offset, and style");
+    }
+    let offset = args[1].as_f64().unwrap_or(0.0) as i64;
+    let style = match args[2].as_string() {
+        Some(s) => match s.to_lowercase().as_str() {
+            "bof" => -1,
+            "cof" => 0,
+            "eof" => 1,
+            _ => return ferr("unrecognized style format for fseek"),
+        },
+        None => match args[2].as_f64() {
+            Some(v) if v == -1.0 || v == 0.0 || v == 1.0 => v as i32,
+            _ => return ferr("unrecognized style format for fseek"),
+        },
+    };
+    let ok = FILES.with(|f| -> Flow<bool> {
+        let mut map = f.borrow_mut();
+        let Some(of) = map.get_mut(&fid) else {
+            return Ok(false);
+        };
+        let target = match style {
+            -1 => SeekFrom::Start(offset.max(0) as u64),
+            0 => SeekFrom::Current(offset),
+            _ => SeekFrom::End(offset),
+        };
+        let res = of.file.seek(target).is_ok();
+        if res {
+            of.eof = false;
+        }
+        Ok(res)
+    })?;
+    Ok(vec![Array::double(if ok { 0.0 } else { -1.0 })])
+}
+
+/// `ftell(fid)` — current byte offset from the start of the file (-1 on error).
+pub fn ftell(args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let fid = fid_of(args, 0, "ftell")?;
+    let pos = FILES.with(|f| {
+        f.borrow_mut()
+            .get_mut(&fid)
+            .and_then(|of| of.file.stream_position().ok())
+            .map_or(-1.0, |p| p as f64)
+    });
+    Ok(vec![Array::double(pos)])
 }
 
 /// `feof(fid)` — true once a read has hit end-of-file.

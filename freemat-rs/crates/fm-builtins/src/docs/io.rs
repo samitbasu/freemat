@@ -277,7 +277,7 @@ end of file, and somewhat counter-intuitively, the answer is `false`.
 We then attempt to read past the end of the file, which causes an
 error.  An `feof` test now returns the expected value of `true`.
 
-```fm
+```fm-exec
 fp = fopen('test.dat','rb');
 x = fread(fp,[512,inf],'float');
 feof(fp)
@@ -745,7 +745,7 @@ The offset can be positive or negative.
 The first example reads a file and then ``rewinds'' the file pointer by seeking to the beginning.
 The next example seeks forward by 2048 bytes from the files current position, and then reads a line of 512 floats.
 
-```fm
+```fm-exec
 % First we create the file
 fp = fopen('test.dat','wb');
 fwrite(fp,float(rand(4096,1)));
@@ -791,7 +791,7 @@ Here is an example of using `ftell` to determine the current file
 position.  We read 512 4-byte floats, which results in the file
 pointer being at position 512*4 = 2048.
 
-```fm
+```fm-exec
 fp = fopen('test.dat','wb');
 fwrite(fp,randn(512,1));
 fclose(fp);

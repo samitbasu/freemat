@@ -22,6 +22,8 @@ pub fn register(table: &mut FunctionTable) {
     table.add_builtin("fwrite", |_i, a, n| fileio::fwrite(a, n));
     table.add_builtin("fread", |_i, a, n| fileio::fread(a, n));
     table.add_builtin("frewind", |_i, a, n| fileio::frewind(a, n));
+    table.add_builtin("fseek", |_i, a, n| fileio::fseek(a, n));
+    table.add_builtin("ftell", |_i, a, n| fileio::ftell(a, n));
     table.add_builtin("feof", |_i, a, n| fileio::feof(a, n));
     table.add_builtin("fgetl", |_i, a, n| fileio::fgetl(a, n));
     table.add_builtin("fgets", |_i, a, n| fileio::fgets(a, n));
