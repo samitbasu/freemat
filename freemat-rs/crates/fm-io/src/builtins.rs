@@ -28,6 +28,10 @@ pub fn register(table: &mut FunctionTable) {
     table.add_builtin("fgetl", |_i, a, n| fileio::fgetl(a, n));
     table.add_builtin("fgets", |_i, a, n| fileio::fgets(a, n));
     table.add_builtin("fgetline", |_i, a, n| fileio::fgetl(a, n));
+    table.add_builtin("fflush", |_i, a, n| fileio::fflush(a, n));
+    table.add_builtin("getline", |_i, a, _n| fileio::getline(a));
+    table.add_builtin("rawread", |_i, a, n| fileio::rawread(a, n));
+    table.add_builtin("rawwrite", |_i, a, n| fileio::rawwrite(a, n));
     table.add_builtin("fprintf", b_fprintf);
     table.add_builtin("fscanf", b_fscanf);
     table.add_builtin("sscanf", b_sscanf);

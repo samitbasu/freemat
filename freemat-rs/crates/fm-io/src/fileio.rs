@@ -512,6 +512,100 @@ fn strip_cr(s: &str) -> String {
     s.strip_suffix('\r').unwrap_or(s).to_string()
 }
 
+/// `fflush(fid)` — flush any buffered output on the handle. FreeMat returns
+/// nothing; we mirror that (and treat stdout/stderr/unknown handles as a no-op
+/// success rather than erroring).
+pub fn fflush(args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.is_empty() {
+        return ferr("fflush requires an argument, the file handle.");
+    }
+    let fid = fid_of(args, 0, "fflush")?;
+    FILES.with(|f| -> Flow<()> {
+        if let Some(of) = f.borrow_mut().get_mut(&fid) {
+            of.file
+                .flush()
+                .map_err(|e| Signal::Error(InterpError::msg(format!("fflush: {e}"))))?;
+        }
+        Ok(())
+    })?;
+    Ok(vec![])
+}
+
+/// `getline(prompt)` — read one line of input from the user.
+///
+/// FreeMat's `getline` reads from stdin after printing a prompt. Headlessly the
+/// stdin path is not exercisable, so we also accept a numeric file handle
+/// (`getline(fid)`) and read a line from that open file instead (the form used
+/// in tests). The trailing newline is stripped; at EOF an empty string is
+/// returned.
+pub fn getline(args: &[Array]) -> Flow<Vec<Array>> {
+    // Numeric argument → treat as a file handle and read a line from it.
+    if let Some(v) = args.first().and_then(Array::as_f64) {
+        let fid = v as i32;
+        let (line, _found) = read_line(fid)?;
+        return Ok(vec![Array::char_string(&strip_cr(
+            &line.unwrap_or_default(),
+        ))]);
+    }
+    // String (or absent) argument → interactive stdin prompt path.
+    let prompt = args.first().map(str_of).unwrap_or_default();
+    if !prompt.is_empty() {
+        print!("{prompt}");
+        std::io::stdout().flush().ok();
+    }
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line).ok();
+    let line = line.strip_suffix('\n').unwrap_or(&line);
+    Ok(vec![Array::char_string(&strip_cr(line))])
+}
+
+/// `rawread(fname, size, precision [, byteorder])` — open `fname` for binary
+/// reading, `fread` `size` elements of `precision`, then close. Mirrors
+/// FreeMat's `toolbox/io/rawread.m`.
+pub fn rawread(args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
+    if args.len() < 3 {
+        return ferr("rawread requires a filename, size, and precision");
+    }
+    let mode = Array::char_string("rb");
+    let opened = fopen(&[args[0].clone(), mode], 1)?;
+    let fid = opened.first().and_then(Array::as_f64).unwrap_or(-1.0);
+    if fid < 0.0 {
+        return ferr(format!(
+            "Unable to read file {} in function rawread",
+            str_of(&args[0])
+        ));
+    }
+    let fid_arr = Array::double(fid);
+    let read_args = [fid_arr.clone(), args[1].clone(), args[2].clone()];
+    let result = fread(&read_args, nargout);
+    fclose(std::slice::from_ref(&fid_arr), 1).ok();
+    result
+}
+
+/// `rawwrite(fname, x [, byteorder])` — open `fname` for binary writing,
+/// `fwrite` `x`, then close. Mirrors FreeMat's `toolbox/io/rawwrite.m`
+/// (returns nothing).
+pub fn rawwrite(args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    if args.len() < 2 {
+        return ferr("rawwrite requires a filename and data");
+    }
+    let mode = Array::char_string("wb");
+    let opened = fopen(&[args[0].clone(), mode], 1)?;
+    let fid = opened.first().and_then(Array::as_f64).unwrap_or(-1.0);
+    if fid < 0.0 {
+        return ferr(format!(
+            "Unable to write file {} in function rawwrite",
+            str_of(&args[0])
+        ));
+    }
+    let fid_arr = Array::double(fid);
+    let write_args = [fid_arr.clone(), args[1].clone()];
+    let result = fwrite(&write_args, 1);
+    fclose(std::slice::from_ref(&fid_arr), 1).ok();
+    result?;
+    Ok(vec![])
+}
+
 /// `fprintf` writing to a file id (the interpreter prefixes the formatted
 /// string). When `fid` is 1/2 or omitted the output is returned to the caller to
 /// emit on the console.

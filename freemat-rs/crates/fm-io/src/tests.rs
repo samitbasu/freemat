@@ -611,4 +611,99 @@ mod fs_builtins {
         // Defensive cleanup in case any assertion above left the tree behind.
         let _ = std::fs::remove_dir_all(&root);
     }
+
+    /// `rawwrite`/`fflush`/`rawread` round-trip: write int16 values to a temp
+    /// file, read them back, and confirm equality.
+    #[test]
+    fn rawwrite_fflush_rawread_roundtrip() {
+        let mut i = interp();
+        let path = unique_tmp().with_extension("raw");
+        let path_str = path.to_string_lossy().into_owned();
+
+        // rawwrite(fname, x) — write a few int16 values.
+        let data = fm_interp::value::build_real(
+            fm_core::DataClass::Int16,
+            &[1, 4],
+            vec![10.0, -20.0, 300.0, -4000.0],
+        );
+        i.call_function(
+            "rawwrite",
+            &[Array::char_string(&path_str), data],
+            0,
+            "",
+            Span::empty(0),
+        )
+        .expect("rawwrite ok");
+        assert!(path.is_file());
+
+        // rawread(fname, size, precision) — read them back as int16.
+        let out = i
+            .call_function(
+                "rawread",
+                &[
+                    Array::char_string(&path_str),
+                    Array::double_matrix(&[1, 2], vec![4.0, 1.0]),
+                    Array::char_string("int16"),
+                ],
+                1,
+                "",
+                Span::empty(0),
+            )
+            .expect("rawread ok");
+        assert_eq!(out[0].class_name(), "int16");
+        assert_eq!(
+            fm_interp::value::to_f64_vec(&out[0]),
+            vec![10.0, -20.0, 300.0, -4000.0]
+        );
+
+        // fflush on a write handle must succeed cleanly (returns nothing).
+        let opened = i
+            .call_function(
+                "fopen",
+                &[Array::char_string(&path_str), Array::char_string("w")],
+                1,
+                "",
+                Span::empty(0),
+            )
+            .expect("fopen ok");
+        let fid = opened[0].clone();
+        let flushed = i
+            .call_function("fflush", std::slice::from_ref(&fid), 0, "", Span::empty(0))
+            .expect("fflush ok");
+        assert!(flushed.is_empty());
+        i.call_function("fclose", &[fid], 0, "", Span::empty(0))
+            .expect("fclose ok");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `getline(fid)` reads the first line of a multi-line file (not the
+    /// interactive stdin/prompt path).
+    #[test]
+    fn getline_from_file_handle() {
+        let mut i = interp();
+        let path = unique_tmp().with_extension("txt");
+        let path_str = path.to_string_lossy().into_owned();
+        std::fs::write(&path, b"first line\nsecond line\n").expect("write txt");
+
+        let opened = i
+            .call_function(
+                "fopen",
+                &[Array::char_string(&path_str), Array::char_string("r")],
+                1,
+                "",
+                Span::empty(0),
+            )
+            .expect("fopen ok");
+        let fid = opened[0].clone();
+
+        let out = i
+            .call_function("getline", std::slice::from_ref(&fid), 1, "", Span::empty(0))
+            .expect("getline ok");
+        assert_eq!(out[0].as_string().as_deref(), Some("first line"));
+
+        i.call_function("fclose", &[fid], 0, "", Span::empty(0))
+            .expect("fclose ok");
+        let _ = std::fs::remove_file(&path);
+    }
 }
