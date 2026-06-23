@@ -70,12 +70,37 @@
       }
 
       function surfaceToTrace(s) {
-        return {
+        const t = {
           type: "surface", z: s.z,
           x: (s.xmat && s.xmat.length) ? s.xmat : (s.x && s.x.length ? s.x : undefined),
           y: (s.ymat && s.ymat.length) ? s.ymat : (s.y && s.y.length ? s.y : undefined),
           colorscale: colorScale(s.colormap),
         };
+        // surfl: shade with a directional light source.
+        if (s.lighting) {
+          t.lighting = { ambient: 0.5, diffuse: 0.8, specular: 0.3, roughness: 0.5 };
+          t.lightposition = { x: 100, y: 200, z: 1000 };
+        }
+        // surfc / meshc: project a filled contour onto the z-floor.
+        if (s.floor_contour) {
+          t.contours = Object.assign(t.contours || {}, {
+            z: { show: true, usecolormap: true, project: { z: true } },
+          });
+        }
+        // mesh / meshc: hide the filled surface, show the grid lines both ways.
+        if (s.wireframe) {
+          t.hidesurface = true;
+          t.contours = Object.assign(t.contours || {}, {
+            x: { show: true }, y: { show: true },
+          });
+        }
+        // waterfall: hide the surface, draw only the constant-y row curtains.
+        if (s.waterfall) {
+          t.hidesurface = true;
+          t.contours = Object.assign(t.contours || {}, { y: { show: true } });
+          if (t.contours.x) t.contours.x = { show: false };
+        }
+        return t;
       }
 
       function imageToTrace(s, showscale) {

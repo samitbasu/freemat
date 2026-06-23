@@ -399,9 +399,19 @@ pub struct SurfaceSeries {
     /// Colormap name (Plotly colorscale, e.g. `Viridis`, `Jet`).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub colormap: String,
-    /// `true` = wireframe (`mesh`), `false` = filled (`surf`).
+    /// `true` = wireframe (`mesh`/`meshc`), `false` = filled (`surf`/`surfc`).
     #[serde(default, skip_serializing_if = "is_false")]
     pub wireframe: bool,
+    /// `true` = shade the surface with a directional light source (`surfl`).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub lighting: bool,
+    /// `true` = project a filled contour onto the z-floor beneath the surface
+    /// (`surfc`/`meshc`).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub floor_contour: bool,
+    /// `true` = draw only the constant-y row "curtains" (`waterfall`).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub waterfall: bool,
 }
 
 /// A 2-D contour plot: a Z grid, optional x/y vectors, optional explicit levels.

@@ -89,9 +89,10 @@ class machinery, and toolbox-internal construction helpers.
   - Toolbox-internal construction helpers (not needed now that plotting +
     property model are native): `colorset`, `completeprops`, `hrawplot`,
     `htextbitmap`, `markerset`, `matchit`, `parseit`, `stcmp`, `styleset`.
-  > The not-yet-started 3-D plot types (`surfl`/`surfc`/`meshc`/`waterfall`/
-  > `sphere`/`cylinder`/`ellipsoid`) have no FreeMat directive name and aren't
-  > scored here.
+  > The MATLAB-standard 3-D plot types `surfl`/`surfc`/`meshc`/`waterfall`/
+  > `sphere`/`cylinder`/`ellipsoid` are now **implemented** (Plotly-rendered;
+  > the geometry generators return `[X,Y,Z]` grids). They have no FreeMat
+  > directive name, so they aren't scored in the counts above.
 - **Interactive / audio device (3)** — `input` (interactive stdin), `wavplay`,
   `wavrecord` (need an audio device). `wavread`/`wavwrite` ARE implemented.
 - **Heavy dependency — network / XML / HTML (3)** — `urlwrite`, `xmlread`,

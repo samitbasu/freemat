@@ -2705,3 +2705,160 @@ fn is2dview_reflects_view_state() {
     i.run("view(3); b = is2dview(gca);").unwrap();
     assert_eq!(var_f64(&i, "b"), 0.0, "after view(3) it is a 3-D view");
 }
+
+// ---- 3-D plot types: surfl / surfc / meshc / waterfall ----------------------
+
+/// Fetch the lone Surface series of figure 1, asserting it is a surface.
+fn only_surface(i: &Interpreter) -> &fm_graphics::SurfaceSeries {
+    let ax = &i.graphics.scene.figure(1).unwrap().axes[0];
+    assert_eq!(ax.series.len(), 1, "expected exactly one series");
+    let fm_graphics::Series::Surface(s) = &ax.series[0] else {
+        panic!("expected a surface series");
+    };
+    s
+}
+
+#[test]
+fn surf_with_matrix_xy_keeps_parametric_grids() {
+    // surf(X,Y,Z) with meshgrid matrices must carry full 2-D coordinate grids,
+    // not flatten X/Y to 1-D axis vectors (which collapses the surface).
+    let mut i = interp();
+    i.run("[x, y] = meshgrid(1:4, 1:3); z = x + y; surf(x, y, z);")
+        .unwrap();
+    let s = only_surface(&i);
+    assert_eq!(s.xmat.len(), 3, "xmat keeps its 3 rows");
+    assert_eq!(s.xmat[0].len(), 4, "xmat keeps its 4 cols");
+    assert_eq!(s.ymat.len(), 3);
+    assert!(s.x.is_empty() && s.y.is_empty(), "no 1-D axis vectors");
+}
+
+#[test]
+fn surf_with_vector_xy_uses_axis_vectors() {
+    let mut i = interp();
+    i.run("surf(1:4, 1:3, zeros(3,4));").unwrap();
+    let s = only_surface(&i);
+    assert_eq!(s.x.len(), 4);
+    assert_eq!(s.y.len(), 3);
+    assert!(s.xmat.is_empty() && s.ymat.is_empty());
+}
+
+#[test]
+fn surfl_sets_lighting_flag() {
+    let mut i = interp();
+    i.run("surfl(peaks(10));").unwrap();
+    let s = only_surface(&i);
+    assert!(s.lighting, "surfl should request lighting");
+    assert!(!s.wireframe && !s.floor_contour && !s.waterfall);
+}
+
+#[test]
+fn surfc_sets_floor_contour() {
+    let mut i = interp();
+    i.run("surfc(peaks(10));").unwrap();
+    let s = only_surface(&i);
+    assert!(s.floor_contour, "surfc should project a floor contour");
+    assert!(!s.wireframe, "surfc is a filled surface");
+}
+
+#[test]
+fn meshc_is_wireframe_with_floor_contour() {
+    let mut i = interp();
+    i.run("meshc(peaks(10));").unwrap();
+    let s = only_surface(&i);
+    assert!(s.wireframe && s.floor_contour);
+}
+
+#[test]
+fn waterfall_is_wireframe_curtains() {
+    let mut i = interp();
+    i.run("waterfall(peaks(10));").unwrap();
+    let s = only_surface(&i);
+    assert!(s.wireframe && s.waterfall);
+}
+
+// ---- parametric geometry: sphere / cylinder / ellipsoid ---------------------
+
+#[test]
+fn sphere_returns_unit_grids() {
+    let mut i = interp();
+    i.run("[x, y, z] = sphere(8);").unwrap();
+    let x = i.context.lookup("x").unwrap();
+    assert_eq!(x.dims(), vec![9, 9], "sphere(n) grids are (n+1)x(n+1)");
+    let xv = fm_interp::value::to_f64_vec(x);
+    let yv = fm_interp::value::to_f64_vec(i.context.lookup("y").unwrap());
+    let zv = fm_interp::value::to_f64_vec(i.context.lookup("z").unwrap());
+    for k in 0..xv.len() {
+        let r2 = xv[k] * xv[k] + yv[k] * yv[k] + zv[k] * zv[k];
+        assert!(
+            (r2 - 1.0).abs() < 1e-12,
+            "vertex {k} off the unit sphere: {r2}"
+        );
+    }
+}
+
+#[test]
+fn sphere_with_one_output_plots_a_surface() {
+    let mut i = interp();
+    i.run("sphere(10);").unwrap();
+    let s = only_surface(&i);
+    // Parametric: full 2-D coordinate grids, not 1-D axis vectors.
+    assert_eq!(s.xmat.len(), 11);
+    assert_eq!(s.ymat.len(), 11);
+    assert_eq!(s.z.len(), 11);
+    // Gets a default 3-D view.
+    let ax = &i.graphics.scene.figure(1).unwrap().axes[0];
+    assert_eq!(ax.view, Some([-37.5, 30.0]));
+}
+
+#[test]
+fn cylinder_radii_become_rows() {
+    let mut i = interp();
+    i.run("[x, y, z] = cylinder([1 2], 10);").unwrap();
+    let x = i.context.lookup("x").unwrap();
+    assert_eq!(x.dims(), vec![2, 11], "rows = #radii, cols = n+1");
+    let xv = fm_interp::value::to_f64_vec(x);
+    let zv = fm_interp::value::to_f64_vec(i.context.lookup("z").unwrap());
+    // Column-major: element (row, col) is at index col*2 + row.
+    assert!((xv[0] - 1.0).abs() < 1e-12, "row 0 radius 1 at theta=0");
+    assert!((xv[1] - 2.0).abs() < 1e-12, "row 1 radius 2 at theta=0");
+    // z runs 0..1 down the rows, constant across columns.
+    for c in 0..11 {
+        assert!((zv[c * 2]).abs() < 1e-12);
+        assert!((zv[c * 2 + 1] - 1.0).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn cylinder_default_is_unit_two_ring() {
+    let mut i = interp();
+    i.run("[x, y, z] = cylinder;").unwrap();
+    assert_eq!(i.context.lookup("x").unwrap().dims(), vec![2, 21]);
+}
+
+#[test]
+fn ellipsoid_scales_and_centers() {
+    let mut i = interp();
+    i.run("[x, y, z] = ellipsoid(1, 2, 3, 2, 3, 4, 8);")
+        .unwrap();
+    let span = |name: &str| {
+        let v = fm_interp::value::to_f64_vec(i.context.lookup(name).unwrap());
+        let lo = v.iter().cloned().fold(f64::INFINITY, f64::min);
+        let hi = v.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        (lo, hi)
+    };
+    let (xlo, xhi) = span("x");
+    let (ylo, yhi) = span("y");
+    let (zlo, zhi) = span("z");
+    assert!(
+        (xlo - (-1.0)).abs() < 1e-9 && (xhi - 3.0).abs() < 1e-9,
+        "x in [xc-xr, xc+xr]"
+    );
+    assert!(
+        (ylo - (-1.0)).abs() < 1e-9 && (yhi - 5.0).abs() < 1e-9,
+        "y in [yc-yr, yc+yr]"
+    );
+    assert!(
+        (zlo - (-1.0)).abs() < 1e-9 && (zhi - 7.0).abs() < 1e-9,
+        "z in [zc-zr, zc+zr]"
+    );
+}

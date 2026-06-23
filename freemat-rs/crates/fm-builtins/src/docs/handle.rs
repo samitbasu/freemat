@@ -2778,6 +2778,197 @@ view(3)
 }
 
 fm_doc::register_doc! {
+    name: "surfl",
+    aliases: [],
+    section: "handle",
+    summary: "Lit Surface Plot Function",
+    body: r#"
+## Usage
+Draws a surface like `surf`, but shaded by a directional light
+source so the surface relief is easier to read.  The calling
+syntax is identical to `surf`
+
+```text
+  h = surfl(X,Y,Z)
+  h = surfl(Z)
+```
+
+## Example
+A lit view of the `peaks` surface
+
+```fm-exec:figure
+surfl(peaks);
+view(3)
+```
+"#,
+}
+
+fm_doc::register_doc! {
+    name: "surfc",
+    aliases: [],
+    section: "handle",
+    summary: "Surface Plot With Contour Function",
+    body: r#"
+## Usage
+Draws a filled surface like `surf` together with a contour plot
+projected onto the floor of the axes.  The calling syntax matches
+`surf`
+
+```text
+  h = surfc(X,Y,Z)
+  h = surfc(Z)
+```
+
+## Example
+The `peaks` surface with its contour beneath it
+
+```fm-exec:figure
+surfc(peaks);
+view(3)
+```
+"#,
+}
+
+fm_doc::register_doc! {
+    name: "meshc",
+    aliases: [],
+    section: "handle",
+    summary: "Mesh Plot With Contour Function",
+    body: r#"
+## Usage
+Draws a wireframe mesh like `mesh` together with a contour plot
+projected onto the floor of the axes.  The calling syntax matches
+`mesh`
+
+```text
+  h = meshc(X,Y,Z)
+  h = meshc(Z)
+```
+
+## Example
+A `peaks` mesh with its contour beneath it
+
+```fm-exec:figure
+meshc(peaks);
+view(3)
+```
+"#,
+}
+
+fm_doc::register_doc! {
+    name: "waterfall",
+    aliases: [],
+    section: "handle",
+    summary: "Waterfall Plot Function",
+    body: r#"
+## Usage
+Draws a surface as a sequence of constant-`y` row "curtains" (the
+mesh lines that run along `x`), giving a waterfall appearance.  The
+calling syntax matches `mesh`
+
+```text
+  h = waterfall(X,Y,Z)
+  h = waterfall(Z)
+```
+
+## Example
+A waterfall view of the `peaks` surface
+
+```fm-exec:figure
+waterfall(peaks);
+view(3)
+```
+"#,
+}
+
+fm_doc::register_doc! {
+    name: "sphere",
+    aliases: [],
+    section: "handle",
+    summary: "Generate Sphere Coordinates",
+    body: r#"
+## Usage
+Returns the coordinates of a unit sphere as three `(n+1) x (n+1)`
+matrices, suitable for use with `surf` or `mesh`
+
+```text
+  [X,Y,Z] = sphere(n)
+  [X,Y,Z] = sphere
+```
+where `n` defaults to `20`.  Called with no output arguments,
+`sphere` draws the sphere directly.
+
+## Example
+The unit sphere
+
+```fm-exec:figure
+[x,y,z] = sphere(24);
+surf(x,y,z);
+axis equal
+```
+"#,
+}
+
+fm_doc::register_doc! {
+    name: "cylinder",
+    aliases: [],
+    section: "handle",
+    summary: "Generate Cylinder Coordinates",
+    body: r#"
+## Usage
+Returns the coordinates of a cylinder of revolution as three
+matrices, suitable for use with `surf` or `mesh`
+
+```text
+  [X,Y,Z] = cylinder(R,n)
+  [X,Y,Z] = cylinder(R)
+  [X,Y,Z] = cylinder
+```
+`R` is the vector of profile radii along the axis (default `[1 1]`,
+a straight unit cylinder) and `n` is the number of points around
+the circumference (default `20`).  Called with no output arguments,
+`cylinder` draws the surface directly.
+
+## Example
+A profile that pinches in the middle
+
+```fm-exec:figure
+[x,y,z] = cylinder([1 0.5 1], 30);
+surf(x,y,z)
+```
+"#,
+}
+
+fm_doc::register_doc! {
+    name: "ellipsoid",
+    aliases: [],
+    section: "handle",
+    summary: "Generate Ellipsoid Coordinates",
+    body: r#"
+## Usage
+Returns the coordinates of an ellipsoid centered at
+`(XC,YC,ZC)` with semi-axis lengths `XR,YR,ZR` as three
+`(n+1) x (n+1)` matrices, suitable for use with `surf` or `mesh`
+
+```text
+  [X,Y,Z] = ellipsoid(XC,YC,ZC,XR,YR,ZR,n)
+  [X,Y,Z] = ellipsoid(XC,YC,ZC,XR,YR,ZR)
+```
+where `n` defaults to `20`.  Called with no output arguments,
+`ellipsoid` draws the surface directly.
+
+## Example
+An ellipsoid with distinct semi-axes
+
+```fm-exec:figure
+[x,y,z] = ellipsoid(0,0,0,2,3,4,24);
+surf(x,y,z);
+axis equal
+```
+"#,
+}
+
+fm_doc::register_doc! {
     name: "surfaceproperties",
     aliases: [],
     section: "handle",

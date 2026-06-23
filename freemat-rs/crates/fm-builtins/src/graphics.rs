@@ -63,6 +63,13 @@ pub(crate) fn register(table: &mut FunctionTable) {
     table.add_builtin("figlower", b_figlower);
     table.add_builtin("surf", |i, a, _n| surface(i, a, false));
     table.add_builtin("mesh", |i, a, _n| surface(i, a, true));
+    table.add_builtin("surfl", b_surfl);
+    table.add_builtin("surfc", b_surfc);
+    table.add_builtin("meshc", b_meshc);
+    table.add_builtin("waterfall", b_waterfall);
+    table.add_builtin("sphere", b_sphere);
+    table.add_builtin("cylinder", b_cylinder);
+    table.add_builtin("ellipsoid", b_ellipsoid);
     table.add_builtin("image", b_image);
     table.add_builtin("imagesc", b_image);
     table.add_builtin("bar", |i, a, _n| bar(i, a, false));
@@ -2363,16 +2370,87 @@ fn array_to_grid(a: &Array) -> Vec<Vec<f64>> {
     grid
 }
 
-fn surface(i: &mut Interpreter, args: &[Array], wireframe: bool) -> Flow<Vec<Array>> {
+/// A 2-D `[row][col]` numeric grid (a surface's z values or coordinate matrix).
+type Grid = Vec<Vec<f64>>;
+/// A triple of coordinate grids `(X, Y, Z)` as produced by the parametric
+/// geometry generators (`sphere`/`cylinder`/`ellipsoid`).
+type Grid3 = (Grid, Grid, Grid);
+
+/// Optional rendering flags shared by the `surf` family. The base geometry is
+/// always a [`SurfaceSeries`]; these select the variant (`surfl`/`surfc`/
+/// `meshc`/`waterfall`) without introducing new series kinds.
+#[derive(Default, Clone, Copy)]
+struct SurfFlags {
+    wireframe: bool,
+    lighting: bool,
+    floor_contour: bool,
+    waterfall: bool,
+}
+
+/// Parsed `surf`-style coordinates: the `z` grid plus *either* 1-D axis vectors
+/// (`x`/`y`) when the caller passed vectors, *or* full 2-D coordinate grids
+/// (`xmat`/`ymat`) when the caller passed meshgrid matrices. The unused form is
+/// left empty.
+#[derive(Default)]
+struct SurfData {
+    z: Grid,
+    x: Vec<f64>,
+    y: Vec<f64>,
+    xmat: Grid,
+    ymat: Grid,
+}
+
+/// Parse `surf`-style positional args. Accepts `f(Z)` or `f(X, Y, Z)`. When `X`
+/// and `Y` are full matrices (the MATLAB `meshgrid` idiom, e.g. `surf(x,y,z)`
+/// after `[x,y,z]=sphere`), they are carried as 2-D coordinate grids so the
+/// surface keeps its parametric shape; 1-D `X`/`Y` stay axis vectors.
+fn parse_surf_args(args: &[Array]) -> Flow<SurfData> {
     if args.is_empty() {
         return err("surf/mesh: expected a Z matrix");
     }
-    let (z_arg, x, y) = if args.len() >= 3 {
-        (&args[2], to_f64_vec(&args[0]), to_f64_vec(&args[1]))
-    } else {
-        (&args[0], Vec::new(), Vec::new())
+    if args.len() < 3 {
+        let (z, _r, _c) = grid_of(&args[0]);
+        return Ok(SurfData {
+            z,
+            ..Default::default()
+        });
+    }
+    let (z, _r, _c) = grid_of(&args[2]);
+    // A "matrix" coordinate is one with more than one row *and* column.
+    let is_matrix = |a: &Array| {
+        let d = a.dims();
+        d.len() >= 2 && d[0] > 1 && d[1] > 1
     };
-    let (z, _r, _c) = grid_of(z_arg);
+    if is_matrix(&args[0]) || is_matrix(&args[1]) {
+        Ok(SurfData {
+            z,
+            xmat: array_to_grid(&args[0]),
+            ymat: array_to_grid(&args[1]),
+            ..Default::default()
+        })
+    } else {
+        Ok(SurfData {
+            z,
+            x: to_f64_vec(&args[0]),
+            y: to_f64_vec(&args[1]),
+            ..Default::default()
+        })
+    }
+}
+
+/// Push a [`SurfaceSeries`] into the current axes and return its handle. `x`/`y`
+/// are 1-D axis vectors; `xmat`/`ymat` are full 2-D coordinate grids for
+/// parametric surfaces (sphere/cylinder/ellipsoid/tubeplot) — pass empty vectors
+/// for whichever form does not apply.
+fn push_surface(
+    i: &mut Interpreter,
+    z: Vec<Vec<f64>>,
+    x: Vec<f64>,
+    y: Vec<f64>,
+    xmat: Vec<Vec<f64>>,
+    ymat: Vec<Vec<f64>>,
+    flags: SurfFlags,
+) -> u64 {
     clear_current_series_unless_hold(i);
     let cmap = current_colormap(i);
     let (fig, axes_idx) = current_axes_loc(i);
@@ -2384,14 +2462,239 @@ fn surface(i: &mut Interpreter, args: &[Array], wireframe: bool) -> Flow<Vec<Arr
             z,
             x,
             y,
-            xmat: Vec::new(),
-            ymat: Vec::new(),
+            xmat,
+            ymat,
             colormap: cmap,
-            wireframe,
+            wireframe: flags.wireframe,
+            lighting: flags.lighting,
+            floor_contour: flags.floor_contour,
+            waterfall: flags.waterfall,
         }));
     let h = i.graphics.register_series(fig, axes_idx, ObjKind::Surface);
     i.graphics.dirty = true;
+    h
+}
+
+/// Push a parsed [`SurfData`] as a surface series with the given flags.
+fn push_surf_data(i: &mut Interpreter, d: SurfData, flags: SurfFlags) -> Flow<Vec<Array>> {
+    let h = push_surface(i, d.z, d.x, d.y, d.xmat, d.ymat, flags);
     Ok(vec![handle(h)])
+}
+
+fn surface(i: &mut Interpreter, args: &[Array], wireframe: bool) -> Flow<Vec<Array>> {
+    let d = parse_surf_args(args)?;
+    push_surf_data(
+        i,
+        d,
+        SurfFlags {
+            wireframe,
+            ..Default::default()
+        },
+    )
+}
+
+/// `surfl(...)` — a filled surface lit by a directional light source.
+fn b_surfl(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let d = parse_surf_args(args)?;
+    push_surf_data(
+        i,
+        d,
+        SurfFlags {
+            lighting: true,
+            ..Default::default()
+        },
+    )
+}
+
+/// `surfc(...)` — a filled surface with a contour projected onto the z-floor.
+fn b_surfc(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let d = parse_surf_args(args)?;
+    push_surf_data(
+        i,
+        d,
+        SurfFlags {
+            floor_contour: true,
+            ..Default::default()
+        },
+    )
+}
+
+/// `meshc(...)` — a wireframe mesh with a contour projected onto the z-floor.
+fn b_meshc(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let d = parse_surf_args(args)?;
+    push_surf_data(
+        i,
+        d,
+        SurfFlags {
+            wireframe: true,
+            floor_contour: true,
+            ..Default::default()
+        },
+    )
+}
+
+/// `waterfall(...)` — a mesh drawn as constant-y row "curtains" only.
+fn b_waterfall(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
+    let d = parse_surf_args(args)?;
+    push_surf_data(
+        i,
+        d,
+        SurfFlags {
+            wireframe: true,
+            waterfall: true,
+            ..Default::default()
+        },
+    )
+}
+
+// ---- parametric geometry generators (sphere / cylinder / ellipsoid) ---------
+
+/// Read an optional grid-resolution argument as a positive integer.
+fn arg_usize(a: Option<&Array>, default: usize) -> usize {
+    a.and_then(Array::as_f64)
+        .map(|v| v.round().max(1.0) as usize)
+        .unwrap_or(default)
+}
+
+/// Unit-sphere coordinate grids `[X, Y, Z]`, each `(n+1)×(n+1)` (MATLAB
+/// `sphere`): theta sweeps `[-π, π]` across columns, phi sweeps `[-π/2, π/2]`
+/// down rows. Poles are pinned exactly to avoid round-off "caps".
+fn sphere_grids(n: usize) -> Grid3 {
+    use std::f64::consts::PI;
+    let n = n.max(1);
+    let np1 = n + 1;
+    let theta: Vec<f64> = (0..np1)
+        .map(|j| (-(n as f64) + 2.0 * j as f64) / n as f64 * PI)
+        .collect();
+    let phi: Vec<f64> = (0..np1)
+        .map(|k| (-(n as f64) + 2.0 * k as f64) / n as f64 * (PI / 2.0))
+        .collect();
+    let mut cosphi: Vec<f64> = phi.iter().map(|p| p.cos()).collect();
+    cosphi[0] = 0.0;
+    cosphi[n] = 0.0;
+    let mut sintheta: Vec<f64> = theta.iter().map(|t| t.sin()).collect();
+    sintheta[0] = 0.0;
+    sintheta[n] = 0.0;
+    let mut x = vec![vec![0.0; np1]; np1];
+    let mut y = vec![vec![0.0; np1]; np1];
+    let mut z = vec![vec![0.0; np1]; np1];
+    for ii in 0..np1 {
+        let zi = phi[ii].sin();
+        for jj in 0..np1 {
+            x[ii][jj] = cosphi[ii] * theta[jj].cos();
+            y[ii][jj] = cosphi[ii] * sintheta[jj];
+            z[ii][jj] = zi;
+        }
+    }
+    (x, y, z)
+}
+
+/// Cylinder coordinate grids `[X, Y, Z]` (MATLAB `cylinder`): the profile radii
+/// `r` (≥2, padded if scalar) become rows, theta sweeps `[0, 2π]` across the
+/// `n+1` columns, and z runs `0…1` evenly down the rows.
+fn cylinder_grids(r: &[f64], n: usize) -> Grid3 {
+    use std::f64::consts::TAU;
+    let n = n.max(1);
+    let np1 = n + 1;
+    let r: Vec<f64> = if r.len() < 2 {
+        let v = r.first().copied().unwrap_or(1.0);
+        vec![v, v]
+    } else {
+        r.to_vec()
+    };
+    let m = r.len();
+    let theta: Vec<f64> = (0..np1).map(|j| j as f64 / n as f64 * TAU).collect();
+    let mut x = vec![vec![0.0; np1]; m];
+    let mut y = vec![vec![0.0; np1]; m];
+    let mut z = vec![vec![0.0; np1]; m];
+    for ii in 0..m {
+        let zi = if m == 1 {
+            0.0
+        } else {
+            ii as f64 / (m - 1) as f64
+        };
+        for jj in 0..np1 {
+            x[ii][jj] = r[ii] * theta[jj].cos();
+            y[ii][jj] = r[ii] * theta[jj].sin();
+            z[ii][jj] = zi;
+        }
+    }
+    (x, y, z)
+}
+
+/// Common tail for the geometry generators: with ≥3 outputs return the `[X,Y,Z]`
+/// grids; otherwise draw the parametric surface (with a default 3-D view) and
+/// return its handle.
+fn geometry_result(
+    i: &mut Interpreter,
+    nargout: usize,
+    x: Vec<Vec<f64>>,
+    y: Vec<Vec<f64>>,
+    z: Vec<Vec<f64>>,
+) -> Flow<Vec<Array>> {
+    if nargout >= 3 {
+        return Ok(vec![
+            grid_to_array(&x),
+            grid_to_array(&y),
+            grid_to_array(&z),
+        ]);
+    }
+    let h = push_surface(i, z, Vec::new(), Vec::new(), x, y, SurfFlags::default());
+    let ax = i.graphics.current_figure_mut().current_axes_mut();
+    if ax.view.is_none() {
+        ax.view = Some([-37.5, 30.0]);
+    }
+    Ok(vec![handle(h)])
+}
+
+/// `sphere` / `sphere(n)` — with ≥3 outputs returns the `[X,Y,Z]` grids (each
+/// `(n+1)×(n+1)`, default `n = 20`); otherwise draws the unit sphere.
+fn b_sphere(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
+    let n = arg_usize(args.first(), 20);
+    let (x, y, z) = sphere_grids(n);
+    geometry_result(i, nargout, x, y, z)
+}
+
+/// `cylinder` / `cylinder(r)` / `cylinder(r, n)` — with ≥3 outputs returns the
+/// `[X,Y,Z]` grids; otherwise draws the cylinder. `r` is the profile-radius
+/// vector (default `[1 1]`), `n` the angular resolution (default 20).
+fn b_cylinder(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
+    let r: Vec<f64> = match args.first() {
+        Some(a) => to_f64_vec(a),
+        None => Vec::new(),
+    };
+    let n = arg_usize(args.get(1), 20);
+    let (x, y, z) = cylinder_grids(&r, n);
+    geometry_result(i, nargout, x, y, z)
+}
+
+/// `ellipsoid(xc,yc,zc,xr,yr,zr[,n])` — a sphere grid scaled by the radii and
+/// shifted to the center. With ≥3 outputs returns `[X,Y,Z]`; otherwise draws it.
+fn b_ellipsoid(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
+    if args.len() < 6 {
+        return err("ellipsoid: expected ellipsoid(xc,yc,zc,xr,yr,zr[,n])");
+    }
+    let p = |k: usize| args[k].as_f64().unwrap_or(0.0);
+    let (xc, yc, zc) = (p(0), p(1), p(2));
+    let (xr, yr, zr) = (p(3), p(4), p(5));
+    let n = arg_usize(args.get(6), 20);
+    let (mut x, mut y, mut z) = sphere_grids(n);
+    for row in &mut x {
+        for v in row {
+            *v = *v * xr + xc;
+        }
+    }
+    for row in &mut y {
+        for v in row {
+            *v = *v * yr + yc;
+        }
+    }
+    for row in &mut z {
+        for v in row {
+            *v = *v * zr + zc;
+        }
+    }
+    geometry_result(i, nargout, x, y, z)
 }
 
 fn b_image(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>> {
@@ -3490,6 +3793,7 @@ fn b_surface(i: &mut Interpreter, args: &[Array], _n: usize) -> Flow<Vec<Array>>
             ymat: Vec::new(),
             colormap: cmap,
             wireframe: false,
+            ..Default::default()
         }));
     let h = i.graphics.register_series(fig, axes_idx, ObjKind::Surface);
     // The property-pair form fills the object from the name/value pairs; the
@@ -3731,6 +4035,7 @@ fn b_tubeplot(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<A
         ymat,
         colormap: cmap,
         wireframe: false,
+        ..Default::default()
     }));
     // A tube is inherently 3-D: give it a default 3-D view if none is set yet.
     if ax.view.is_none() {

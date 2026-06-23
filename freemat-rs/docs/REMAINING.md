@@ -60,8 +60,16 @@ See `PROGRESS.md` → "Sparse de-densification". No regressions; cleared `test_s
 - **Still deferred** (not the handle-system itself): GUI widgets (`uicontrol`), interactive
   cursors (`datacursormode`/`datacursormanager`), mouse picking (`point`/`hpoint`), figure-image
   export (`print`/`copy` — needs a headless renderer; the frontend is Plotly), the UDD class
-  machinery (`makehandleclass`/`subsref`), `zplane`, `linkaxes`, and not-yet-started 3-D plot
-  types (`surfl`/`surfc`/`meshc`/`waterfall`/`sphere`/`cylinder`/`ellipsoid`). *Value:* moderate.
+  machinery (`makehandleclass`/`subsref`), `zplane`, `linkaxes`. *Value:* moderate.
+
+**3-D plot types** — ✅ DONE (2026-06-22)
+- `surfl`/`surfc`/`meshc`/`waterfall` are surface variants (lighting / floor-projected contour /
+  wireframe+contour / row "curtains") carried as flags on `SurfaceSeries` and rendered by Plotly
+  (`lighting`/`lightposition`, `contours.z.project`, `hidesurface`+`contours`). `sphere`/`cylinder`/
+  `ellipsoid` are MATLAB-standard parametric coordinate generators: with ≥3 outputs they return the
+  `[X,Y,Z]` grids, otherwise they draw the parametric surface (full `xmat`/`ymat` mesh) with a
+  default 3-D view. (FreeMat's own `sphere`/`cylinder` are GL triangle-soup helpers, not the MATLAB
+  grid form, so these follow MATLAB.) See `crates/fm-builtins/src/graphics.rs` + tests.
 
 **Remaining sparse-numerics polish** (post de-densification):
 - **Factor-returning `lu(sparse)` / `det(sparse)`** still densify — faer's sparse `Lu` is

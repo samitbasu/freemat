@@ -1581,3 +1581,35 @@ eigenproblem `eig(A,B)`. **Conformance 650/677 (96.0%) → 658/677 (97.2%), Δ +
 - FreeMat reference to port later: `Interpreter.cpp` `bpStack`/`processBreakpoints`/`doDebugCycle`/
   `dbup`/`dbdown`; `libCore/Debug.cpp`; observer model in `libXP/Editor.cpp` becomes a Rust
   event trait the terminal and DAP both consume.
+
+### 3-D plot types — done (`surfl`/`surfc`/`meshc`/`waterfall`/`sphere`/`cylinder`/`ellipsoid`)
+- **No conformance delta (672/677 unchanged)** — these names have no FreeMat directive, so they're
+  unscored; this is API-surface/MATLAB-compat work. No regressions; +12 fm-builtins tests.
+- **Surface variants** (`surfl`/`surfc`/`meshc`/`waterfall`) — carried as three new flag fields on
+  `SurfaceSeries` (`lighting`, `floor_contour`, `waterfall`; all `#[serde(default, skip)]` so no
+  captured-scene JSON changed). `graphics.rs` refactor: `parse_surf_args` + `push_surface(flags)`
+  now back `surf`/`mesh` and the four variants. Frontend `surfaceToTrace` maps the flags to Plotly:
+  `lighting`+`lightposition` (surfl), `contours.z.project.z` (surfc/meshc floor contour),
+  `hidesurface`+`contours.{x,y}` (mesh/meshc wireframe), `hidesurface`+`contours.y` (waterfall row
+  curtains).
+- **Geometry generators** (`sphere`/`cylinder`/`ellipsoid`) — MATLAB-standard parametric coordinate
+  grids (FreeMat's own `tools/3d/sphere.m`/`cylinder.m` are GL triangle-soup, *not* the MATLAB
+  `[X,Y,Z]` grid form, so we follow MATLAB). `sphere(n)`→`(n+1)²` grids with poles pinned;
+  `cylinder(r,n)`→ radii-as-rows × `n+1`; `ellipsoid` scales+shifts a sphere grid. nargout dispatch
+  mirrors `tubeplot`/`peaks`: **≥3 outputs return `[X,Y,Z]`**, otherwise draw the parametric surface
+  (full `xmat`/`ymat` mesh — Plotly renders all-2-D x/y/z) with a default `view([-37.5,30])`. (Bare
+  `sphere`/`x=sphere` arrives as nargout 1 ⇒ plots; same interpreter limitation `peaks` documents.)
+- **`surf(X,Y,Z)` meshgrid fix** (found while verifying): `parse_surf_args` used to flatten matrix
+  `X`/`Y` to 1-D axis vectors, collapsing any parametric surface (and the `surf` doc's own
+  `surf(x,y,z,c)` example). Now matrix coordinates (rows>1 ∧ cols>1) route to `xmat`/`ymat` and
+  vectors stay axis vectors (`SurfData`). So `[x,y,z]=sphere; surf(x,y,z)` — the MATLAB idiom — now
+  renders correctly, as does the pre-existing `surf` example.
+- **End-to-end PNG verification** — drove `fm` + headless Chrome through the `print()` websocket
+  round-trip (`Plotly.toImage`) for all six: sphere (round), cylinder `[1 .5 1]` (pinched diabolo),
+  surfc/meshc (floor contour), waterfall (row curtains), surfl (lit). All produce valid PNGs that
+  render the correct geometry.
+- **Help docs** — added `register_doc!` entries for all 7 (in `docs/handle.rs`) with
+  `fm-exec:figure` examples; `cargo xtask docgen` regenerated `fragments.rs` (317 fragments,
+  `--check` green). Help figures are **live Plotly scene JSON** (browser-rendered), not PNGs — the
+  captured scenes carry the right flags (`lighting`/`floor_contour`/`waterfall`). `help sphere` etc.
+  now resolve.
