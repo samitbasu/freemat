@@ -1,0 +1,26 @@
+[package]
+name = "fm-dap"
+description = "FreeMat-rs Debug Adapter Protocol (DAP) server — debug `.m` scripts from any DAP client (VS Code, etc.)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "fm-dap"
+path = "src/main.rs"
+
+[dependencies]
+fm-core = { version = "0.0.0", path = "../fm-core" }
+fm-parser = { version = "0.0.0", path = "../fm-parser" }
+fm-interp = { version = "0.0.0", path = "../fm-interp" }
+fm-builtins = { version = "0.0.0", path = "../fm-builtins" }
+serde_json.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

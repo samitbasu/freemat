@@ -698,6 +698,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fm-dap"
+version = "0.0.0"
+dependencies = [
+ "fm-builtins",
+ "fm-core",
+ "fm-interp",
+ "fm-parser",
+ "serde_json",
+]
+
+[[package]]
 name = "fm-doc"
 version = "0.0.0"
 dependencies = [

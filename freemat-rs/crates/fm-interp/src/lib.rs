@@ -36,6 +36,7 @@
 
 pub mod builtins;
 pub mod context;
+pub mod debug;
 pub mod error;
 pub mod function;
 pub mod graphics;
@@ -47,6 +48,7 @@ pub mod scope;
 pub mod value;
 
 pub use context::Context;
+pub use debug::{DebugControl, DebugHook};
 pub use error::{Flow, InterpError, Signal};
 pub use function::{BuiltinFn, Function, FunctionTable};
 pub use graphics::{GraphicsState, ObjKind, ObjLocation, ObjectRecord};

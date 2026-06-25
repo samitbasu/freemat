@@ -119,6 +119,20 @@ impl Context {
         &mut self.scopes[self.active]
     }
 
+    /// The number of frames on the call stack (alias of [`Self::depth`], read as
+    /// "how many scopes are inspectable" by a debugger).
+    #[must_use]
+    pub fn num_scopes(&self) -> usize {
+        self.scopes.len()
+    }
+
+    /// Borrow scope `idx` (base = 0, top = `num_scopes()-1`) for read-only
+    /// inspection by a debugger. Returns `None` if out of range.
+    #[must_use]
+    pub fn scope_at(&self, idx: usize) -> Option<&Scope> {
+        self.scopes.get(idx)
+    }
+
     /// **Debug seam:** record the span/line of the statement now executing in
     /// the top scope, so a debugger / `dbstack` knows the current location.
     pub fn set_current_span(&mut self, span: Span, line: usize) {

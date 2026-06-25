@@ -21,6 +21,7 @@ use fm_parser::{Span, parse_program};
 use smallvec::SmallVec;
 
 use crate::context::Context;
+use crate::debug::DebugControl;
 use crate::error::{Flow, InterpError, Signal};
 use crate::function::{Function, FunctionTable};
 use crate::graphics::GraphicsState;
@@ -64,6 +65,10 @@ pub struct Interpreter {
     /// The FreeMat search path: an ordered list of directories searched for
     /// `.m` files. Manipulated by `path`/`addpath`/`getpath`/`setpath`.
     pub search_path: Vec<String>,
+    /// The attached debugger (Stage 10), consulted at the statement chokepoint.
+    /// `None` in normal (non-debugged) execution — the hot path then pays only a
+    /// single `Option::is_some` check per statement.
+    debugger: Option<Box<dyn crate::debug::DebugHook>>,
 }
 
 /// A `.m` script file: its parsed statements plus the source they were parsed
@@ -99,6 +104,7 @@ impl Interpreter {
             local_funcs_stack: Vec::new(),
             scripts: std::collections::HashMap::new(),
             search_path: Vec::new(),
+            debugger: None,
         };
         crate::builtins::register_defaults(&mut interp.functions);
         interp
@@ -230,9 +236,37 @@ impl Interpreter {
         // DEBUG SEAM: record the current location in the top scope.
         let line = line_of(src, stmt.span.start);
         self.context.set_current_span(stmt.span, line);
-        // (Stage 10 inserts: self.check_breakpoint(stmt)?; here.)
+        // Stage 10: consult the attached debugger (if any). A `Terminate` from
+        // the hook unwinds the run like a top-level `return`.
+        if self.debug_check(line, src) == Some(DebugControl::Terminate) {
+            return Err(Signal::Return);
+        }
 
         self.exec_statement_inner(stmt, src)
+    }
+
+    /// Consult the attached debugger for the statement about to run at `line`.
+    /// Returns `None` when no debugger is attached (the common, non-debugged
+    /// case). Otherwise the hook is *taken out* of `self` for the duration of
+    /// the call so it can borrow the interpreter (and so any statements it runs
+    /// itself don't recursively re-enter the hook), then restored.
+    fn debug_check(&mut self, line: usize, src: &str) -> Option<DebugControl> {
+        let mut dbg = self.debugger.take()?;
+        let control = dbg.on_statement(self, line, src);
+        self.debugger = Some(dbg);
+        Some(control)
+    }
+
+    // ---- Debugger attachment (Stage 10) ------------------------------------
+
+    /// Attach a debugger hook, consulted at the statement chokepoint.
+    pub fn set_debugger(&mut self, hook: Box<dyn crate::debug::DebugHook>) {
+        self.debugger = Some(hook);
+    }
+
+    /// Detach and return the debugger hook, if one is attached.
+    pub fn clear_debugger(&mut self) -> Option<Box<dyn crate::debug::DebugHook>> {
+        self.debugger.take()
     }
 
     fn exec_statement_inner(&mut self, stmt: &Stmt, src: &str) -> Flow<()> {
