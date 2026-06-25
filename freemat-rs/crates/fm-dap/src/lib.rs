@@ -27,17 +27,18 @@
 //! inside separate function `.m` files are out of scope for this first cut.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::{BufRead, Write};
 use std::rc::Rc;
 
-use fm_core::{Array, FormatMode};
 use fm_interp::Interpreter;
 use fm_interp::debug::{DebugControl, DebugHook};
 use serde_json::{Value, json};
 
+pub mod proto;
 mod wire;
 
+use proto::MAIN_THREAD;
 pub use wire::{read_message, write_message};
 
 /// What the interpreter should do next, as chosen by a `continue`/step request
@@ -73,10 +74,8 @@ pub struct Session {
     mode: RunMode,
     /// `true` once a `terminate`/`disconnect` was requested — unwinds the run.
     terminate: bool,
-    /// `variablesReference` → call-frame index, rebuilt on every stop.
-    var_refs: HashMap<i64, usize>,
-    /// Next `variablesReference` to hand out (DAP needs these to be > 0).
-    next_var_ref: i64,
+    /// Per-stop `variablesReference` allocator (frame map), rebuilt on every stop.
+    frames: proto::Frames,
 }
 
 impl Session {
@@ -92,8 +91,7 @@ impl Session {
             program_path: String::new(),
             mode: RunMode::Continue,
             terminate: false,
-            var_refs: HashMap::new(),
-            next_var_ref: 1,
+            frames: proto::Frames::new(),
         }
     }
 
@@ -187,8 +185,7 @@ impl Session {
     /// Sit at a stop point: announce it, then serve requests until a resume.
     fn stopped_loop(&mut self, interp: &mut Interpreter, reason: &str) -> DebugControl {
         // A new stop invalidates the previous variablesReference handles.
-        self.var_refs.clear();
-        self.next_var_ref = 1000;
+        self.frames.reset();
         self.event(
             "stopped",
             json!({
@@ -247,12 +244,7 @@ impl Session {
     /// like `setBreakpoints`, that may arrive at any time).
     fn handle_inspect(&mut self, interp: &mut Interpreter, request: &Value, command: &str) {
         match command {
-            "threads" => {
-                self.respond(
-                    request,
-                    json!({ "threads": [{ "id": MAIN_THREAD, "name": "main" }] }),
-                );
-            }
+            "threads" => self.respond(request, proto::threads_body()),
             "stackTrace" => self.handle_stack_trace(interp, request),
             "scopes" => self.handle_scopes(request),
             "variables" => self.handle_variables(interp, request),
@@ -273,52 +265,19 @@ impl Session {
 
     /// Build the call stack, innermost frame first (DAP convention).
     fn handle_stack_trace(&mut self, interp: &mut Interpreter, request: &Value) {
-        let trace = interp.context.stack_trace(); // base → top
-        let total = trace.len();
-        let mut frames = Vec::with_capacity(total);
-        // Innermost (top) first → frame id is the scope index, so `scopes`/
-        // `variables` can map a frameId straight back to a scope.
-        for (idx, (name, line)) in trace.iter().enumerate().rev() {
-            let display = if name.is_empty() {
-                "(main)".to_string()
-            } else {
-                name.clone()
-            };
-            frames.push(json!({
-                "id": idx,
-                "name": display,
-                "line": line.unwrap_or(0),
-                "column": 1,
-                "source": { "name": self.program_name(), "path": self.program_path },
-            }));
-        }
-        self.respond(
-            request,
-            json!({ "stackFrames": frames, "totalFrames": total }),
-        );
+        let body = proto::stack_trace_body(interp, &self.program_name(), &self.program_path);
+        self.respond(request, body);
     }
 
-    /// One "Locals" scope per frame. The scope's `variablesReference` is a fresh
-    /// handle that [`Self::handle_variables`] resolves back to the frame index.
+    /// One "Locals" scope per frame, via the shared frame allocator.
     fn handle_scopes(&mut self, request: &Value) {
         let frame_id = request
             .get("arguments")
             .and_then(|a| a.get("frameId"))
             .and_then(Value::as_i64)
             .unwrap_or(0);
-        let var_ref = self.next_var_ref;
-        self.next_var_ref += 1;
-        self.var_refs.insert(var_ref, frame_id as usize);
-        self.respond(
-            request,
-            json!({
-                "scopes": [{
-                    "name": "Locals",
-                    "variablesReference": var_ref,
-                    "expensive": false,
-                }],
-            }),
-        );
+        let body = self.frames.scopes_body(frame_id);
+        self.respond(request, body);
     }
 
     /// List the locals of the frame a `variablesReference` points at.
@@ -328,27 +287,8 @@ impl Session {
             .and_then(|a| a.get("variablesReference"))
             .and_then(Value::as_i64)
             .unwrap_or(0);
-        let Some(&frame_idx) = self.var_refs.get(&var_ref) else {
-            self.respond(request, json!({ "variables": [] }));
-            return;
-        };
-        let mut variables = Vec::new();
-        if let Some(scope) = interp.context.scope_at(frame_idx) {
-            let mut names: Vec<&str> = scope.local_names();
-            names.sort_unstable();
-            for name in names {
-                if let Some(arr) = scope.get_local(name) {
-                    let (value, ty) = summarize(arr);
-                    variables.push(json!({
-                        "name": name,
-                        "value": value,
-                        "type": ty,
-                        "variablesReference": 0,
-                    }));
-                }
-            }
-        }
-        self.respond(request, json!({ "variables": variables }));
+        let body = self.frames.variables_body(interp, var_ref);
+        self.respond(request, body);
     }
 
     /// Evaluate an expression in the current (top) frame.
@@ -358,14 +298,8 @@ impl Session {
             .and_then(|a| a.get("expression"))
             .and_then(Value::as_str)
             .unwrap_or("");
-        match eval_expression(interp, expr) {
-            Ok(arr) => {
-                let (value, ty) = summarize(&arr);
-                self.respond(
-                    request,
-                    json!({ "result": value, "type": ty, "variablesReference": 0 }),
-                );
-            }
+        match proto::evaluate_body(interp, expr) {
+            Ok(body) => self.respond(request, body),
             Err(e) => self.respond_err(request, &e),
         }
     }
@@ -373,21 +307,10 @@ impl Session {
     /// Replace the breakpoint set with the lines from a `setBreakpoints`
     /// request, and confirm each as verified.
     fn handle_set_breakpoints(&mut self, request: &Value) {
-        let empty = vec![];
-        let bps = request
-            .get("arguments")
-            .and_then(|a| a.get("breakpoints"))
-            .and_then(Value::as_array)
-            .unwrap_or(&empty);
-        self.breakpoints.clear();
-        let mut verified = Vec::with_capacity(bps.len());
-        for bp in bps {
-            if let Some(line) = bp.get("line").and_then(Value::as_i64) {
-                self.breakpoints.insert(line as usize);
-                verified.push(json!({ "verified": true, "line": line }));
-            }
-        }
-        self.respond(request, json!({ "breakpoints": verified }));
+        let args = request.get("arguments").cloned().unwrap_or(Value::Null);
+        let lines = proto::breakpoint_lines(&args);
+        self.breakpoints = lines.iter().copied().collect();
+        self.respond(request, proto::verified_breakpoints_body(&lines));
     }
 
     fn program_name(&self) -> String {
@@ -397,9 +320,6 @@ impl Session {
             .unwrap_or_else(|| "program".to_string())
     }
 }
-
-/// The (single) thread id we report — FreeMat-rs runs one interpreter thread.
-const MAIN_THREAD: i64 = 1;
 
 // ---- top-level driver -------------------------------------------------------
 
@@ -556,12 +476,7 @@ fn drain_until_disconnect(session: &Rc<RefCell<Session>>) {
 
 /// The capabilities we advertise in the `initialize` response.
 fn capabilities() -> Value {
-    json!({
-        "supportsConfigurationDoneRequest": true,
-        "supportsEvaluateForHovers": true,
-        "supportsTerminateRequest": true,
-        "supportsSingleThreadExecutionRequests": false,
-    })
+    proto::capabilities()
 }
 
 /// Resolve the program source from `launch` arguments. Supports an inline
@@ -582,64 +497,4 @@ fn load_program(args: &Value) -> Result<(String, String), String> {
         .ok_or_else(|| "launch is missing a `program` path or inline `source`".to_string())?;
     let src = std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?;
     Ok((path.to_string(), src))
-}
-
-// ---- value helpers ----------------------------------------------------------
-
-/// Parse and evaluate `expr` in the interpreter's current top frame, returning a
-/// concise error string on failure.
-fn eval_expression(interp: &mut Interpreter, expr: &str) -> Result<Array, String> {
-    use fm_parser::ast::{Program, StmtKind};
-    let program = fm_parser::parse_program(expr).map_err(|e| e.to_string())?;
-    let stmts = match program {
-        Program::Script(stmts) => stmts,
-        Program::Functions(_) => return Err("cannot evaluate a function definition".to_string()),
-    };
-    let stmt = stmts
-        .first()
-        .ok_or_else(|| "empty expression".to_string())?;
-    match &stmt.kind {
-        // Suppress the seam while evaluating: a watch/hover expression that
-        // calls a function must not trip a breakpoint (which, mid-stop, would
-        // re-enter the hook and double-borrow the session).
-        StmtKind::Expr(e) => interp
-            .eval_suppressed(|i| i.eval(e, expr))
-            .map_err(|sig| format!("{sig:?}")),
-        _ => Err("only expressions can be evaluated".to_string()),
-    }
-}
-
-/// Render an array as a `(value, type)` pair for the variables / evaluate views:
-/// scalars inline, strings quoted, everything else summarized by class + shape.
-fn summarize(arr: &Array) -> (String, String) {
-    let ty = arr.class_name().to_string();
-    if let Some(s) = arr.as_string() {
-        return (format!("'{s}'"), "char".to_string());
-    }
-    if arr.as_cell().is_some() {
-        return (format!("{} cell", dims_str(arr)), ty);
-    }
-    if arr.as_struct().is_some() {
-        return (format!("{} struct", dims_str(arr)), ty);
-    }
-    if arr.numel() == 1 {
-        // Flatten the formatter's (possibly padded/multi-line) scalar output to
-        // a single token, e.g. "   42\n" → "42", "3 + 4i".
-        let flat = arr
-            .format(FormatMode::Short)
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        return (flat, ty);
-    }
-    (format!("[{} {ty}]", dims_str(arr)), ty)
-}
-
-/// `"2x3"`-style shape string.
-fn dims_str(arr: &Array) -> String {
-    arr.dims()
-        .iter()
-        .map(usize::to_string)
-        .collect::<Vec<_>>()
-        .join("x")
 }

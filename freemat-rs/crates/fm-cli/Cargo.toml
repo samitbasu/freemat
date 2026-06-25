@@ -17,6 +17,10 @@ fm-core = { version = "0.0.0", path = "../fm-core" }
 fm-interp = { version = "0.0.0", path = "../fm-interp" }
 fm-builtins = { version = "0.0.0", path = "../fm-builtins" }
 fm-graphics = { version = "0.0.0", path = "../fm-graphics" }
+# Phase 2 (interpreter-as-service): the embedded DAP-over-TCP "attach" server
+# reuses fm-dap's transport-agnostic protocol helpers (`fm_dap::proto`) and wire
+# framing so the embedded and standalone debuggers report state identically.
+fm-dap = { version = "0.0.0", path = "../fm-dap" }
 # P3: the canonical FragmentScript/CapturedFragment now live in fm-doc; the
 # capture engine consumes them so there is one shared model (no local copy).
 fm-doc = { version = "0.0.0", path = "../fm-doc" }

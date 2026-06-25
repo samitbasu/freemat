@@ -664,6 +664,7 @@ dependencies = [
  "base64",
  "fm-builtins",
  "fm-core",
+ "fm-dap",
  "fm-doc",
  "fm-graphics",
  "fm-interp",

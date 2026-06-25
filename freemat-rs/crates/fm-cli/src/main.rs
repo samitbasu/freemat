@@ -45,6 +45,12 @@ fn main() -> std::process::ExitCode {
     // background tokio server is pure overhead.
     let no_gfx = std::env::args().any(|a| a == "--no-gfx");
 
+    // `--dap-port N` starts an embedded Debug Adapter Protocol server on
+    // `127.0.0.1:N` (use `0` for an ephemeral port). A debugger that connects
+    // can set breakpoints and step the *live* REPL session. See
+    // `docs/INTERP_SERVICE_PLAN.md`.
+    let dap_port = parse_flag_value("--dap-port").and_then(|v| v.parse::<u16>().ok());
+
     print_banner();
 
     // Start the embedded graphics webserver on this thread so we can print its
@@ -73,11 +79,24 @@ fn main() -> std::process::ExitCode {
     // The interpreter now lives behind the engine actor (see
     // `docs/INTERP_SERVICE_PLAN.md`); the REPL drives it by message. The setup
     // closure runs on the engine thread, installing the graphics sink there.
-    let engine = fm_cli::Engine::spawn(move |interp| {
+    let setup = move |interp: &mut Interpreter| {
         if let Some(handle) = sink {
             interp.set_graphics_sink(Box::new(handle));
         }
-    });
+    };
+    let engine = match dap_port {
+        Some(port) => match fm_cli::Engine::spawn_with_dap(port, setup) {
+            Ok((engine, bound)) => {
+                println!("Debug adapter (DAP) listening on 127.0.0.1:{bound}");
+                engine
+            }
+            Err(e) => {
+                eprintln!("DAP server unavailable ({e}); debugging disabled");
+                fm_cli::Engine::spawn(|_| {})
+            }
+        },
+        None => fm_cli::Engine::spawn(setup),
+    };
 
     let mut rl = match DefaultEditor::new() {
         Ok(rl) => rl,
@@ -130,6 +149,14 @@ fn eval_line(engine: &fm_cli::Engine, line: &str, reporter: &GraphicalReportHand
         }
     }
     let _ = std::io::stdout().flush();
+}
+
+/// Return the value following `flag` in the process arguments, if present
+/// (`--flag value` form).
+fn parse_flag_value(flag: &str) -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    let pos = args.iter().position(|a| a == flag)?;
+    args.get(pos + 1).cloned()
 }
 
 /// Handle `fm --capture-fragment [<script.json>|-]`: read a `FragmentScript`

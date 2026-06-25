@@ -1602,7 +1602,18 @@ called from that prompt (recursive debugging).
       (`fm-dap`'s `evaluate` now wraps in it). Pause-level depth is hook-side (tracked by the
       eventual engine hook), not an `fm-interp` concern. Tests: `fm-interp/tests/debug_seam.rs`
       (re-entrancy / suppression / terminate); existing 8 `fm-dap` tests still green.
-- [ ] **Phase 2 — Embedded DAP-over-TCP** as an engine client (`--dap-port`): the **attach** path.
+- [x] **Phase 2 — Embedded DAP-over-TCP** as an engine client (`fm --dap-port N`): the **attach**
+      path. Unified-inbox actor (`EngineMsg`): the REPL and a DAP socket-reader thread feed one
+      `std::mpsc` inbox, so the engine handles eval + debugger traffic one at a time with **no
+      mutex on interpreter state**. The hook (`EngineHook`) is a no-op until a debugger connects;
+      breakpoints/run-mode/socket-writer live in an `Rc<RefCell<DebugState>>` shared by the idle
+      loop and the hook. fm-dap refactored: a transport-agnostic `fm_dap::proto` module
+      (capabilities, stack/scopes/variables/evaluate bodies, message builders) shared by the
+      standalone `Session` and the embedded debugger so both report identically. Tests:
+      `fm-cli/tests/dap_attach.rs` (3) — breakpoint hit by a REPL-triggered run, inspect/evaluate,
+      step, session persistence, no-pause-before-connect; verified against the real `fm` binary
+      with a Python DAP client. REPL evals racing in during a stop are deferred (Phase 3 runs them
+      in the paused frame).
 - [ ] **Phase 3 — Nested debugger REPL** + recursive breakpoints.
 - [ ] **Phase 4 — Polish**: Ctrl-C→pause, output→DAP events, panic isolation, `dbstack`/`dbup`/`dbdown`.
 
