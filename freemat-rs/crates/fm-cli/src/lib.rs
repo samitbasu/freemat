@@ -8,6 +8,7 @@
 //! captures their transcripts byte-for-byte for the docs pipeline.
 
 pub mod capture;
+pub mod engine;
 mod help;
 pub mod server;
 
@@ -15,5 +16,6 @@ pub mod server;
 // fm-cli surface (`fm_cli::FragmentScript`, `fm_cli::CapturedFragment`) and the
 // `--capture-fragment` CLI path are unchanged for downstream callers.
 pub use capture::run_fragment;
+pub use engine::{Engine, EvalOutcome};
 pub use fm_doc::{CapturedFragment, FragmentScript};
 pub use server::{ServerHandle, start};

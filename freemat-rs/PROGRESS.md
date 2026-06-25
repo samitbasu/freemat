@@ -18,7 +18,8 @@ then tick it here and commit. Leave notes for the next session under each stage.
 - [x] **Stage 8 — `fm-io`: MAT files, file I/O, FFT, regex**
 - [x] **Stage 9 — Advanced / optional (sparse matrices)** — sparse done; special
       functions / optimization / audio / cranelift remain for a future pass.
-- [ ] **Stage 10 — Debugging & editor integration (DAP + `db*` engine; optional LSP)**
+- [~] **Stage 10 — Debugging & editor integration (DAP + `db*` engine; optional LSP)** — in progress
+      (see `### Stage 10 — Debugging` below for the interpreter-as-service plan + status)
 
 ## Definition of Done (every stage)
 
@@ -1573,14 +1574,36 @@ eigenproblem `eig(A,B)`. **Conformance 650/677 (96.0%) → 658/677 (97.2%), Δ +
   that now runs cleanly back to a live `fm-exec` block.
 - **Help system COMPLETE (P0–P8).**
 
-### Debugging (Stage 10, design locked — build deferred to after Stages 7–8)
-- Decision: editor+debugger via **DAP/LSP** (drive from VS Code/Neovim) — no built-in editor,
-  no GUI. Debug *engine* lives in `fm-interp`; new crates `fm-dap` (+ optional `fm-lsp`).
-- **Stage 3 must add the cheap enabling seams now** (not a retrofit): single statement-execution
-  chokepoint, per-scope source line/span, switchable active scope (for `dbup`/`dbdown`).
-- FreeMat reference to port later: `Interpreter.cpp` `bpStack`/`processBreakpoints`/`doDebugCycle`/
-  `dbup`/`dbdown`; `libCore/Debug.cpp`; observer model in `libXP/Editor.cpp` becomes a Rust
-  event trait the terminal and DAP both consume.
+### Stage 10 — Debugging & editor integration (in progress)
+
+**Design:** `docs/INTERP_SERVICE_PLAN.md` — the interpreter becomes a single-threaded **actor
+(engine)** with multiple message clients (REPL + DAP, later LSP/notebook). This dissolves the two
+blockers to "attach a debugger to the live REPL session": the interpreter is `!Send` and the REPL
+thread blocks in `readline`. Headline feature: a **nested debugger REPL** (`K>>`) at a breakpoint,
+where typed commands run in the paused frame's live context, with breakpoints still live in code
+called from that prompt (recursive debugging).
+
+**Already built (pre-plan):**
+- Debug seam in `fm-interp` (`debug.rs`): `DebugHook` trait + `Interpreter::{set,clear}_debugger`,
+  consulted at the `exec_statement` chokepoint; `Context::{num_scopes,scope_at}` for frame reads.
+- `crates/fm-dap`: a working **launch**-style DAP server (stdio / `--port` TCP) with its own
+  throwaway interpreter per session. 8 integration tests (breakpoints/variables/stepping/
+  call-stack/evaluate/stop-on-entry) via a from-scratch `DapClient` over TCP loopback.
+
+**Phase status (per `docs/INTERP_SERVICE_PLAN.md`):**
+- [x] **Phase 0 — Engine skeleton.** `fm-cli/src/engine.rs`: interpreter on its own thread behind
+      `ReplCommand`/reply channels; interactive REPL rewired as a client (`Engine::eval`). Graphics
+      sink installed on the engine thread (`ServerHandle: Send`). `capture.rs`/`--list-builtins`
+      keep direct interpreters. Behavior preserved; 3 engine unit tests + full `fm-cli` suite green.
+- [ ] **Phase 1 — Re-entrant seam** (`fm-interp`): drop `take()` exclusivity, add
+      `suppress_breakpoints` (watch-eval only) + pause-level depth.
+- [ ] **Phase 2 — Embedded DAP-over-TCP** as an engine client (`--dap-port`): the **attach** path.
+- [ ] **Phase 3 — Nested debugger REPL** + recursive breakpoints.
+- [ ] **Phase 4 — Polish**: Ctrl-C→pause, output→DAP events, panic isolation, `dbstack`/`dbup`/`dbdown`.
+
+**FreeMat reference to port later:** `Interpreter.cpp` `bpStack`/`processBreakpoints`/`doDebugCycle`/
+`dbup`/`dbdown`; `libCore/Debug.cpp`; observer model in `libXP/Editor.cpp` becomes the Rust event
+trait the terminal and DAP both consume.
 
 ### 3-D plot types — done (`surfl`/`surfc`/`meshc`/`waterfall`/`sphere`/`cylinder`/`ellipsoid`)
 - **No conformance delta (672/677 unchanged)** — these names have no FreeMat directive, so they're

@@ -47,14 +47,13 @@ fn main() -> std::process::ExitCode {
 
     print_banner();
 
-    let mut interp = Interpreter::new();
-    fm_builtins::register_standard_library(&mut interp);
-
-    // Start the embedded graphics webserver and install it as the graphics sink
-    // so plotting commands render in the browser. A failure here is non-fatal —
-    // the REPL still works, graphics just won't display. Skipped under `--no-gfx`.
-    if no_gfx {
+    // Start the embedded graphics webserver on this thread so we can print its
+    // URL and open a browser, then hand the sink to the engine thread (the
+    // `ServerHandle` is `Send`). A failure here is non-fatal — the REPL still
+    // works, graphics just won't display. Skipped under `--no-gfx`.
+    let sink = if no_gfx {
         println!("Graphics disabled (--no-gfx).");
+        None
     } else {
         match fm_cli::start(0) {
             Ok(handle) => {
@@ -62,13 +61,23 @@ fn main() -> std::process::ExitCode {
                 println!("Graphics server: {url}");
                 // Best-effort auto-open; ignore failures (headless / no browser).
                 let _ = webbrowser::open(&url);
-                interp.set_graphics_sink(Box::new(handle));
+                Some(handle)
             }
             Err(e) => {
                 eprintln!("graphics server unavailable ({e}); plotting disabled");
+                None
             }
         }
-    }
+    };
+
+    // The interpreter now lives behind the engine actor (see
+    // `docs/INTERP_SERVICE_PLAN.md`); the REPL drives it by message. The setup
+    // closure runs on the engine thread, installing the graphics sink there.
+    let engine = fm_cli::Engine::spawn(move |interp| {
+        if let Some(handle) = sink {
+            interp.set_graphics_sink(Box::new(handle));
+        }
+    });
 
     let mut rl = match DefaultEditor::new() {
         Ok(rl) => rl,
@@ -91,7 +100,7 @@ fn main() -> std::process::ExitCode {
                 if matches!(trimmed, "quit" | "exit") {
                     break;
                 }
-                eval_line(&mut interp, &line, &reporter);
+                eval_line(&engine, &line, &reporter);
             }
             // Ctrl-C: abandon the current line, keep going.
             Err(ReadlineError::Interrupted) => continue,
@@ -106,27 +115,21 @@ fn main() -> std::process::ExitCode {
     std::process::ExitCode::SUCCESS
 }
 
-/// Evaluate one input line, flushing buffered output and rendering errors.
-fn eval_line(interp: &mut Interpreter, line: &str, reporter: &GraphicalReportHandler) {
-    match interp.run(line) {
-        Ok(()) => {
-            let out = interp.take_output();
-            print!("{out}");
-            let _ = std::io::stdout().flush();
-        }
-        Err(e) => {
-            // Print anything emitted before the error, then the diagnostic.
-            let out = interp.take_output();
-            print!("{out}");
-            let mut buf = String::new();
-            if reporter.render_report(&mut buf, &e).is_ok() {
-                eprint!("{buf}");
-            } else {
-                eprintln!("error: {e}");
-            }
-            let _ = std::io::stdout().flush();
+/// Evaluate one input line through the engine, flushing buffered output and
+/// rendering any error. Output is printed in both cases (matching the old
+/// behavior of showing whatever was emitted before an error).
+fn eval_line(engine: &fm_cli::Engine, line: &str, reporter: &GraphicalReportHandler) {
+    let outcome = engine.eval(line);
+    print!("{}", outcome.output);
+    if let Some(e) = outcome.error {
+        let mut buf = String::new();
+        if reporter.render_report(&mut buf, &e).is_ok() {
+            eprint!("{buf}");
+        } else {
+            eprintln!("error: {e}");
         }
     }
+    let _ = std::io::stdout().flush();
 }
 
 /// Handle `fm --capture-fragment [<script.json>|-]`: read a `FragmentScript`
