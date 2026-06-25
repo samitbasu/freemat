@@ -149,6 +149,31 @@ fn step_into_a_function_shows_a_nested_frame() {
 }
 
 #[test]
+fn program_output_reaches_the_debug_console() {
+    let mut c = DapClient::spawn();
+    // disp() before the breakpoint; stop on line 3.
+    c.launch("disp(111);\ndisp(222);\nz = 1;\n", &[3], false);
+
+    // Collect `output` events until the stop.
+    let mut console = String::new();
+    loop {
+        let m = c.recv();
+        if m["type"] == "event" && m["event"] == json!("output") {
+            console.push_str(m["body"]["output"].as_str().unwrap_or(""));
+        } else if m["type"] == "event" && m["event"] == json!("stopped") {
+            break;
+        }
+    }
+    assert!(
+        console.contains("111") && console.contains("222"),
+        "program output missing from console: {console:?}"
+    );
+
+    c.request("continue", json!({ "threadId": 1 }));
+    c.wait_event("terminated");
+}
+
+#[test]
 fn initialize_advertises_configuration_done_support() {
     let mut c = DapClient::spawn();
     let init = c.request("initialize", json!({ "adapterID": "fm-dap" }));

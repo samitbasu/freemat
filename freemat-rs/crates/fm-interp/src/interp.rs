@@ -301,6 +301,20 @@ impl Interpreter {
         self.interrupt = Some(flag);
     }
 
+    /// Restore the interpreter to a clean top-level state after a run unwound
+    /// abnormally (a caught panic). Drops any frames left on the call stack and
+    /// the parallel `nargin`/`nargout`/file-local stacks, and clears transient
+    /// debug flags. The base scope and its variables are preserved, so the
+    /// session survives an internal error in a builtin.
+    pub fn reset_run_state(&mut self) {
+        self.context.reset_to_base();
+        self.nargin_stack.truncate(1);
+        self.nargout_stack.truncate(1);
+        self.local_funcs_stack.clear();
+        self.suppress_breakpoints = false;
+        let _ = self.take_output();
+    }
+
     /// Whether an interrupt has been requested. Consumes the flag (clears it) so
     /// it fires once per request.
     fn interrupted(&self) -> bool {

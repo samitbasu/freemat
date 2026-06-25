@@ -310,3 +310,62 @@ fn debug_console_repl_evaluate_mutates_the_frame() {
         "debug-console assignment not reflected on resume"
     );
 }
+
+// ---- Phase 4: pause + output streaming --------------------------------------
+
+#[test]
+fn pause_stops_a_running_program() {
+    let (engine, port) = Engine::spawn_with_dap(0, |_| {}).expect("spawn engine with DAP");
+    let mut dap = DapClient::connect(port);
+    dap.attach(&[]); // no breakpoints — we'll pause asynchronously
+
+    let client = engine.client();
+    let runner = std::thread::spawn(move || client.eval("while true; x = 1; end"));
+
+    // Let the loop get going (so run_eval has cleared any stale pause), then ask
+    // the IDE-side `pause`.
+    std::thread::sleep(Duration::from_millis(100));
+    dap.send("pause", json!({ "threadId": 1 }));
+
+    let stopped = dap.wait_event("stopped");
+    assert_eq!(stopped["body"]["reason"], json!("pause"));
+
+    // Disconnect to abort the otherwise-infinite run, then it unwinds cleanly.
+    dap.request("disconnect", json!({}));
+    runner.join().unwrap();
+}
+
+#[test]
+fn program_output_streams_to_the_debug_console() {
+    let (engine, port) = Engine::spawn_with_dap(0, |_| {}).expect("spawn engine with DAP");
+    let mut dap = DapClient::connect(port);
+    dap.attach(&[3]); // break after the two disp() calls
+
+    let client = engine.client();
+    let prog = "disp(111);\ndisp(222);\nx = 5;\n";
+    let runner = std::thread::spawn(move || client.eval(prog));
+
+    // Collect `output` events until the program stops at the breakpoint.
+    let mut console = String::new();
+    loop {
+        let m = dap.recv();
+        if m["type"] == "event" && m["event"] == json!("output") {
+            console.push_str(m["body"]["output"].as_str().unwrap_or(""));
+        } else if m["type"] == "event" && m["event"] == json!("stopped") {
+            break;
+        }
+    }
+    assert!(
+        console.contains("111") && console.contains("222"),
+        "program output did not reach the debug console: {console:?}"
+    );
+
+    dap.request("continue", json!({ "threadId": 1 }));
+    let outcome = runner.join().unwrap();
+    // The REPL reply still carries the full output too (one buffer, two sinks).
+    assert!(
+        outcome.output.contains("111") && outcome.output.contains("222"),
+        "REPL lost output that was mirrored to the console: {:?}",
+        outcome.output
+    );
+}

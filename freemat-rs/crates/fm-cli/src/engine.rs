@@ -129,15 +129,27 @@ impl Engine {
         let (tx, rx) = channel::<EngineMsg>();
         let dap_enabled = listener.is_some();
         let interrupt = Arc::new(AtomicBool::new(false));
+        // Async pause request (DAP `pause`): the socket-reader thread raises it,
+        // the debug hook honours it at the next statement.
+        let pause = Arc::new(AtomicBool::new(false));
         let thread_interrupt = interrupt.clone();
+        let thread_pause = pause.clone();
         let handle = std::thread::Builder::new()
             .name("fm-interp".to_string())
-            .spawn(move || engine_thread(rx, dap_enabled, thread_interrupt, Box::new(setup)))?;
+            .spawn(move || {
+                engine_thread(
+                    rx,
+                    dap_enabled,
+                    thread_interrupt,
+                    thread_pause,
+                    Box::new(setup),
+                )
+            })?;
         if let Some(listener) = listener {
             let tx = tx.clone();
             std::thread::Builder::new()
                 .name("fm-dap-accept".to_string())
-                .spawn(move || run_acceptor(&listener, &tx))?;
+                .spawn(move || run_acceptor(&listener, &tx, &pause))?;
         }
         Ok(Engine {
             tx,
@@ -227,6 +239,7 @@ fn engine_thread(
     rx: Receiver<EngineMsg>,
     dap_enabled: bool,
     interrupt: Arc<AtomicBool>,
+    pause: Arc<AtomicBool>,
     setup: Box<dyn FnOnce(&mut Interpreter) + Send>,
 ) {
     let mut interp = Interpreter::new();
@@ -237,7 +250,7 @@ fn engine_thread(
     // The inbox is shared (single-thread `Rc`) between this main loop and the
     // debug hook, which reads it while stopped at a breakpoint.
     let inbox = Rc::new(rx);
-    let state = Rc::new(RefCell::new(DebugState::new()));
+    let state = Rc::new(RefCell::new(DebugState::new(pause)));
     if dap_enabled {
         interp.set_debugger(Rc::new(EngineHook {
             inbox: inbox.clone(),
@@ -283,12 +296,67 @@ fn run_eval(
     source: String,
     reply: Sender<EvalOutcome>,
 ) {
-    // Record the top-level source so the hook can tell program statements
-    // (breakpoint-eligible) from statements inside called functions.
-    state.borrow_mut().program_src = source.clone();
-    let error = interp.run(&source).err();
-    let output = interp.take_output();
+    {
+        // Record the top-level source so the hook can tell program statements
+        // (breakpoint-eligible) from statements inside called functions. Reset
+        // the run-output accumulator and any stale pause request.
+        let mut s = state.borrow_mut();
+        s.program_src = source.clone();
+        s.run_output.clear();
+        let _ = s.pause_requested();
+    }
+    // Isolate the run: a panic in a builtin must not take down the engine thread
+    // (which would hang every client). Catch it, recover the interpreter, and
+    // report it as an error.
+    let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| interp.run(&source)));
+    let error = match run {
+        Ok(result) => result.err(),
+        Err(panic) => {
+            interp.reset_run_state();
+            let message = panic_message(panic.as_ref());
+            let mut s = state.borrow_mut();
+            if s.writer.is_some() {
+                // Tell the debugger the session blew up so it can disconnect.
+                s.emit_output(&format!("Internal error: {message}\n"));
+                s.event("terminated", json!({}));
+            }
+            Some(InterpError::with_id(
+                "FreeMat:internal",
+                format!("internal error: {message}"),
+            ))
+        }
+    };
+    // Flush any output produced since the last stop to the console, then return
+    // the whole run's output to the REPL.
+    drain_output(interp, state);
+    let output = std::mem::take(&mut state.borrow_mut().run_output);
     let _ = reply.send(EvalOutcome { output, error });
+}
+
+/// Extract a human-readable message from a caught panic payload.
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = panic.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = panic.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "panicked".to_string()
+    }
+}
+
+/// Take the interpreter's pending output, append it to the current run's
+/// accumulator, and (if a debugger is attached) mirror it to the debug console
+/// as an `output` event.
+fn drain_output(interp: &mut Interpreter, state: &Rc<RefCell<DebugState>>) {
+    let chunk = interp.take_output();
+    if chunk.is_empty() {
+        return;
+    }
+    let mut s = state.borrow_mut();
+    s.run_output.push_str(&chunk);
+    if s.writer.is_some() {
+        s.emit_output(&chunk);
+    }
 }
 
 /// Run `source` in the **current (paused) frame** as a nested debugger-REPL
@@ -365,6 +433,7 @@ impl DebugHook for EngineHook {
             if s.terminate {
                 return DebugControl::Terminate;
             }
+            let paused = s.pause_requested(); // async DAP `pause`
             let hit_breakpoint = src == s.program_src && s.breakpoints.contains(&line);
             let depth = interp.context.num_scopes();
             let stepped = match s.mode {
@@ -373,10 +442,16 @@ impl DebugHook for EngineHook {
                 RunMode::StepOver(d) => depth <= d,
                 RunMode::StepOut(d) => depth < d,
             };
-            if !hit_breakpoint && !stepped {
+            if !paused && !hit_breakpoint && !stepped {
                 return DebugControl::Resume;
             }
-            if hit_breakpoint { "breakpoint" } else { "step" }
+            if hit_breakpoint {
+                "breakpoint"
+            } else if paused {
+                "pause"
+            } else {
+                "step"
+            }
         };
         self.stopped_loop(interp, reason)
     }
@@ -389,6 +464,8 @@ impl EngineHook {
     /// can be entered recursively — a breakpoint hit inside a nested `K>>`
     /// command pushes another level, and resuming it pops back here.
     fn stopped_loop(&self, interp: &mut Interpreter, reason: &str) -> DebugControl {
+        // Flush output produced up to this stop to the debug console first.
+        drain_output(interp, &self.state);
         {
             let mut s = self.state.borrow_mut();
             s.pause_level += 1;
@@ -501,8 +578,6 @@ fn handle_dap_idle(req: &Value, interp: &mut Interpreter, state: &Rc<RefCell<Deb
             state.borrow_mut().respond(req, json!({}));
             state.borrow_mut().detach();
         }
-        // The engine is idle, so there's nothing running to pause.
-        "pause" => state.borrow_mut().respond(req, json!({})),
         _ => handle_inspect(req, interp, state),
     }
 }
@@ -571,6 +646,14 @@ fn handle_inspect(req: &Value, interp: &mut Interpreter, state: &Rc<RefCell<Debu
             }
         }
         "setBreakpoints" => set_breakpoints(req, state),
+        "pause" => {
+            // The reader already raised the pause flag out-of-band; by the time
+            // we handle the request here we're either already stopped or idle,
+            // so just consume any lingering flag and acknowledge.
+            let mut s = state.borrow_mut();
+            let _ = s.pause_requested();
+            s.respond(req, json!({}));
+        }
         other => state
             .borrow_mut()
             .respond_err(req, &format!("unsupported DAP request: {other}")),
@@ -620,6 +703,12 @@ struct DebugState {
     frames: proto::Frames,
     /// Nesting depth of active stops (the `K>>` level). 0 when running freely.
     pause_level: usize,
+    /// Async pause flag, raised out-of-band by the socket reader on a `pause`
+    /// request (so it can interrupt a program that's mid-run).
+    pause: Arc<AtomicBool>,
+    /// Accumulates the current top-level run's output (echo / `disp`) so it can
+    /// be both streamed to the debug console *and* returned to the REPL.
+    run_output: String,
     /// `true` once the client asked to disconnect/terminate.
     terminate: bool,
     /// The source of the currently-running top-level eval (breakpoint matching).
@@ -629,7 +718,7 @@ struct DebugState {
 }
 
 impl DebugState {
-    fn new() -> Self {
+    fn new(pause: Arc<AtomicBool>) -> Self {
         DebugState {
             writer: None,
             seq: 0,
@@ -637,10 +726,23 @@ impl DebugState {
             mode: RunMode::Continue,
             frames: proto::Frames::new(),
             pause_level: 0,
+            pause,
+            run_output: String::new(),
             terminate: false,
             program_src: String::new(),
             source_path: "fm-repl".to_string(),
         }
+    }
+
+    /// Whether an async pause was requested; consumes the flag.
+    fn pause_requested(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        self.pause.swap(false, Ordering::Relaxed)
+    }
+
+    /// Emit a chunk of program output on the debug console (`output` event).
+    fn emit_output(&mut self, text: &str) {
+        self.event("output", json!({ "category": "stdout", "output": text }));
     }
 
     /// A debugger connected: install its writer and clear any stale stop state.
@@ -658,6 +760,7 @@ impl DebugState {
         self.mode = RunMode::Continue;
         self.terminate = false;
         self.frames.reset();
+        let _ = self.pause_requested();
     }
 
     fn next_seq(&mut self) -> i64 {
@@ -699,7 +802,7 @@ impl DebugState {
 
 /// Accept debugger connections; for each, hand the engine the write half and
 /// spawn a reader thread that forwards requests into the inbox.
-fn run_acceptor(listener: &TcpListener, tx: &Sender<EngineMsg>) {
+fn run_acceptor(listener: &TcpListener, tx: &Sender<EngineMsg>, pause: &Arc<AtomicBool>) {
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
         let Ok(read_half) = stream.try_clone() else {
@@ -710,19 +813,27 @@ fn run_acceptor(listener: &TcpListener, tx: &Sender<EngineMsg>) {
             return; // engine gone
         }
         let tx = tx.clone();
+        let pause = pause.clone();
         std::thread::Builder::new()
             .name("fm-dap-read".to_string())
-            .spawn(move || run_reader(read_half, &tx))
+            .spawn(move || run_reader(read_half, &tx, &pause))
             .ok();
     }
 }
 
-/// Read framed DAP requests off the socket and forward them into the inbox.
-fn run_reader(stream: TcpStream, tx: &Sender<EngineMsg>) {
+/// Read framed DAP requests off the socket and forward them into the inbox. A
+/// `pause` request *also* raises the shared pause flag directly (out of band),
+/// so it can stop a program that's mid-run — the engine thread is busy in
+/// `interp.run` then and isn't reading the inbox.
+fn run_reader(stream: TcpStream, tx: &Sender<EngineMsg>, pause: &Arc<AtomicBool>) {
+    use std::sync::atomic::Ordering;
     let mut reader = BufReader::new(stream);
     loop {
         match fm_dap::read_message(&mut reader) {
             Ok(Some(req)) => {
+                if proto::command_of(&req) == "pause" {
+                    pause.store(true, Ordering::Relaxed);
+                }
                 if tx.send(EngineMsg::Dap(req)).is_err() {
                     return;
                 }
@@ -782,6 +893,30 @@ mod tests {
             names.iter().any(|n| n == "sin"),
             "expected builtins in name list"
         );
+    }
+
+    #[test]
+    fn a_panicking_builtin_does_not_kill_the_engine() {
+        // Register a builtin that panics, then call it. The engine must survive
+        // and keep serving.
+        let engine = Engine::spawn(|interp| {
+            interp
+                .functions
+                .add_builtin("boom", |_, _, _| panic!("kaboom"));
+        });
+        let out = engine.eval("boom()");
+        let err = out.error.expect("a panicking run should report an error");
+        assert_eq!(err.identifier.as_deref(), Some("FreeMat:internal"));
+        assert!(
+            err.message.contains("kaboom"),
+            "lost panic message: {}",
+            err.message
+        );
+
+        // The session is intact and usable.
+        let ok = engine.eval("5 + 5");
+        assert!(ok.error.is_none());
+        assert!(ok.output.contains("10"));
     }
 
     #[test]

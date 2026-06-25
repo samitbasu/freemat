@@ -146,6 +146,14 @@ impl Session {
     fn output(&mut self, text: &str) {
         self.event("output", json!({ "category": "stdout", "output": text }));
     }
+
+    /// Drain the interpreter's pending program output to the debug console.
+    fn flush_output(&mut self, interp: &mut Interpreter) {
+        let chunk = interp.take_output();
+        if !chunk.is_empty() {
+            self.output(&chunk);
+        }
+    }
 }
 
 /// The hook installed into the interpreter for the duration of a run. Holds a
@@ -184,6 +192,8 @@ impl Session {
 
     /// Sit at a stop point: announce it, then serve requests until a resume.
     fn stopped_loop(&mut self, interp: &mut Interpreter, reason: &str) -> DebugControl {
+        // Flush any program output produced up to this stop to the console.
+        self.flush_output(interp);
         // A new stop invalidates the previous variablesReference handles.
         self.frames.reset();
         self.event(
@@ -359,6 +369,7 @@ fn run_session(session: &Rc<RefCell<Session>>, interp: &mut Interpreter) -> std:
     // forever waiting for a second `disconnect`.
     let already_disconnected = {
         let mut s = session.borrow_mut();
+        s.flush_output(interp); // any output produced after the last stop
         if let Err(e) = result {
             s.output(&format!("Error: {e}\n"));
         }

@@ -1635,11 +1635,22 @@ called from that prompt (recursive debugging).
       handler (libc) that raises it, so Ctrl-C aborts a runaway loop to the prompt instead of
       killing the process (verified end-to-end: `while true; x=1; end` → `interrupted (Ctrl-C)` →
       REPL alive). Tests: `fm-interp` `interrupt_aborts_a_running_loop`, `fm-cli`
-      `interrupt_flag_aborts_a_runaway_eval`. **Remaining:** DAP `pause` (stop a running program
-      from the IDE — same attention-flag pattern, shared with the socket-reader thread); stream
-      program output as DAP `output` events; engine-thread panic isolation; `dbstop`/`dbcont` +
-      `dbstack`/`dbup`/`dbdown` builtins; terminal-side `K>>` prompt (needs those builtins + a
-      non-blocking eval path).
+      `interrupt_flag_aborts_a_runaway_eval`.
+      **DAP `pause`** — the socket-reader thread raises a shared `Arc<AtomicBool>` out of band (the
+      engine is busy in `interp.run` and isn't reading the inbox), and the hook honours it at the
+      next statement, stopping with reason `"pause"`. Test: `pause_stops_a_running_program`.
+      **Output streaming** — program echo/`disp` is mirrored to the debug console as `output`
+      events at every stop and at run completion, while still returned to the REPL (one buffer, two
+      sinks); added to both the embedded engine and the standalone `Session`. Tests:
+      `program_output_streams_to_the_debug_console` (embedded), `program_output_reaches_the_debug_console`
+      (standalone). **Panic isolation** — `run_eval` wraps the run in `catch_unwind`; on a panic in a
+      builtin the engine recovers via `Interpreter::reset_run_state` (drops leftover frames + parallel
+      stacks), reports a `FreeMat:internal` error (+ `terminated` to any debugger), and keeps serving.
+      Test: `a_panicking_builtin_does_not_kill_the_engine`. **The DAP interface is now feature-complete**
+      (initialize/launch/attach, breakpoints, step in/over/out, continue, pause, stack/scopes/variables,
+      evaluate incl. repl-context, output events, disconnect; nested `K>>` + recursive breakpoints).
+      **Remaining (REPL features, not the DAP interface):** `dbstop`/`dbcont` + `dbstack`/`dbup`/`dbdown`
+      builtins and a terminal-side `K>>` prompt (needs those builtins + a non-blocking eval path).
 
 **FreeMat reference to port later:** `Interpreter.cpp` `bpStack`/`processBreakpoints`/`doDebugCycle`/
 `dbup`/`dbdown`; `libCore/Debug.cpp`; observer model in `libXP/Editor.cpp` becomes the Rust event

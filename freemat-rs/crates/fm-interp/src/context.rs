@@ -66,6 +66,14 @@ impl Context {
         s
     }
 
+    /// Discard all call frames except the base scope, restoring active to it.
+    /// Used to recover after a run unwinds abnormally (e.g. a caught panic) and
+    /// may have left frames pushed (`push_scope`/`pop_scope` are not RAII).
+    pub fn reset_to_base(&mut self) {
+        self.scopes.truncate(1);
+        self.active = 0;
+    }
+
     /// Push a previously-popped frame back onto the call stack (used to restore
     /// the executing frame after `evalin`/`assignin('caller', …)` temporarily
     /// pops it to run in the caller's scope).
