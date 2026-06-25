@@ -76,6 +76,11 @@ pub struct Interpreter {
     /// [`Self::eval_suppressed`] around watch/hover evaluation so a watch
     /// expression can never trip a breakpoint or step.
     suppress_breakpoints: bool,
+    /// Cooperative interrupt flag (Ctrl-C). When present and set, the statement
+    /// chokepoint aborts the run with an "interrupted" error at the next
+    /// statement. Shared (`Arc`) so a signal handler / another thread can raise
+    /// it; checked with a single relaxed load per statement when armed.
+    interrupt: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// A `.m` script file: its parsed statements plus the source they were parsed
@@ -113,6 +118,7 @@ impl Interpreter {
             search_path: Vec::new(),
             debugger: None,
             suppress_breakpoints: false,
+            interrupt: None,
         };
         crate::builtins::register_defaults(&mut interp.functions);
         interp
@@ -244,6 +250,13 @@ impl Interpreter {
         // DEBUG SEAM: record the current location in the top scope.
         let line = line_of(src, stmt.span.start);
         self.context.set_current_span(stmt.span, line);
+        // Cooperative interrupt (Ctrl-C): abort the run at a statement boundary.
+        if self.interrupted() {
+            return Err(Signal::Error(InterpError::with_id(
+                "FreeMat:interrupt",
+                "interrupted (Ctrl-C)",
+            )));
+        }
         // Stage 10: consult the attached debugger (if any). A `Terminate` from
         // the hook unwinds the run like a top-level `return`.
         if self.debug_check(line, src) == Some(DebugControl::Terminate) {
@@ -279,6 +292,26 @@ impl Interpreter {
     /// Detach and return the debugger hook handle, if one is attached.
     pub fn clear_debugger(&mut self) -> Option<Rc<dyn crate::debug::DebugHook>> {
         self.debugger.take()
+    }
+
+    /// Arm cooperative interruption: when `flag` becomes `true`, the next
+    /// statement aborts the run with a `FreeMat:interrupt` error. The flag is
+    /// `Arc<AtomicBool>` so a signal handler or another thread can raise it.
+    pub fn set_interrupt(&mut self, flag: Arc<std::sync::atomic::AtomicBool>) {
+        self.interrupt = Some(flag);
+    }
+
+    /// Whether an interrupt has been requested. Consumes the flag (clears it) so
+    /// it fires once per request.
+    fn interrupted(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        match &self.interrupt {
+            Some(flag) if flag.load(Ordering::Relaxed) => {
+                flag.store(false, Ordering::Relaxed);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Run `f` with the debugger seam disabled, restoring the previous state

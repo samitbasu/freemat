@@ -98,6 +98,10 @@ fn main() -> std::process::ExitCode {
         None => fm_cli::Engine::spawn(setup),
     };
 
+    // Ctrl-C during a run now aborts it to the prompt (cooperative interrupt)
+    // instead of killing the process.
+    install_interrupt_handler(engine.interrupt_flag());
+
     let mut rl = match DefaultEditor::new() {
         Ok(rl) => rl,
         Err(e) => {
@@ -138,6 +142,11 @@ fn main() -> std::process::ExitCode {
 /// rendering any error. Output is printed in both cases (matching the old
 /// behavior of showing whatever was emitted before an error).
 fn eval_line(engine: &fm_cli::Engine, line: &str, reporter: &GraphicalReportHandler) {
+    // Clear any interrupt raised while idle at the prompt, so a stale Ctrl-C
+    // doesn't abort this fresh line on its first statement.
+    engine
+        .interrupt_flag()
+        .store(false, std::sync::atomic::Ordering::Relaxed);
     let outcome = engine.eval(line);
     print!("{}", outcome.output);
     if let Some(e) = outcome.error {
@@ -149,6 +158,39 @@ fn eval_line(engine: &fm_cli::Engine, line: &str, reporter: &GraphicalReportHand
         }
     }
     let _ = std::io::stdout().flush();
+}
+
+/// Raw pointer to the engine's interrupt `AtomicBool`, reachable from the
+/// async-signal context. Set once at startup to a leaked (process-lifetime)
+/// pointer, so the `SIGINT` handler only ever performs an atomic store.
+static INTERRUPT_PTR: std::sync::atomic::AtomicPtr<std::sync::atomic::AtomicBool> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+#[cfg(unix)]
+extern "C" fn handle_sigint(_sig: libc::c_int) {
+    let ptr = INTERRUPT_PTR.load(std::sync::atomic::Ordering::Relaxed);
+    if !ptr.is_null() {
+        // SAFETY: `ptr` points at a leaked, process-lifetime `AtomicBool`; an
+        // atomic store is async-signal-safe.
+        unsafe { (*ptr).store(true, std::sync::atomic::Ordering::Relaxed) };
+    }
+}
+
+/// Install a `SIGINT` (Ctrl-C) handler that raises the engine's interrupt flag,
+/// so Ctrl-C during a long run aborts it to the prompt instead of killing the
+/// process. No-op on non-Unix.
+fn install_interrupt_handler(flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+    // Leak one strong ref so the `AtomicBool` outlives any signal delivery.
+    let raw = std::sync::Arc::into_raw(flag) as *mut std::sync::atomic::AtomicBool;
+    INTERRUPT_PTR.store(raw, std::sync::atomic::Ordering::Relaxed);
+    #[cfg(unix)]
+    // SAFETY: the handler only performs an atomic store (async-signal-safe).
+    unsafe {
+        libc::signal(
+            libc::SIGINT,
+            handle_sigint as *const () as libc::sighandler_t,
+        );
+    }
 }
 
 /// Return the value following `flag` in the process arguments, if present

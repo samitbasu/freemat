@@ -22,6 +22,8 @@ use std::collections::HashSet;
 use std::io::{BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 
@@ -88,6 +90,9 @@ enum EngineMsg {
 pub struct Engine {
     tx: Sender<EngineMsg>,
     handle: Option<JoinHandle<()>>,
+    /// Cooperative interrupt flag (Ctrl-C). Raising it aborts the in-flight run
+    /// at the next statement. Shared with the interpreter on the engine thread.
+    interrupt: Arc<AtomicBool>,
 }
 
 impl Engine {
@@ -123,9 +128,11 @@ impl Engine {
     {
         let (tx, rx) = channel::<EngineMsg>();
         let dap_enabled = listener.is_some();
+        let interrupt = Arc::new(AtomicBool::new(false));
+        let thread_interrupt = interrupt.clone();
         let handle = std::thread::Builder::new()
             .name("fm-interp".to_string())
-            .spawn(move || engine_thread(rx, dap_enabled, Box::new(setup)))?;
+            .spawn(move || engine_thread(rx, dap_enabled, thread_interrupt, Box::new(setup)))?;
         if let Some(listener) = listener {
             let tx = tx.clone();
             std::thread::Builder::new()
@@ -135,7 +142,15 @@ impl Engine {
         Ok(Engine {
             tx,
             handle: Some(handle),
+            interrupt,
         })
+    }
+
+    /// The cooperative interrupt flag. Set it (e.g. from a Ctrl-C handler) to
+    /// abort the in-flight run at the next statement.
+    #[must_use]
+    pub fn interrupt_flag(&self) -> Arc<AtomicBool> {
+        self.interrupt.clone()
     }
 
     /// Run one source line, blocking until the engine replies.
@@ -211,10 +226,12 @@ fn send_eval(tx: &Sender<EngineMsg>, source: String) -> EvalOutcome {
 fn engine_thread(
     rx: Receiver<EngineMsg>,
     dap_enabled: bool,
+    interrupt: Arc<AtomicBool>,
     setup: Box<dyn FnOnce(&mut Interpreter) + Send>,
 ) {
     let mut interp = Interpreter::new();
     fm_builtins::register_standard_library(&mut interp);
+    interp.set_interrupt(interrupt);
     setup(&mut interp);
 
     // The inbox is shared (single-thread `Rc`) between this main loop and the
@@ -765,5 +782,28 @@ mod tests {
             names.iter().any(|n| n == "sin"),
             "expected builtins in name list"
         );
+    }
+
+    #[test]
+    fn interrupt_flag_aborts_a_runaway_eval() {
+        use std::sync::atomic::Ordering;
+        use std::time::Duration;
+
+        let engine = Engine::spawn(|_| {});
+        // Raise the interrupt shortly after the (infinite) eval starts.
+        let flag = engine.interrupt_flag();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            flag.store(true, Ordering::Relaxed);
+        });
+
+        let out = engine.eval("while true\n  x = 1;\nend\n");
+        let err = out.error.expect("runaway eval should be interrupted");
+        assert_eq!(err.identifier.as_deref(), Some("FreeMat:interrupt"));
+
+        // The engine survives and keeps serving.
+        let ok = engine.eval("3 + 4");
+        assert!(ok.error.is_none());
+        assert!(ok.output.contains("7"));
     }
 }

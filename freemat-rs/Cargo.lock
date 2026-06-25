@@ -669,6 +669,7 @@ dependencies = [
  "fm-graphics",
  "fm-interp",
  "futures-util",
+ "libc",
  "miette",
  "rustyline",
  "serde",

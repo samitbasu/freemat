@@ -1627,7 +1627,19 @@ called from that prompt (recursive debugging).
       **Deferred to Phase 4:** a terminal-side `K>>` prompt (needs `dbstop`/`dbcont` builtins to set
       breakpoints without an IDE, and a non-blocking eval path) — the engine mechanism is reachable
       today via the DAP debug console and the second-client `Eval` path.
-- [ ] **Phase 4 — Polish**: Ctrl-C→pause, output→DAP events, panic isolation, `dbstack`/`dbup`/`dbdown`.
+- [~] **Phase 4 — Polish** (in progress). **Done:** cooperative **interrupt (Ctrl-C)** — `fm-interp`
+      gained an `Arc<AtomicBool>` interrupt flag checked at the statement chokepoint (one relaxed
+      load/statement when armed), aborting the run with a `FreeMat:interrupt` error; frames unwind
+      cleanly (`pop_scope` is unconditional) so the interpreter stays usable. The engine arms it for
+      every session (`Engine::interrupt_flag()`); `main.rs` installs an async-signal-safe `SIGINT`
+      handler (libc) that raises it, so Ctrl-C aborts a runaway loop to the prompt instead of
+      killing the process (verified end-to-end: `while true; x=1; end` → `interrupted (Ctrl-C)` →
+      REPL alive). Tests: `fm-interp` `interrupt_aborts_a_running_loop`, `fm-cli`
+      `interrupt_flag_aborts_a_runaway_eval`. **Remaining:** DAP `pause` (stop a running program
+      from the IDE — same attention-flag pattern, shared with the socket-reader thread); stream
+      program output as DAP `output` events; engine-thread panic isolation; `dbstop`/`dbcont` +
+      `dbstack`/`dbup`/`dbdown` builtins; terminal-side `K>>` prompt (needs those builtins + a
+      non-blocking eval path).
 
 **FreeMat reference to port later:** `Interpreter.cpp` `bpStack`/`processBreakpoints`/`doDebugCycle`/
 `dbup`/`dbdown`; `libCore/Debug.cpp`; observer model in `libXP/Editor.cpp` becomes the Rust event

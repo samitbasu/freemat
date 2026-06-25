@@ -115,3 +115,36 @@ fn terminate_unwinds_the_run_without_running_statements() {
         "statement ran despite Terminate"
     );
 }
+
+/// Phase 4: a cooperative interrupt (Ctrl-C) aborts a running loop at the next
+/// statement with a `FreeMat:interrupt` error, and the interpreter stays usable.
+#[test]
+fn interrupt_aborts_a_running_loop() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    let flag = Arc::new(AtomicBool::new(false));
+    let mut interp = Interpreter::new();
+    interp.set_interrupt(flag.clone());
+
+    // Raise the interrupt from another thread shortly after the loop starts.
+    let raised = flag.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        raised.store(true, Ordering::Relaxed);
+    });
+
+    let result = interp.run("while true\n  x = 1;\nend\n");
+    let err = result.expect_err("the loop should have been interrupted");
+    assert_eq!(err.identifier.as_deref(), Some("FreeMat:interrupt"));
+
+    // The interpreter is still usable after the interrupt unwinds.
+    interp
+        .run("y = 7;")
+        .expect("interpreter usable after interrupt");
+    assert_eq!(
+        interp.context.lookup("y").and_then(|a| a.as_f64()),
+        Some(7.0)
+    );
+}

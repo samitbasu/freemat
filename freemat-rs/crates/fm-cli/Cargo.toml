@@ -40,6 +40,10 @@ serde = { workspace = true, features = ["derive"] }
 # `print`/`copy` round-trip: decode the base64 image bytes the browser returns
 # from `Plotly.toImage`. Already in the lock file (transitive) — no new download.
 base64 = "0.22"
+# Ctrl-C (SIGINT) handling for the REPL: a tiny async-signal-safe handler raises
+# the engine's cooperative interrupt flag so a runaway eval aborts to the prompt.
+# Already in the lock file (transitive) — no new download.
+libc = "0.2"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "net", "macros", "time"] }
