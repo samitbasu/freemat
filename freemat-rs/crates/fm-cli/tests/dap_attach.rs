@@ -210,3 +210,103 @@ fn runs_are_not_paused_before_a_debugger_connects() {
         out.output
     );
 }
+
+// ---- Phase 3: the nested debugger REPL --------------------------------------
+
+#[test]
+fn nested_repl_eval_mutates_the_paused_frame() {
+    let (engine, port) = Engine::spawn_with_dap(0, |_| {}).expect("spawn engine with DAP");
+    let mut dap = DapClient::connect(port);
+    dap.attach(&[3]); // break before `c = a + b;`
+
+    let client = engine.client();
+    let runner = std::thread::spawn(move || client.eval(SESSION));
+    dap.wait_event("stopped");
+
+    // A second client runs a line *in the paused frame*: change `a`.
+    let nested = engine.client().eval("a = 100;");
+    assert!(
+        nested.error.is_none(),
+        "nested eval errored: {:?}",
+        nested.error.map(|e| e.message)
+    );
+
+    // Resume: `c = a + b` now uses the mutated a (100 + 20 = 120), so d = 240.
+    dap.request("continue", json!({ "threadId": 1 }));
+    runner.join().unwrap();
+    let check = engine.eval("d");
+    assert!(
+        check.output.contains("240"),
+        "nested-frame mutation not reflected on resume: {:?}",
+        check.output
+    );
+}
+
+#[test]
+fn recursive_breakpoint_pushes_and_pops_levels() {
+    let (engine, port) = Engine::spawn_with_dap(0, |_| {}).expect("spawn engine with DAP");
+    let mut dap = DapClient::connect(port);
+    // Break on line 3. In SESSION that's `c = a + b;`; the nested command below
+    // also puts its breakpoint-worthy statement on its own line 3.
+    dap.attach(&[3]);
+
+    let client = engine.client();
+    let runner = std::thread::spawn(move || client.eval(SESSION));
+    let s1 = dap.wait_event("stopped");
+    assert_eq!(
+        s1["body"]["fmPauseLevel"],
+        json!(1),
+        "first stop is level 1"
+    );
+
+    // A nested command whose own line 3 trips the breakpoint → a deeper stop. It
+    // runs on its own thread because it blocks at that breakpoint.
+    let nested_client = engine.client();
+    let nested = std::thread::spawn(move || nested_client.eval("p = 40;\nr = 2;\ns = p + r;\n"));
+
+    let s2 = dap.wait_event("stopped");
+    assert_eq!(
+        s2["body"]["fmPauseLevel"],
+        json!(2),
+        "nested stop is level 2"
+    );
+    assert_eq!(s2["body"]["reason"], json!("breakpoint"));
+
+    // Pop level 2 (the nested command finishes), then level 1 (the program).
+    dap.request("continue", json!({ "threadId": 1 }));
+    nested.join().unwrap();
+    dap.request("continue", json!({ "threadId": 1 }));
+    runner.join().unwrap();
+
+    // The nested command's work landed in the shared session (s = p + r = 42).
+    assert!(
+        engine.eval("s").output.contains("42"),
+        "nested frame's assignments not persisted"
+    );
+}
+
+#[test]
+fn debug_console_repl_evaluate_mutates_the_frame() {
+    let (engine, port) = Engine::spawn_with_dap(0, |_| {}).expect("spawn engine with DAP");
+    let mut dap = DapClient::connect(port);
+    dap.attach(&[3]);
+
+    let client = engine.client();
+    let runner = std::thread::spawn(move || client.eval(SESSION));
+    dap.wait_event("stopped");
+
+    // The IDE debug console: `evaluate` with context "repl" runs a *statement*
+    // in the paused frame (not just an expression).
+    let ev = dap.request(
+        "evaluate",
+        json!({ "expression": "a = 100;", "context": "repl" }),
+    );
+    assert_eq!(ev["success"], json!(true));
+
+    dap.request("continue", json!({ "threadId": 1 }));
+    runner.join().unwrap();
+    assert!(
+        engine.eval("d").output.contains("240"),
+        "debug-console assignment not reflected on resume"
+    );
+}

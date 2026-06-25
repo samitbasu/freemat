@@ -18,7 +18,7 @@
 //! (plus the socket's write half) for the debugger.
 
 use std::cell::RefCell;
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::io::{BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::rc::Rc;
@@ -242,14 +242,6 @@ fn serve(
         if !process(msg, interp, state) {
             break;
         }
-        // Run any evals that arrived (and were stashed) while we were stopped.
-        loop {
-            let next = state.borrow_mut().deferred.pop_front();
-            match next {
-                Some((source, reply)) => run_eval(interp, state, source, reply),
-                None => break,
-            }
-        }
     }
 }
 
@@ -280,6 +272,53 @@ fn run_eval(
     let error = interp.run(&source).err();
     let output = interp.take_output();
     let _ = reply.send(EvalOutcome { output, error });
+}
+
+/// Run `source` in the **current (paused) frame** as a nested debugger-REPL
+/// line. The line executes against the live suspended scope — it reads and
+/// mutates the same variables — and breakpoints inside it fire (the re-entrant
+/// seam pushes a deeper stop). Run mode is forced to `Continue` for the nested
+/// line so an outer step doesn't immediately re-trip on its first statement, and
+/// the outer program's buffered output is preserved across the nested run.
+fn run_nested(
+    interp: &mut Interpreter,
+    state: &Rc<RefCell<DebugState>>,
+    source: &str,
+) -> (String, Option<InterpError>) {
+    let outer_output = interp.take_output();
+    let (saved_src, saved_mode) = {
+        let mut s = state.borrow_mut();
+        let saved = (
+            std::mem::replace(&mut s.program_src, source.to_string()),
+            s.mode,
+        );
+        s.mode = RunMode::Continue;
+        saved
+    };
+    let error = interp.run(source).err();
+    let output = interp.take_output();
+    {
+        let mut s = state.borrow_mut();
+        s.program_src = saved_src;
+        s.mode = saved_mode;
+    }
+    interp.emit(&outer_output); // restore the outer run's pending output
+    (output, error)
+}
+
+/// Run `source` in the current frame with the debugger seam suppressed (no
+/// nested breakpoints). Used by `evaluate` with `context: "repl"` — the IDE
+/// debug console — so typing a statement there mutates the paused frame without
+/// emitting a nested `stopped` event the IDE wouldn't expect.
+fn run_in_frame_suppressed(
+    interp: &mut Interpreter,
+    source: &str,
+) -> (String, Option<InterpError>) {
+    let outer_output = interp.take_output();
+    let error = interp.eval_suppressed(|i| i.run(source)).err();
+    let output = interp.take_output();
+    interp.emit(&outer_output);
+    (output, error)
 }
 
 fn answer_query(interp: &Interpreter, kind: QueryKind, reply: Sender<QueryResult>) {
@@ -327,15 +366,31 @@ impl DebugHook for EngineHook {
 }
 
 impl EngineHook {
-    /// Sit at a stop point: announce it, then service the debugger (and stash
-    /// any REPL eval that races in) until the client resumes or disconnects.
+    /// Sit at a stop point: announce it (with the nesting level), service the
+    /// debugger until it resumes, then unwind one pause level. Because
+    /// [`Self::serve_stopped`] runs nested REPL evals through the live seam, this
+    /// can be entered recursively — a breakpoint hit inside a nested `K>>`
+    /// command pushes another level, and resuming it pops back here.
     fn stopped_loop(&self, interp: &mut Interpreter, reason: &str) -> DebugControl {
         {
             let mut s = self.state.borrow_mut();
+            s.pause_level += 1;
             s.frames.reset();
-            let body = proto::stopped_body(reason);
+            let level = s.pause_level;
+            // `fmPauseLevel` is a non-standard hint (clients ignore unknown
+            // fields) that surfaces the nested `K>>` depth.
+            let mut body = proto::stopped_body(reason);
+            body["fmPauseLevel"] = json!(level);
             s.event("stopped", body);
         }
+        let control = self.serve_stopped(interp);
+        self.state.borrow_mut().pause_level -= 1;
+        control
+    }
+
+    /// The stopped request loop: service the debugger and run nested REPL evals
+    /// in the paused frame until the client resumes (or disconnects).
+    fn serve_stopped(&self, interp: &mut Interpreter) -> DebugControl {
         loop {
             let Ok(msg) = self.inbox.recv() else {
                 return DebugControl::Terminate;
@@ -347,10 +402,12 @@ impl EngineHook {
                     }
                 }
                 EngineMsg::Repl(ReplCommand::Eval { source, reply }) => {
-                    // Phase 2: can't run a new top-level eval mid-stop; defer it
-                    // until the current run resumes and unwinds. (Phase 3 will
-                    // run it here, in the paused frame's context.)
-                    self.state.borrow_mut().deferred.push_back((source, reply));
+                    // The nested debugger REPL: run the line in the *paused
+                    // frame's* live context. It sees and mutates the suspended
+                    // scope, and (via the re-entrant seam) a breakpoint inside it
+                    // pushes a deeper stop.
+                    let (output, error) = run_nested(interp, &self.state, &source);
+                    let _ = reply.send(EvalOutcome { output, error });
                 }
                 EngineMsg::Repl(ReplCommand::Query { kind, reply }) => {
                     answer_query(interp, kind, reply);
@@ -466,15 +523,34 @@ fn handle_inspect(req: &Value, interp: &mut Interpreter, state: &Rc<RefCell<Debu
             state.borrow_mut().respond(req, body);
         }
         "evaluate" => {
-            let expr = req
-                .get("arguments")
+            let args = req.get("arguments");
+            let expr = args
                 .and_then(|a| a.get("expression"))
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            match proto::evaluate_body(interp, &expr) {
-                Ok(body) => state.borrow_mut().respond(req, body),
-                Err(e) => state.borrow_mut().respond_err(req, &e),
+            let context = args
+                .and_then(|a| a.get("context"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if context == "repl" {
+                // Debug-console line: run it as a statement in the paused frame
+                // (mutations stick), with breakpoints suppressed so it doesn't
+                // emit a nested stop the IDE wouldn't expect.
+                let (output, error) = run_in_frame_suppressed(interp, &expr);
+                match error {
+                    None => state.borrow_mut().respond(
+                        req,
+                        json!({ "result": output.trim_end_matches('\n'), "variablesReference": 0 }),
+                    ),
+                    Some(e) => state.borrow_mut().respond_err(req, &e.message),
+                }
+            } else {
+                // Hover / watch: evaluate an expression (suppressed, no side effects beyond eval).
+                match proto::evaluate_body(interp, &expr) {
+                    Ok(body) => state.borrow_mut().respond(req, body),
+                    Err(e) => state.borrow_mut().respond_err(req, &e),
+                }
             }
         }
         "setBreakpoints" => set_breakpoints(req, state),
@@ -525,8 +601,8 @@ struct DebugState {
     mode: RunMode,
     /// Per-stop `variablesReference` allocator.
     frames: proto::Frames,
-    /// REPL evals stashed while stopped, run once the current run resumes.
-    deferred: VecDeque<(String, Sender<EvalOutcome>)>,
+    /// Nesting depth of active stops (the `K>>` level). 0 when running freely.
+    pause_level: usize,
     /// `true` once the client asked to disconnect/terminate.
     terminate: bool,
     /// The source of the currently-running top-level eval (breakpoint matching).
@@ -543,7 +619,7 @@ impl DebugState {
             breakpoints: HashSet::new(),
             mode: RunMode::Continue,
             frames: proto::Frames::new(),
-            deferred: VecDeque::new(),
+            pause_level: 0,
             terminate: false,
             program_src: String::new(),
             source_path: "fm-repl".to_string(),

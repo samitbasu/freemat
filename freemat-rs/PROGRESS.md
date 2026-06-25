@@ -1614,7 +1614,19 @@ called from that prompt (recursive debugging).
       step, session persistence, no-pause-before-connect; verified against the real `fm` binary
       with a Python DAP client. REPL evals racing in during a stop are deferred (Phase 3 runs them
       in the paused frame).
-- [ ] **Phase 3 — Nested debugger REPL** + recursive breakpoints.
+- [x] **Phase 3 — Nested debugger REPL** + recursive breakpoints. While stopped, the engine's
+      `serve_stopped` loop runs REPL-channel evals **in the paused frame's live context**
+      (`run_nested`: forces `Continue` mode + sets `program_src` to the nested line so it can read/
+      mutate the suspended scope and trip its own breakpoints; preserves the outer run's buffered
+      output). The re-entrant seam (Phase 1) makes a breakpoint inside a nested line push a deeper
+      stop — `DebugState.pause_level` tracks the `K>>` depth, surfaced as `fmPauseLevel` on the
+      `stopped` event; `continue`/`step` act on the innermost level via the recursion. DAP
+      `evaluate` with `context:"repl"` runs a statement in the frame with breakpoints suppressed
+      (IDE debug console, no surprise nested stop). Tests: `dap_attach.rs` +3 (nested mutation
+      visible on resume, recursive depth-2 stop + pop, debug-console assignment).
+      **Deferred to Phase 4:** a terminal-side `K>>` prompt (needs `dbstop`/`dbcont` builtins to set
+      breakpoints without an IDE, and a non-blocking eval path) — the engine mechanism is reachable
+      today via the DAP debug console and the second-client `Eval` path.
 - [ ] **Phase 4 — Polish**: Ctrl-C→pause, output→DAP events, panic isolation, `dbstack`/`dbup`/`dbdown`.
 
 **FreeMat reference to port later:** `Interpreter.cpp` `bpStack`/`processBreakpoints`/`doDebugCycle`/
