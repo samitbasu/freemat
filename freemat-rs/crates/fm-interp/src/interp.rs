@@ -11,6 +11,7 @@
 //!   the basis for `dbup`/`dbdown`.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use fm_core::{Array, C64, DataClass, Dims, FormatMode, FunctionHandle, ScalarValue};
@@ -67,8 +68,14 @@ pub struct Interpreter {
     pub search_path: Vec<String>,
     /// The attached debugger (Stage 10), consulted at the statement chokepoint.
     /// `None` in normal (non-debugged) execution — the hot path then pays only a
-    /// single `Option::is_some` check per statement.
-    debugger: Option<Box<dyn crate::debug::DebugHook>>,
+    /// cheap `Option` check per statement. Held behind `Rc` (not `Box`) so the
+    /// seam can clone a handle and call the hook **re-entrantly** without moving
+    /// it out of `self` (the basis for recursive debugging / nested `K>>`).
+    debugger: Option<Rc<dyn crate::debug::DebugHook>>,
+    /// When set, the statement chokepoint skips the debugger entirely. Scoped by
+    /// [`Self::eval_suppressed`] around watch/hover evaluation so a watch
+    /// expression can never trip a breakpoint or step.
+    suppress_breakpoints: bool,
 }
 
 /// A `.m` script file: its parsed statements plus the source they were parsed
@@ -105,6 +112,7 @@ impl Interpreter {
             scripts: std::collections::HashMap::new(),
             search_path: Vec::new(),
             debugger: None,
+            suppress_breakpoints: false,
         };
         crate::builtins::register_defaults(&mut interp.functions);
         interp
@@ -246,27 +254,45 @@ impl Interpreter {
     }
 
     /// Consult the attached debugger for the statement about to run at `line`.
-    /// Returns `None` when no debugger is attached (the common, non-debugged
-    /// case). Otherwise the hook is *taken out* of `self` for the duration of
-    /// the call so it can borrow the interpreter (and so any statements it runs
-    /// itself don't recursively re-enter the hook), then restored.
+    /// Returns `None` when there is nothing to do — no debugger attached (the
+    /// common, non-debugged case) or breakpoints currently suppressed.
+    ///
+    /// The hook is consulted via a *cloned* `Rc` handle, so it stays installed
+    /// in `self` and can be re-entered if it runs statements of its own (nested
+    /// debugger REPL → further breakpoints). `&mut self` is free during the call
+    /// because the handle is an independent owner.
     fn debug_check(&mut self, line: usize, src: &str) -> Option<DebugControl> {
-        let mut dbg = self.debugger.take()?;
-        let control = dbg.on_statement(self, line, src);
-        self.debugger = Some(dbg);
-        Some(control)
+        if self.suppress_breakpoints {
+            return None;
+        }
+        let dbg = self.debugger.clone()?;
+        Some(dbg.on_statement(self, line, src))
     }
 
     // ---- Debugger attachment (Stage 10) ------------------------------------
 
     /// Attach a debugger hook, consulted at the statement chokepoint.
-    pub fn set_debugger(&mut self, hook: Box<dyn crate::debug::DebugHook>) {
+    pub fn set_debugger(&mut self, hook: Rc<dyn crate::debug::DebugHook>) {
         self.debugger = Some(hook);
     }
 
-    /// Detach and return the debugger hook, if one is attached.
-    pub fn clear_debugger(&mut self) -> Option<Box<dyn crate::debug::DebugHook>> {
+    /// Detach and return the debugger hook handle, if one is attached.
+    pub fn clear_debugger(&mut self) -> Option<Rc<dyn crate::debug::DebugHook>> {
         self.debugger.take()
+    }
+
+    /// Run `f` with the debugger seam disabled, restoring the previous state
+    /// afterwards. Used by a debugger hook to evaluate a watch/hover expression
+    /// in the current frame *without* the evaluation itself tripping a
+    /// breakpoint or step (which would re-enter the hook and could hang the
+    /// client). Re-entrancy-safe: nested calls restore the prior flag, not a
+    /// hard `false`.
+    pub fn eval_suppressed<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let prev = self.suppress_breakpoints;
+        self.suppress_breakpoints = true;
+        let result = f(self);
+        self.suppress_breakpoints = prev;
+        result
     }
 
     fn exec_statement_inner(&mut self, stmt: &Stmt, src: &str) -> Flow<()> {

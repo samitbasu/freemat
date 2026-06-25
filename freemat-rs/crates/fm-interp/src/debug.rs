@@ -8,11 +8,18 @@
 //! current location and a borrow of itself for inspection.
 //!
 //! ## Re-entrancy
-//! The interpreter *takes* the hook out of itself before calling
-//! [`DebugHook::on_statement`] and restores it afterwards (see
-//! `Interpreter::debug_check`). While the hook runs, `interp.debugger` is
-//! `None`, so any statements the hook executes itself (e.g. evaluating a watch
-//! expression that calls a function) do **not** recursively re-enter the hook.
+//! Consultation is **re-entrant**: the hook stays installed while it runs, so
+//! statements the hook executes itself (e.g. a nested debugger REPL command, or
+//! code it calls) *do* re-enter the seam and can hit further breakpoints. This
+//! is what makes recursive debugging (MATLAB's nested `K>>`) possible. Because
+//! the hook may be on the call stack at several levels at once,
+//! [`DebugHook::on_statement`] takes `&self` — keep mutable hook state behind
+//! interior mutability (`Cell`/`RefCell`) and never hold a borrow across a
+//! nested call.
+//!
+//! When the hook explicitly does *not* want re-entry — evaluating a watch /
+//! hover expression, which must never trigger a breakpoint — it wraps the work
+//! in [`Interpreter::eval_suppressed`], which disables the seam for the duration.
 
 use crate::Interpreter;
 
@@ -30,13 +37,17 @@ pub enum DebugControl {
 pub trait DebugHook {
     /// Consulted before every statement executes.
     ///
-    /// - `interp` is the live interpreter with the hook temporarily removed, so
-    ///   the hook may freely read [`Interpreter::context`] (locals, call stack,
-    ///   current line) and even evaluate expressions in the current frame.
+    /// - `interp` is the live interpreter, which the hook may freely read
+    ///   ([`Interpreter::context`]: locals, call stack, current line) and run
+    ///   statements against (a nested debugger REPL, or a suppressed watch
+    ///   evaluation via [`Interpreter::eval_suppressed`]).
     /// - `line` is the 1-based source line of the statement about to run.
     /// - `src` is the source text of the unit currently executing. It lets the
     ///   hook tell the top-level program apart from function bodies (which have
     ///   their own source), so a line breakpoint set in the main file does not
     ///   spuriously fire on the same line number inside a called function.
-    fn on_statement(&mut self, interp: &mut Interpreter, line: usize, src: &str) -> DebugControl;
+    ///
+    /// Takes `&self` because the hook may be re-entered while already on the
+    /// stack (see the module docs on re-entrancy).
+    fn on_statement(&self, interp: &mut Interpreter, line: usize, src: &str) -> DebugControl;
 }

@@ -155,7 +155,7 @@ impl Session {
 struct Hook(Rc<RefCell<Session>>);
 
 impl DebugHook for Hook {
-    fn on_statement(&mut self, interp: &mut Interpreter, line: usize, src: &str) -> DebugControl {
+    fn on_statement(&self, interp: &mut Interpreter, line: usize, src: &str) -> DebugControl {
         let mut session = self.0.borrow_mut();
         session.at_statement(interp, line, src)
     }
@@ -429,7 +429,7 @@ fn run_session(session: &Rc<RefCell<Session>>, interp: &mut Interpreter) -> std:
 
     // Phase 2: run the program with the hook installed. A clean
     // `stopped`/resume cycle happens inside the interpreter via the hook.
-    interp.set_debugger(Box::new(Hook(session.clone())));
+    interp.set_debugger(Rc::new(Hook(session.clone())));
     let result = interp.run(&program_src);
     interp.clear_debugger();
 
@@ -599,7 +599,12 @@ fn eval_expression(interp: &mut Interpreter, expr: &str) -> Result<Array, String
         .first()
         .ok_or_else(|| "empty expression".to_string())?;
     match &stmt.kind {
-        StmtKind::Expr(e) => interp.eval(e, expr).map_err(|sig| format!("{sig:?}")),
+        // Suppress the seam while evaluating: a watch/hover expression that
+        // calls a function must not trip a breakpoint (which, mid-stop, would
+        // re-enter the hook and double-borrow the session).
+        StmtKind::Expr(e) => interp
+            .eval_suppressed(|i| i.eval(e, expr))
+            .map_err(|sig| format!("{sig:?}")),
         _ => Err("only expressions can be evaluated".to_string()),
     }
 }

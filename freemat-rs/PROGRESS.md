@@ -1595,8 +1595,13 @@ called from that prompt (recursive debugging).
       `ReplCommand`/reply channels; interactive REPL rewired as a client (`Engine::eval`). Graphics
       sink installed on the engine thread (`ServerHandle: Send`). `capture.rs`/`--list-builtins`
       keep direct interpreters. Behavior preserved; 3 engine unit tests + full `fm-cli` suite green.
-- [ ] **Phase 1 — Re-entrant seam** (`fm-interp`): drop `take()` exclusivity, add
-      `suppress_breakpoints` (watch-eval only) + pause-level depth.
+- [x] **Phase 1 — Re-entrant seam** (`fm-interp`). Hook held behind `Rc<dyn DebugHook>` and
+      consulted via a cloned handle (`on_statement(&self)`), so it stays installed and the seam
+      can be **re-entered** while the hook is on the stack (basis for nested `K>>` + recursive
+      breakpoints). `Interpreter::eval_suppressed` disables the seam around watch/hover evaluation
+      (`fm-dap`'s `evaluate` now wraps in it). Pause-level depth is hook-side (tracked by the
+      eventual engine hook), not an `fm-interp` concern. Tests: `fm-interp/tests/debug_seam.rs`
+      (re-entrancy / suppression / terminate); existing 8 `fm-dap` tests still green.
 - [ ] **Phase 2 — Embedded DAP-over-TCP** as an engine client (`--dap-port`): the **attach** path.
 - [ ] **Phase 3 — Nested debugger REPL** + recursive breakpoints.
 - [ ] **Phase 4 — Polish**: Ctrl-C→pause, output→DAP events, panic isolation, `dbstack`/`dbup`/`dbdown`.
