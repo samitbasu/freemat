@@ -18,6 +18,7 @@ mod baseconv;
 mod bitops;
 mod cellstruct;
 mod constructors;
+mod debug;
 mod docs;
 mod elementary;
 mod fitfun;
@@ -108,6 +109,7 @@ pub fn register_into(table: &mut FunctionTable) {
     cellstruct::register(table);
     time::register(table);
     interp_ops::register(table);
+    debug::register(table);
     io::register(table);
     bitops::register(table);
     baseconv::register(table);

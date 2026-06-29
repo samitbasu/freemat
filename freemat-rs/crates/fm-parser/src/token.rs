@@ -184,10 +184,12 @@ impl TokenKind {
             "case" => TokenKind::Case,
             "catch" => TokenKind::Catch,
             "continue" => TokenKind::Continue,
-            "dbstep" => TokenKind::DbStep,
             "dbtrace" => TokenKind::DbTrace,
-            "dbup" => TokenKind::DbUp,
-            "dbdown" => TokenKind::DbDown,
+            // NOTE: `dbstep`/`dbup`/`dbdown` are intentionally *not* reserved —
+            // they lex as ordinary identifiers so they dispatch to the `db*`
+            // builtins (`fm-builtins/src/debug.rs`) like `dbstop`/`dbcont`, which
+            // implement them against the live debug session. (The `DbStep`/
+            // `DbUp`/`DbDown` token kinds remain for back-compat but are unused.)
             "else" => TokenKind::Else,
             "elseif" => TokenKind::ElseIf,
             "end" => TokenKind::End,

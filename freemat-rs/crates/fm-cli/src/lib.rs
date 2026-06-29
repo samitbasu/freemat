@@ -16,6 +16,6 @@ pub mod server;
 // fm-cli surface (`fm_cli::FragmentScript`, `fm_cli::CapturedFragment`) and the
 // `--capture-fragment` CLI path are unchanged for downstream callers.
 pub use capture::run_fragment;
-pub use engine::{Engine, EvalOutcome};
+pub use engine::{Engine, EvalOutcome, EvalReply, StopInfo};
 pub use fm_doc::{CapturedFragment, FragmentScript};
 pub use server::{ServerHandle, start};

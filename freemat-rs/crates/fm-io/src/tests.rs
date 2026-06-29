@@ -183,7 +183,7 @@ fn ifftshift_roundtrip_odd() {
 fn fftn_matches_fft2() {
     // fftn of a 2-D matrix equals fft2 of it.
     let m = Array::double_matrix(&[3, 4], (0..12).map(|i| (i as f64) * 1.5 + 1.0).collect());
-    let a = crate::fft::fftn(&[m.clone()], false).unwrap();
+    let a = crate::fft::fftn(std::slice::from_ref(&m), false).unwrap();
     let b = crate::fft::fft2(&[m], false).unwrap();
     let da = fm_interp::value::to_c64_vec(&a[0]);
     let db = fm_interp::value::to_c64_vec(&b[0]);

@@ -81,6 +81,12 @@ pub struct Interpreter {
     /// statement. Shared (`Arc`) so a signal handler / another thread can raise
     /// it; checked with a single relaxed load per statement when armed.
     interrupt: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Shared terminal-debug state (`dbstop` breakpoints, the `K>>` resume
+    /// request). Written by the `db*` builtins and read by the engine's debug
+    /// hook — both run on this thread, so a plain `Rc<RefCell<…>>` suffices.
+    /// Always present (cheap when empty) so the `db*` builtins work standalone;
+    /// breakpoints only actually *fire* when the engine's hook is installed.
+    debug_session: crate::debug::DebugSessionHandle,
 }
 
 /// A `.m` script file: its parsed statements plus the source they were parsed
@@ -119,6 +125,7 @@ impl Interpreter {
             debugger: None,
             suppress_breakpoints: false,
             interrupt: None,
+            debug_session: crate::debug::DebugSessionHandle::default(),
         };
         crate::builtins::register_defaults(&mut interp.functions);
         interp
@@ -292,6 +299,14 @@ impl Interpreter {
     /// Detach and return the debugger hook handle, if one is attached.
     pub fn clear_debugger(&mut self) -> Option<Rc<dyn crate::debug::DebugHook>> {
         self.debugger.take()
+    }
+
+    /// A shared handle to the terminal-debug [`DebugSession`](crate::debug::DebugSession).
+    /// The `db*` builtins use it to set breakpoints / request a resume; the
+    /// engine's debug hook reads it to decide whether to stop.
+    #[must_use]
+    pub fn debug_session(&self) -> crate::debug::DebugSessionHandle {
+        self.debug_session.clone()
     }
 
     /// Arm cooperative interruption: when `flag` becomes `true`, the next

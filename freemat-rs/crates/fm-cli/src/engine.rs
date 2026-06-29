@@ -28,7 +28,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 
 use fm_dap::proto;
-use fm_interp::debug::{DebugControl, DebugHook};
+use fm_interp::debug::{DebugControl, DebugHook, ResumeKind};
 use fm_interp::{InterpError, Interpreter};
 use serde_json::{Value, json};
 
@@ -39,7 +39,7 @@ enum ReplCommand {
     /// Parse and run a source line at the top level; reply with output + error.
     Eval {
         source: String,
-        reply: Sender<EvalOutcome>,
+        reply: Sender<EvalReply>,
     },
     /// Answer a read-only query about interpreter state (e.g. completion).
     Query {
@@ -56,6 +56,38 @@ pub struct EvalOutcome {
     pub output: String,
     /// The runtime error, if the run raised one.
     pub error: Option<InterpError>,
+}
+
+/// One reply from the engine for a single eval. A run can produce *several* of
+/// these on the same channel: a breakpoint sends a [`EvalReply::Stopped`] and
+/// then (after resuming) a final [`EvalReply::Done`].
+///
+/// The interactive terminal driver (`main.rs`) interprets all three variants to
+/// drive the `K>>` prompt; programmatic callers ([`Engine::eval`]) collapse them
+/// back into a single [`EvalOutcome`].
+pub enum EvalReply {
+    /// The run finished (or errored). A terminal reply — nothing follows.
+    Done(EvalOutcome),
+    /// The run hit a breakpoint / step / pause and is now waiting at the `K>>`
+    /// prompt. More replies follow on the same channel once it resumes.
+    Stopped(StopInfo),
+    /// A resume command (`dbcont`/`dbstep`/`dbquit`) ran in the paused frame:
+    /// this `K>>` level is releasing. A terminal reply for *this* nested send.
+    Resumed,
+}
+
+/// Where (and why) a run paused, for the terminal `K>>` banner.
+pub struct StopInfo {
+    /// Output produced since the previous reply (print it before the prompt).
+    pub output: String,
+    /// The function the run stopped in (`""` = the top-level program).
+    pub function: String,
+    /// The 1-based source line the run stopped on.
+    pub line: usize,
+    /// Nesting depth of the stop (1 = first `K>>`, 2 = a nested breakpoint, …).
+    pub level: usize,
+    /// Why the run stopped: `"breakpoint"`, `"step"`, or `"pause"`.
+    pub reason: String,
 }
 
 /// A read-only query against the engine.
@@ -127,7 +159,6 @@ impl Engine {
         F: FnOnce(&mut Interpreter) + Send + 'static,
     {
         let (tx, rx) = channel::<EngineMsg>();
-        let dap_enabled = listener.is_some();
         let interrupt = Arc::new(AtomicBool::new(false));
         // Async pause request (DAP `pause`): the socket-reader thread raises it,
         // the debug hook honours it at the next statement.
@@ -136,15 +167,7 @@ impl Engine {
         let thread_pause = pause.clone();
         let handle = std::thread::Builder::new()
             .name("fm-interp".to_string())
-            .spawn(move || {
-                engine_thread(
-                    rx,
-                    dap_enabled,
-                    thread_interrupt,
-                    thread_pause,
-                    Box::new(setup),
-                )
-            })?;
+            .spawn(move || engine_thread(rx, thread_interrupt, thread_pause, Box::new(setup)))?;
         if let Some(listener) = listener {
             let tx = tx.clone();
             std::thread::Builder::new()
@@ -165,9 +188,20 @@ impl Engine {
         self.interrupt.clone()
     }
 
-    /// Run one source line, blocking until the engine replies.
+    /// Run one source line, blocking until the run fully finishes. If the run
+    /// pauses at a breakpoint with no one driving the `K>>` prompt it will block
+    /// until another client resumes it; for the interactive, debugger-aware path
+    /// use [`Self::send_eval_raw`] instead.
     pub fn eval(&self, source: impl Into<String>) -> EvalOutcome {
         send_eval(&self.tx, source.into())
+    }
+
+    /// Send a line to run and return the raw reply channel, for the interactive
+    /// terminal driver: it interprets [`EvalReply::Stopped`] to open a `K>>`
+    /// prompt and [`EvalReply::Resumed`] to close it. Most callers want
+    /// [`Self::eval`].
+    pub fn send_eval_raw(&self, source: impl Into<String>) -> Receiver<EvalReply> {
+        send_eval_raw(&self.tx, source.into())
     }
 
     /// Every registered function/builtin name (for tab-completion).
@@ -216,28 +250,61 @@ impl EngineClient {
     }
 }
 
-fn send_eval(tx: &Sender<EngineMsg>, source: String) -> EvalOutcome {
+/// Send a line to run and return the raw reply channel. On a dead engine,
+/// returns a channel pre-loaded with a `Done` error so callers never hang.
+fn send_eval_raw(tx: &Sender<EngineMsg>, source: String) -> Receiver<EvalReply> {
     let (reply, rx) = channel();
     let cmd = EngineMsg::Repl(ReplCommand::Eval { source, reply });
     if tx.send(cmd).is_err() {
-        return EvalOutcome {
+        let (dead, dead_rx) = channel();
+        let _ = dead.send(EvalReply::Done(EvalOutcome {
             output: String::new(),
             error: Some(InterpError::msg("interpreter engine is not running")),
-        };
+        }));
+        return dead_rx;
     }
-    rx.recv().unwrap_or_else(|_| EvalOutcome {
-        output: String::new(),
-        error: Some(InterpError::msg(
-            "interpreter engine stopped before replying",
-        )),
-    })
+    rx
+}
+
+/// Drive an eval to completion, collapsing the `Stopped`/`Resumed`/`Done`
+/// stream into one [`EvalOutcome`] (accumulating output across stops). Used by
+/// the blocking [`Engine::eval`] / [`EngineClient::eval`] — a programmatic
+/// caller does not open a `K>>` prompt, so it just waits for the run to finish.
+fn send_eval(tx: &Sender<EngineMsg>, source: String) -> EvalOutcome {
+    let rx = send_eval_raw(tx, source);
+    let mut output = String::new();
+    loop {
+        match rx.recv() {
+            Ok(EvalReply::Done(o)) => {
+                output.push_str(&o.output);
+                return EvalOutcome {
+                    output,
+                    error: o.error,
+                };
+            }
+            Ok(EvalReply::Stopped(info)) => output.push_str(&info.output),
+            Ok(EvalReply::Resumed) => {
+                return EvalOutcome {
+                    output,
+                    error: None,
+                };
+            }
+            Err(_) => {
+                return EvalOutcome {
+                    output,
+                    error: Some(InterpError::msg(
+                        "interpreter engine stopped before replying",
+                    )),
+                };
+            }
+        }
+    }
 }
 
 // ---- the engine thread ------------------------------------------------------
 
 fn engine_thread(
     rx: Receiver<EngineMsg>,
-    dap_enabled: bool,
     interrupt: Arc<AtomicBool>,
     pause: Arc<AtomicBool>,
     setup: Box<dyn FnOnce(&mut Interpreter) + Send>,
@@ -251,12 +318,13 @@ fn engine_thread(
     // debug hook, which reads it while stopped at a breakpoint.
     let inbox = Rc::new(rx);
     let state = Rc::new(RefCell::new(DebugState::new(pause)));
-    if dap_enabled {
-        interp.set_debugger(Rc::new(EngineHook {
-            inbox: inbox.clone(),
-            state: state.clone(),
-        }));
-    }
+    // The hook is installed unconditionally: terminal `dbstop` breakpoints work
+    // even without a DAP client. When nothing is armed (no breakpoints, no step,
+    // no DAP writer) `on_statement` takes a cheap early-out and resumes.
+    interp.set_debugger(Rc::new(EngineHook {
+        inbox: inbox.clone(),
+        state: state.clone(),
+    }));
     serve(&inbox, &mut interp, &state);
 }
 
@@ -294,16 +362,19 @@ fn run_eval(
     interp: &mut Interpreter,
     state: &Rc<RefCell<DebugState>>,
     source: String,
-    reply: Sender<EvalOutcome>,
+    reply: Sender<EvalReply>,
 ) {
     {
         // Record the top-level source so the hook can tell program statements
         // (breakpoint-eligible) from statements inside called functions. Reset
-        // the run-output accumulator and any stale pause request.
+        // the run-output accumulator and any stale pause request. Push the reply
+        // channel so the hook can send a `Stopped` notification on it if the run
+        // pauses at a breakpoint.
         let mut s = state.borrow_mut();
         s.program_src = source.clone();
         s.run_output.clear();
         let _ = s.pause_requested();
+        s.reply_stack.push(reply.clone());
     }
     // Isolate the run: a panic in a builtin must not take down the engine thread
     // (which would hang every client). Catch it, recover the interpreter, and
@@ -327,10 +398,14 @@ fn run_eval(
         }
     };
     // Flush any output produced since the last stop to the console, then return
-    // the whole run's output to the REPL.
+    // the output accumulated since the last reply to the REPL.
     drain_output(interp, state);
-    let output = std::mem::take(&mut state.borrow_mut().run_output);
-    let _ = reply.send(EvalOutcome { output, error });
+    let output = {
+        let mut s = state.borrow_mut();
+        s.reply_stack.pop();
+        std::mem::take(&mut s.run_output)
+    };
+    let _ = reply.send(EvalReply::Done(EvalOutcome { output, error }));
 }
 
 /// Extract a human-readable message from a caught panic payload.
@@ -371,11 +446,16 @@ fn run_nested(
     source: &str,
 ) -> (String, Option<InterpError>) {
     let outer_output = interp.take_output();
-    let (saved_src, saved_mode) = {
+    // Terminal breakpoints/steps are suppressed at this frame's depth so the
+    // literal command line doesn't re-trip a breakpoint on its own coinciding
+    // line number; they still fire in functions the command calls (deeper).
+    let floor = interp.context.num_scopes();
+    let (saved_src, saved_mode, saved_floor) = {
         let mut s = state.borrow_mut();
         let saved = (
             std::mem::replace(&mut s.program_src, source.to_string()),
             s.mode,
+            s.nested_floor.replace(floor),
         );
         s.mode = RunMode::Continue;
         saved
@@ -386,6 +466,7 @@ fn run_nested(
         let mut s = state.borrow_mut();
         s.program_src = saved_src;
         s.mode = saved_mode;
+        s.nested_floor = saved_floor;
     }
     interp.emit(&outer_output); // restore the outer run's pending output
     (output, error)
@@ -424,36 +505,64 @@ struct EngineHook {
 
 impl DebugHook for EngineHook {
     fn on_statement(&self, interp: &mut Interpreter, line: usize, src: &str) -> DebugControl {
-        // Decide whether to stop, holding the state borrow only for the check.
-        let reason: &str = {
+        let depth = interp.context.num_scopes();
+
+        // ---- terminal debugging (`dbstop`/`dbstep`): works with or without a
+        // DAP client attached. Keyed by the executing function's name (`""` for
+        // the top-level program), so a breakpoint fires inside a called `.m`.
+        // Suppressed at/above a nested `K>>` command's own frame depth, so the
+        // command line never re-trips a breakpoint on its own line number.
+        let term_reason = if self.state.borrow().nested_floor.is_some_and(|f| depth <= f) {
+            None
+        } else {
+            let func = interp.context.top().name.to_string();
+            let session = interp.debug_session();
+            let mut s = session.borrow_mut();
+            let reason = if s.step.is_some_and(|d| depth <= d) {
+                Some("step")
+            } else if s.breakpoint_hit(&func, line) {
+                Some("breakpoint")
+            } else {
+                None
+            };
+            if reason.is_some() {
+                s.step = None; // a single-step is consumed by the stop it causes
+            }
+            reason
+        };
+
+        // ---- DAP (IDE) debugging: only active while a client is attached. ----
+        let dap_reason = {
             let s = self.state.borrow();
             if s.writer.is_none() {
-                return DebugControl::Resume; // no debugger attached
-            }
-            if s.terminate {
+                None
+            } else if s.terminate {
                 return DebugControl::Terminate;
-            }
-            let paused = s.pause_requested(); // async DAP `pause`
-            let hit_breakpoint = src == s.program_src && s.breakpoints.contains(&line);
-            let depth = interp.context.num_scopes();
-            let stepped = match s.mode {
-                RunMode::Continue => false,
-                RunMode::StepIn => true,
-                RunMode::StepOver(d) => depth <= d,
-                RunMode::StepOut(d) => depth < d,
-            };
-            if !paused && !hit_breakpoint && !stepped {
-                return DebugControl::Resume;
-            }
-            if hit_breakpoint {
-                "breakpoint"
-            } else if paused {
-                "pause"
             } else {
-                "step"
+                let paused = s.pause_requested(); // async DAP `pause`
+                let hit = src == s.program_src && s.breakpoints.contains(&line);
+                let stepped = match s.mode {
+                    RunMode::Continue => false,
+                    RunMode::StepIn => true,
+                    RunMode::StepOver(d) => depth <= d,
+                    RunMode::StepOut(d) => depth < d,
+                };
+                if hit {
+                    Some("breakpoint")
+                } else if paused {
+                    Some("pause")
+                } else if stepped {
+                    Some("step")
+                } else {
+                    None
+                }
             }
         };
-        self.stopped_loop(interp, reason)
+
+        match term_reason.or(dap_reason) {
+            Some(reason) => self.stopped_loop(interp, reason),
+            None => DebugControl::Resume,
+        }
     }
 }
 
@@ -466,7 +575,12 @@ impl EngineHook {
     fn stopped_loop(&self, interp: &mut Interpreter, reason: &str) -> DebugControl {
         // Flush output produced up to this stop to the debug console first.
         drain_output(interp, &self.state);
-        {
+        // The terminal location of the stop, for the `K>>` banner.
+        let (function, line) = {
+            let top = interp.context.top();
+            (top.name.clone(), top.current_line.unwrap_or(0))
+        };
+        let (output, term_reply, level) = {
             let mut s = self.state.borrow_mut();
             s.pause_level += 1;
             s.frames.reset();
@@ -476,9 +590,29 @@ impl EngineHook {
             let mut body = proto::stopped_body(reason);
             body["fmPauseLevel"] = json!(level);
             s.event("stopped", body);
+            // Hand the terminal driver the output up to this stop + the location.
+            let output = std::mem::take(&mut s.run_output);
+            (output, s.reply_stack.last().cloned(), level)
+        };
+        // Mark the session paused so the `db*` resume builtins are valid.
+        interp.debug_session().borrow_mut().paused = true;
+        if let Some(reply) = term_reply {
+            let _ = reply.send(EvalReply::Stopped(StopInfo {
+                output,
+                function,
+                line,
+                level,
+                reason: reason.to_string(),
+            }));
         }
         let control = self.serve_stopped(interp);
-        self.state.borrow_mut().pause_level -= 1;
+        let level_now = {
+            let mut s = self.state.borrow_mut();
+            s.pause_level -= 1;
+            s.pause_level
+        };
+        // Still paused only if an outer `K>>` level remains on the stack.
+        interp.debug_session().borrow_mut().paused = level_now > 0;
         control
     }
 
@@ -500,8 +634,17 @@ impl EngineHook {
                     // frame's* live context. It sees and mutates the suspended
                     // scope, and (via the re-entrant seam) a breakpoint inside it
                     // pushes a deeper stop.
+                    self.state.borrow_mut().reply_stack.push(reply.clone());
                     let (output, error) = run_nested(interp, &self.state, &source);
-                    let _ = reply.send(EvalOutcome { output, error });
+                    self.state.borrow_mut().reply_stack.pop();
+                    // A `dbcont`/`dbstep`/`dbquit` run in the frame asks the run
+                    // to resume: pop this `K>>` level and act on it.
+                    let resume = interp.debug_session().borrow_mut().resume.take();
+                    if let Some(kind) = resume {
+                        let _ = reply.send(EvalReply::Resumed);
+                        return self.apply_resume(interp, kind);
+                    }
+                    let _ = reply.send(EvalReply::Done(EvalOutcome { output, error }));
                 }
                 EngineMsg::Repl(ReplCommand::Query { kind, reply }) => {
                     answer_query(interp, kind, reply);
@@ -512,6 +655,29 @@ impl EngineHook {
                     self.state.borrow_mut().detach();
                     return DebugControl::Terminate;
                 }
+            }
+        }
+    }
+
+    /// Apply a terminal resume request (`dbcont`/`dbstep`/`dbquit`) issued at the
+    /// `K>>` prompt: set the run mode (and, for `dbstep`, arm a single-step at
+    /// the current call depth) and return the control the seam should obey.
+    fn apply_resume(&self, interp: &mut Interpreter, kind: ResumeKind) -> DebugControl {
+        match kind {
+            ResumeKind::Continue => {
+                self.state.borrow_mut().mode = RunMode::Continue;
+                DebugControl::Resume
+            }
+            ResumeKind::Quit => {
+                self.state.borrow_mut().terminate = true;
+                DebugControl::Terminate
+            }
+            ResumeKind::Step => {
+                self.state.borrow_mut().mode = RunMode::Continue;
+                // Stop again at the next statement at this depth or shallower.
+                let depth = interp.context.num_scopes();
+                interp.debug_session().borrow_mut().step = Some(depth);
+                DebugControl::Resume
             }
         }
     }
@@ -715,6 +881,17 @@ struct DebugState {
     program_src: String,
     /// The source path the client set breakpoints against (for stack frames).
     source_path: String,
+    /// The reply channels of the eval(s) currently in flight, innermost last.
+    /// The debug hook clones the top one to send a `Stopped` notification to the
+    /// interactive terminal driver when a run pauses (the blocking
+    /// [`Engine::eval`] wrapper just ignores it).
+    reply_stack: Vec<Sender<EvalReply>>,
+    /// While running a nested `K>>` command, the call depth of that command's
+    /// own frame: terminal breakpoints/steps are suppressed at this depth or
+    /// shallower (so the literal command line doesn't re-trip a breakpoint on
+    /// its own coinciding line number) but still fire in functions it *calls*
+    /// (deeper frames). `None` outside a nested command.
+    nested_floor: Option<usize>,
 }
 
 impl DebugState {
@@ -731,6 +908,8 @@ impl DebugState {
             terminate: false,
             program_src: String::new(),
             source_path: "fm-repl".to_string(),
+            reply_stack: Vec::new(),
+            nested_floor: None,
         }
     }
 

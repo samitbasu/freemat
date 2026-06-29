@@ -10,7 +10,9 @@
 //! plotting commands render live in a browser over a websocket.
 
 use std::io::Write;
+use std::sync::mpsc::Receiver;
 
+use fm_cli::EvalReply;
 use fm_interp::Interpreter;
 use miette::{GraphicalReportHandler, GraphicalTheme};
 use rustyline::DefaultEditor;
@@ -123,7 +125,7 @@ fn main() -> std::process::ExitCode {
                 if matches!(trimmed, "quit" | "exit") {
                     break;
                 }
-                eval_line(&engine, &line, &reporter);
+                run_repl_line(&engine, &mut rl, &line, &reporter);
             }
             // Ctrl-C: abandon the current line, keep going.
             Err(ReadlineError::Interrupted) => continue,
@@ -138,26 +140,130 @@ fn main() -> std::process::ExitCode {
     std::process::ExitCode::SUCCESS
 }
 
-/// Evaluate one input line through the engine, flushing buffered output and
-/// rendering any error. Output is printed in both cases (matching the old
-/// behavior of showing whatever was emitted before an error).
-fn eval_line(engine: &fm_cli::Engine, line: &str, reporter: &GraphicalReportHandler) {
-    // Clear any interrupt raised while idle at the prompt, so a stale Ctrl-C
-    // doesn't abort this fresh line on its first statement.
+/// Evaluate one top-level REPL line through the engine. If the run pauses at a
+/// `dbstop` breakpoint, this opens a nested `K>>` debugger prompt (driven by
+/// [`drive`]) where typed lines run in the paused frame until `dbcont`/`dbstep`/
+/// `dbquit` resumes the run.
+fn run_repl_line(
+    engine: &fm_cli::Engine,
+    rl: &mut DefaultEditor,
+    line: &str,
+    reporter: &GraphicalReportHandler,
+) {
+    clear_interrupt(engine);
+    let rx = engine.send_eval_raw(line);
+    drive(engine, rl, &rx, reporter);
+}
+
+/// The result of driving one eval channel to a terminal reply.
+enum Drove {
+    /// The run on this channel finished (its output/error was printed).
+    Finished,
+    /// A `dbcont`/`dbstep`/`dbquit` released this `K>>` level.
+    Resumed,
+}
+
+/// Pump one eval channel to a terminal reply, opening (and recursively nesting)
+/// `K>>` prompts for every breakpoint the run hits.
+fn drive(
+    engine: &fm_cli::Engine,
+    rl: &mut DefaultEditor,
+    rx: &Receiver<EvalReply>,
+    reporter: &GraphicalReportHandler,
+) -> Drove {
+    loop {
+        match rx.recv() {
+            Ok(EvalReply::Done(outcome)) => {
+                print!("{}", outcome.output);
+                if let Some(e) = outcome.error {
+                    render_error(&e, reporter);
+                }
+                let _ = std::io::stdout().flush();
+                return Drove::Finished;
+            }
+            Ok(EvalReply::Resumed) => return Drove::Resumed,
+            Ok(EvalReply::Stopped(info)) => {
+                print!("{}", info.output);
+                print_stop_banner(&info);
+                let _ = std::io::stdout().flush();
+                // Service this pause level; when it resumes, loop back to read
+                // the run's eventual `Done` on the same channel.
+                k_loop(engine, rl, reporter);
+            }
+            Err(_) => {
+                eprintln!("interpreter engine stopped unexpectedly");
+                return Drove::Finished;
+            }
+        }
+    }
+}
+
+/// Read and run lines at the `K>>` prompt until a resume command pops this pause
+/// level. Each nested line is itself driven (so a breakpoint hit from `K>>`
+/// opens a deeper prompt).
+fn k_loop(engine: &fm_cli::Engine, rl: &mut DefaultEditor, reporter: &GraphicalReportHandler) {
+    loop {
+        match rl.readline("K>> ") {
+            Ok(kline) => {
+                let trimmed = kline.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let _ = rl.add_history_entry(kline.as_str());
+                clear_interrupt(engine);
+                let rx = engine.send_eval_raw(kline.as_str());
+                match drive(engine, rl, &rx, reporter) {
+                    Drove::Finished => continue, // nested line done; prompt again
+                    Drove::Resumed => return,    // dbcont/dbstep popped this level
+                }
+            }
+            // Ctrl-C at K>>: abandon the current line, keep prompting.
+            Err(ReadlineError::Interrupted) => continue,
+            // Ctrl-D at K>>: abort the paused run (like `dbquit`).
+            Err(ReadlineError::Eof) => {
+                let rx = engine.send_eval_raw("dbquit");
+                let _ = drive(engine, rl, &rx, reporter);
+                return;
+            }
+            Err(e) => {
+                eprintln!("input error: {e}");
+                return;
+            }
+        }
+    }
+}
+
+/// Announce where a run paused, for the `K>>` banner.
+fn print_stop_banner(info: &fm_cli::StopInfo) {
+    let loc = if info.function.is_empty() {
+        format!("line {}", info.line)
+    } else {
+        format!("{} (line {})", info.function, info.line)
+    };
+    let verb = match info.reason.as_str() {
+        "step" => "Stepped to",
+        "pause" => "Paused at",
+        _ => "Breakpoint:",
+    };
+    println!("{verb} {loc}");
+}
+
+/// Render a runtime error through the graphical reporter (falling back to plain).
+fn render_error(e: &fm_interp::InterpError, reporter: &GraphicalReportHandler) {
+    let mut buf = String::new();
+    if reporter.render_report(&mut buf, e).is_ok() {
+        eprint!("{buf}");
+    } else {
+        eprintln!("error: {e}");
+    }
+}
+
+/// Clear any interrupt raised while idle at the prompt, so a stale Ctrl-C does
+/// not abort the next line on its first statement.
+fn clear_interrupt(engine: &fm_cli::Engine) {
     engine
         .interrupt_flag()
         .store(false, std::sync::atomic::Ordering::Relaxed);
-    let outcome = engine.eval(line);
-    print!("{}", outcome.output);
-    if let Some(e) = outcome.error {
-        let mut buf = String::new();
-        if reporter.render_report(&mut buf, &e).is_ok() {
-            eprint!("{buf}");
-        } else {
-            eprintln!("error: {e}");
-        }
-    }
-    let _ = std::io::stdout().flush();
 }
 
 /// Raw pointer to the engine's interrupt `AtomicBool`, reachable from the

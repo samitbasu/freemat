@@ -18,8 +18,9 @@ then tick it here and commit. Leave notes for the next session under each stage.
 - [x] **Stage 8 — `fm-io`: MAT files, file I/O, FFT, regex**
 - [x] **Stage 9 — Advanced / optional (sparse matrices)** — sparse done; special
       functions / optimization / audio / cranelift remain for a future pass.
-- [~] **Stage 10 — Debugging & editor integration (DAP + `db*` engine; optional LSP)** — in progress
-      (see `### Stage 10 — Debugging` below for the interpreter-as-service plan + status)
+- [x] **Stage 10 — Debugging & editor integration (DAP + `db*` engine)** — DAP attach/launch,
+      nested `K>>`, and the terminal `db*` builtins are all done (Phases 0–4 complete); the *optional*
+      LSP is the only unstarted piece (see `### Stage 10 — Debugging` below for the full status)
 
 ## Definition of Done (every stage)
 
@@ -1627,7 +1628,7 @@ called from that prompt (recursive debugging).
       **Deferred to Phase 4:** a terminal-side `K>>` prompt (needs `dbstop`/`dbcont` builtins to set
       breakpoints without an IDE, and a non-blocking eval path) — the engine mechanism is reachable
       today via the DAP debug console and the second-client `Eval` path.
-- [~] **Phase 4 — Polish** (in progress). **Done:** cooperative **interrupt (Ctrl-C)** — `fm-interp`
+- [x] **Phase 4 — Polish** (done). **Done:** cooperative **interrupt (Ctrl-C)** — `fm-interp`
       gained an `Arc<AtomicBool>` interrupt flag checked at the statement chokepoint (one relaxed
       load/statement when armed), aborting the run with a `FreeMat:interrupt` error; frames unwind
       cleanly (`pop_scope` is unconditional) so the interpreter stays usable. The engine arms it for
@@ -1649,8 +1650,43 @@ called from that prompt (recursive debugging).
       Test: `a_panicking_builtin_does_not_kill_the_engine`. **The DAP interface is now feature-complete**
       (initialize/launch/attach, breakpoints, step in/over/out, continue, pause, stack/scopes/variables,
       evaluate incl. repl-context, output events, disconnect; nested `K>>` + recursive breakpoints).
-      **Remaining (REPL features, not the DAP interface):** `dbstop`/`dbcont` + `dbstack`/`dbup`/`dbdown`
-      builtins and a terminal-side `K>>` prompt (needs those builtins + a non-blocking eval path).
+      **Terminal `db*` builtins + `K>>` prompt (done).** The remaining REPL-side debugging shipped:
+      - **Shared `DebugSession`** (`fm-interp/src/debug.rs`, `Rc<RefCell<…>>` on the interpreter,
+        `Interpreter::debug_session()`): `dbstop` breakpoints keyed by function name (`""` = the
+        top-level program), a `paused` flag, a `resume` request, and a pending single-step. The
+        `db*` builtins **write** it; the engine hook **reads** it. Always present (cheap when empty)
+        so the builtins work standalone; breakpoints only *fire* when the engine hook is installed.
+      - **`db*` builtins** (`fm-builtins/src/debug.rs`, registered in the standard library):
+        `dbstop`/`dbclear`(=`dbdelete`)/`dbstatus`(=`dblist`) manage breakpoints; `dbstack`/`dbup`/
+        `dbdown` inspect/walk the call stack via `Context` (the switchable active scope is the basis
+        for `dbup`/`dbdown`); `dbstep`/`dbcont`/`dbquit` request a resume (refused unless paused).
+        **Lexer change:** `dbstep`/`dbup`/`dbdown` were *de-reserved* in `fm-parser` (they had no real
+        keyword handling — `dbup`/`dbdown` were interpreter no-ops, `dbstep` didn't even parse) so they
+        lex as ordinary identifiers and dispatch to the builtins like `dbstop`/`dbcont` already did.
+      - **Engine: terminal stops + the non-blocking eval path** (`fm-cli/src/engine.rs`). The hook is
+        now installed **unconditionally** (terminal `dbstop` works with no DAP client; a cheap
+        early-out when nothing is armed). `on_statement` honours terminal breakpoints/steps keyed by
+        the executing function name *or* DAP breakpoints. The eval reply became a stream:
+        `EvalReply::{Done, Stopped, Resumed}` over one channel — a run sends `Stopped` at a breakpoint
+        and a final `Done` after resuming. `Engine::eval`/`EngineClient::eval` stay blocking by
+        collapsing the stream (ignoring/​accumulating `Stopped` until `Done`), so the DAP tests are
+        unchanged; `Engine::send_eval_raw` exposes the raw channel for the interactive driver. A
+        `reply_stack` lets the hook notify whichever eval is in flight; a `nested_floor` suppresses
+        terminal breakpoints at a nested `K>>` command's own frame depth (so the command line doesn't
+        re-trip a breakpoint on its own coinciding line) while still firing in functions it calls.
+      - **Terminal `K>>` driver** (`fm-cli/src/main.rs`): a recursive `drive()` over the raw
+        `EvalReply` channel — on `Stopped` it opens a `K>>` rustyline prompt whose lines run in the
+        paused frame (each itself driven, so a breakpoint hit from `K>>` opens a deeper prompt);
+        `dbcont`/`dbstep`/`dbquit` (or Ctrl-D) reply `Resumed` to pop the level. Ctrl-C abandons a
+        `K>>` line.
+      - **Decisions / limitations:** a bare `dbstop(line)` top-level breakpoint persists and matches
+        *any* later top-level line at that number (no file identity for REPL input) — the interactive
+        `K>>` handles the re-stop fine; `dbclear` when done. `dbup`/`dbdown` move the *inspected* frame
+        (for `dbstack`/the DAP variables view); nested `K>>` evaluation still runs in the executing
+        frame. `dbstack` is display-only (no struct return yet). Tests: `fm-cli/tests/terminal_debug.rs`
+        (6) — top-level breakpoint + dbcont, function breakpoint + dbstack/dbup/dbdown, dbstep,
+        dbquit-aborts, dbcont-outside-debug-errors, dbstatus/dbclear. The 8 `dap_attach` tests are
+        unchanged.
 
 **FreeMat reference to port later:** `Interpreter.cpp` `bpStack`/`processBreakpoints`/`doDebugCycle`/
 `dbup`/`dbdown`; `libCore/Debug.cpp`; observer model in `libXP/Editor.cpp` becomes the Rust event
