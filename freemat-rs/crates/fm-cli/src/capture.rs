@@ -46,6 +46,12 @@ const PROMPT: &str = "--> ";
 /// `rand`/`randn`/`randi` are reproducible. Mirrors a user typing `seed(1,0)`.
 const SEED_PRELUDE: &str = "seed(1,0);";
 
+/// Serializes the process-global working-directory mutation inside
+/// [`run_fragment`] so concurrent callers (notably the parallel capture unit
+/// tests) don't race on the shared cwd. See its acquisition site for the exact
+/// race this prevents.
+static CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Run a fragment script headlessly and capture its REPL transcript.
 ///
 /// This is the in-process library entry point (used by xtask in P3). It:
@@ -65,6 +71,17 @@ const SEED_PRELUDE: &str = "seed(1,0);";
 /// ends with exactly one newline.
 #[must_use]
 pub fn run_fragment(script: &FragmentScript) -> CapturedFragment {
+    // Staging chdir's the *process-global* current directory, so concurrent
+    // `run_fragment` calls would race on it. The failure is subtle: one thread's
+    // `remove_dir_all` (staging cleanup) can unlink the directory another thread
+    // is currently `cwd`'d into, so that thread's next `current_dir()` fails with
+    // `ENOENT`, `stage_files` bails to `None`, and its aux `.m` files silently
+    // never load. Serialize the whole chdir'd section behind a process-global
+    // lock. `docgen` runs fragments sequentially, so this is uncontended in
+    // production; it only orders the parallel capture unit tests. A poisoned lock
+    // (from a prior panic) is tolerated — we guard only the cwd, no shared data.
+    let _cwd_guard = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
     let mut interp = Interpreter::new();
     fm_builtins::register_standard_library(&mut interp);
 

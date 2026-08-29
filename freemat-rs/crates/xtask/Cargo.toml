@@ -21,8 +21,19 @@ fm-cli = { version = "0.0.0", path = "../fm-cli" }
 # Linking fm-builtins forces its `register_doc!`/`register_section!` inventory
 # submission sites into the xtask binary so `Registry::global()` collects them.
 fm-builtins = { version = "0.0.0", path = "../fm-builtins" }
+# `eval` / `builtins`: build a headless Interpreter directly (run code, capture
+# the retained graphics scene, enumerate the registered standard library).
+fm-interp = { version = "0.0.0", path = "../fm-interp" }
+# `conformance`: run the FreeMat .m corpus and gate against a saved baseline.
+fm-conformance = { version = "0.0.0", path = "../fm-conformance" }
+# `eval` renders runtime errors with the same graphical reporter as the REPL.
+miette = { workspace = true, features = ["fancy"] }
+# Command-line parsing for the developer tasks (derive API). A normal (not dev-)
+# dependency: the `xtask` binary parses its args at runtime.
+clap = { version = "4", features = ["derive"] }
 # Serialize FragmentScript / parse the captured `error_count` when probing
-# fragments in the crash-isolated `fm --capture-fragment` subprocess (P7).
+# fragments in the crash-isolated `fm --capture-fragment` subprocess (P7); also
+# the `conformance` baseline (de)serialization.
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 

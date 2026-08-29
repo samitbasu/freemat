@@ -1,15 +1,27 @@
 //! `cargo xtask` — FreeMat-rs developer tasks.
 //!
-//! The only task today is `docgen` (help-system phase P3, implementing §5 of
-//! `docs/HELP_SYSTEM.md`):
+//! Argument parsing is a `clap` derive ([`Cli`]); each subcommand delegates to a
+//! sibling module. Running `cargo xtask` with no subcommand defaults to
+//! `docgen`, so the docs pipeline's entry point is unchanged.
 //!
+//! Testing & utilities:
+//! ```text
+//! cargo xtask eval "sum(1:10)"     # run FreeMat code headlessly (the `eval` module)
+//! cargo xtask conformance --check  # run the .m corpus, gate on a baseline
+//! cargo xtask builtins --search fft# list/search the standard library + doc coverage
+//! cargo xtask help sin             # query the embedded help/doc registry
+//! cargo xtask ci                   # fmt + clippy + test + docgen --check + conformance
+//! ```
+//!
+//! Docs pipeline (help-system phase P3, implementing §5 of
+//! `docs/HELP_SYSTEM.md`):
 //! ```text
 //! cargo xtask docgen          # regenerate crates/fm-doc/src/generated/fragments.rs
 //! cargo xtask docgen --check  # CI gate: fail if regenerating would change it,
 //!                             # or if any validation error is found
 //! ```
 //!
-//! # Pipeline (§5)
+//! # `docgen` pipeline (§5)
 //! 1. **Collect** the registry ([`fm_doc::Registry::global`]). `inventory`
 //!    collects whatever `register_doc!`/`register_section!` sites are *linked*
 //!    into this binary; depending on (and referencing) `fm-builtins` forces
@@ -27,6 +39,11 @@
 //! 5. **Emit** the fragment DB as deterministic, rustfmt-clean generated Rust at
 //!    `crates/fm-doc/src/generated/fragments.rs` (sorted by hash).
 
+mod builtins;
+mod ci;
+mod conformance;
+mod eval;
+mod help;
 mod migrate;
 mod place;
 
@@ -34,6 +51,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use clap::{Parser, Subcommand};
 use fm_doc::{CapturedFragment, Fragment, Registry};
 
 /// Force the linker to keep `fm-builtins` (and therefore its
@@ -56,60 +74,161 @@ fn force_builtin_linkage() {
     std::hint::black_box(addr);
 }
 
-fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let task = args.first().map(String::as_str);
+/// FreeMat-rs developer tasks. Running `cargo xtask` with no subcommand
+/// defaults to `docgen` (the docs pipeline's regenerate step).
+#[derive(Parser)]
+#[command(
+    name = "xtask",
+    bin_name = "cargo xtask",
+    version,
+    disable_help_subcommand = true
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
 
-    match task {
-        Some("docgen") | None => {
-            let check = args.iter().any(|a| a == "--check");
-            match docgen(check) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(report) => {
-                    eprintln!("{report}");
-                    ExitCode::FAILURE
-                }
-            }
+#[derive(Subcommand)]
+enum Command {
+    /// Regenerate the help fragment DB (the default task).
+    Docgen {
+        /// Fail if regenerating would change the committed file (CI gate).
+        #[arg(long)]
+        check: bool,
+    },
+    /// Run FreeMat code headlessly and print the REPL output.
+    Eval {
+        /// Code to run (multiple args are joined with newlines). Omit — or pass
+        /// `-` — to read the program from stdin.
+        code: Vec<String>,
+        /// Read the program from a `.m` file instead of the command line.
+        #[arg(long)]
+        file: Option<String>,
+        /// Also write the produced figure's Plotly wire JSON to this path.
+        #[arg(long)]
+        figure: Option<String>,
+    },
+    /// Run the FreeMat `.m` conformance corpus (optionally baseline-gated).
+    Conformance {
+        /// Restrict the run to these directories (default: all covered dirs).
+        dirs: Vec<String>,
+        /// Also list each failing/erroring test with its detail string.
+        #[arg(long)]
+        failures: bool,
+        /// Record the per-directory pass counts as the baseline snapshot.
+        #[arg(long = "save-baseline")]
+        save_baseline: bool,
+        /// Fail if any directory regressed against the saved baseline.
+        #[arg(long)]
+        check: bool,
+    },
+    /// List / search the registered standard library and its doc coverage.
+    Builtins {
+        /// Only builtins whose name contains this substring.
+        #[arg(long)]
+        search: Option<String>,
+        /// Only builtins that have no help-registry entry.
+        #[arg(long)]
+        undocumented: bool,
+    },
+    /// Query the embedded help/doc registry from the terminal.
+    Help {
+        /// Topic to show (name or alias).
+        topic: Option<String>,
+        /// List every topic with its one-line summary.
+        #[arg(long)]
+        list: bool,
+        /// Topics whose name or summary contains this term.
+        #[arg(long)]
+        search: Option<String>,
+    },
+    /// Run the local verification gate: fmt, clippy, test, docgen, conformance.
+    Ci {
+        /// Skip clippy and the conformance regression check.
+        #[arg(long)]
+        fast: bool,
+    },
+    /// Convert legacy `@Module` docs into staging (docs pipeline P6).
+    MigrateDocs {
+        #[arg(long)]
+        section: Option<String>,
+        #[arg(long)]
+        out: Option<String>,
+    },
+    /// Probe migrated fragments and place them (docs pipeline P6).
+    MigratePlace {
+        #[arg(long)]
+        staging: Option<String>,
+    },
+}
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+
+    // Pin `fm-builtins` into the binary so its `register_doc!` inventory sites
+    // are linked and `Registry::global()` collects them (help/builtins/docgen).
+    force_builtin_linkage();
+
+    // No subcommand defaults to `docgen` (no `--check`), preserving the prior
+    // `cargo xtask` behavior.
+    let (name, result) = match cli.command {
+        None => ("docgen", docgen(false)),
+        Some(Command::Docgen { check }) => ("docgen", docgen(check)),
+        Some(Command::Eval { code, file, figure }) => (
+            "eval",
+            eval::eval(&code, file.as_deref(), figure.as_deref()),
+        ),
+        Some(Command::Conformance {
+            dirs,
+            failures,
+            save_baseline,
+            check,
+        }) => (
+            "conformance",
+            conformance::conformance(&dirs, failures, save_baseline, check),
+        ),
+        Some(Command::Builtins {
+            search,
+            undocumented,
+        }) => (
+            "builtins",
+            builtins::builtins(search.as_deref(), undocumented),
+        ),
+        Some(Command::Help {
+            topic,
+            list,
+            search,
+        }) => (
+            "help",
+            help::help(topic.as_deref(), list, search.as_deref()),
+        ),
+        Some(Command::Ci { fast }) => ("ci", ci::ci(fast)),
+        Some(Command::MigrateDocs { section, out }) => (
+            "migrate-docs",
+            migrate::migrate_docs(section.as_deref(), out.as_deref()),
+        ),
+        Some(Command::MigratePlace { staging }) => {
+            ("migrate-place", place::migrate_place(staging.as_deref()))
         }
-        Some("migrate-docs") => {
-            let section = flag_value(&args, "--section");
-            let out = flag_value(&args, "--out");
-            match migrate::migrate_docs(section.as_deref(), out.as_deref()) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(e) => {
-                    eprintln!("migrate-docs: {e}");
-                    ExitCode::FAILURE
-                }
+    };
+
+    report_result(name, result)
+}
+
+/// Render a command's `Result` to a process exit code, prefixing any error with
+/// the command name (unless the message already starts with it).
+fn report_result(cmd: &str, result: Result<(), String>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(msg) => {
+            if msg.starts_with(cmd) {
+                eprintln!("{msg}");
+            } else {
+                eprintln!("{cmd}: {msg}");
             }
-        }
-        Some("migrate-place") => {
-            let staging = flag_value(&args, "--staging");
-            match place::migrate_place(staging.as_deref()) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(e) => {
-                    eprintln!("migrate-place: {e}");
-                    ExitCode::FAILURE
-                }
-            }
-        }
-        Some(other) => {
-            eprintln!(
-                "unknown xtask: {other:?}\n\nusage:\n  \
-                 cargo xtask docgen [--check]\n  \
-                 cargo xtask migrate-docs [--section <id>] [--out <dir>]\n  \
-                 cargo xtask migrate-place [--staging <dir>]"
-            );
             ExitCode::FAILURE
         }
     }
-}
-
-/// Read the value following `flag` in `args` (e.g. `--section foo`).
-fn flag_value(args: &[String], flag: &str) -> Option<String> {
-    args.iter()
-        .position(|a| a == flag)
-        .and_then(|i| args.get(i + 1))
-        .cloned()
 }
 
 /// Errors accumulated during docgen; rendered together so authors see every

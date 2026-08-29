@@ -3947,9 +3947,9 @@ fn frenet(x: &[f64], y: &[f64], z: &[f64]) -> (Frame, Frame, Frame) {
 /// `tubeplot(x, y, z, r, v, s)` — sweep a circle of radius `r` around the space
 /// curve `(x, y, z)` using a Frenet frame, producing a 3-D tube surface.
 ///
-/// Faithful port of `toolbox/graph/tubeplot.m`: with no output arguments it
-/// draws the tube as a parametric `surf`; with outputs it returns the `N x S`
-/// `X`/`Y`/`Z` mesh matrices.
+/// Faithful port of `toolbox/graph/tubeplot.m`: with ≥3 outputs it returns the
+/// `N x S` `X`/`Y`/`Z` mesh matrices; otherwise it draws the tube as a
+/// parametric `surf`.
 fn b_tubeplot(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<Array>> {
     if args.len() < 3 {
         return err("tubeplot: expected tubeplot(x, y, z, ...)");
@@ -4003,8 +4003,14 @@ fn b_tubeplot(i: &mut Interpreter, args: &[Array], nargout: usize) -> Flow<Vec<A
         }
     }
 
-    if nargout > 0 {
+    if nargout >= 3 {
         // Return the X/Y/Z mesh matrices (column-major Array, N x subdivs).
+        // Threshold is `>= 3` (not `> 0`) because the interpreter always calls
+        // builtins with `nargout >= 1`, even for a bare `tubeplot(...)` statement
+        // (see `exec_expr_stmt`). Only an explicit `[X,Y,Z] = tubeplot(...)`
+        // wants the mesh; anything less draws. This mirrors the sibling
+        // parametric-surface plotters (`sphere`/`cylinder`/`ellipsoid` via
+        // `geometry_result`).
         let to_array = |m: &Vec<Vec<f64>>| {
             let mut col_major = Vec::with_capacity(n * subdivs);
             for c in 0..subdivs {
